@@ -1,0 +1,23 @@
+services:
+  potok:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3001"
+    environment:
+      NODE_ENV: production
+      POTOK_DEMO_MODE: "false"
+      POTOK_ADMIN_EMAIL: ${POTOK_ADMIN_EMAIL:-admin@example.com}
+      POTOK_ADMIN_PASSWORD: ${POTOK_ADMIN_PASSWORD:?Set POTOK_ADMIN_PASSWORD in .env (at least 12 characters)}
+      POTOK_SECURE_COOKIE: ${POTOK_SECURE_COOKIE:-false}
+      POTOK_TRUST_PROXY: ${POTOK_TRUST_PROXY:-0}
+      POTOK_DB_PATH: /app/data/potok.sqlite
+    volumes:
+      - potok-data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+volumes:
+  potok-data:
