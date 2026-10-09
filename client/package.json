@@ -1,0 +1,50 @@
+{
+  "name": "shared-file-archive-client",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Общий файловый архив — клиент для Windows",
+  "author": "Shared Archive",
+  "repository": {"type": "git", "url": "https://github.com/Sh0MeM0/Games.git"},
+  "main": "dist-electron/main/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.main.json && tsc -p tsconfig.json && vite build",
+    "start": "npm run build && electron .",
+    "test": "tsc -p tsconfig.main.json && node --test tests/*.test.cjs",
+    "dist:win": "npm run build && electron-builder --win nsis --x64"
+  },
+  "dependencies": {
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.1.2",
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3",
+    "typescript": "5.9.3",
+    "vite": "8.3.4"
+  },
+  "build": {
+    "appId": "org.sharedarchive.desktop",
+    "productName": "Общий файловый архив",
+    "directories": {"output": "release"},
+    "files": ["dist/**/*", "dist-electron/**/*", "package.json"],
+    "win": {"target": [{"target": "nsis", "arch": ["x64"]}], "artifactName": "SharedArchive-Setup-${version}.${ext}"},
+    "nsis": {
+      "script": "build/installer.nsi",
+      "useZip": true,
+      "differentialPackage": false,
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Общий файловый архив",
+      "installerLanguages": ["ru_RU"],
+      "language": "1049",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}

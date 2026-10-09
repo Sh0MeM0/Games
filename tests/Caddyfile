@@ -1,0 +1,10 @@
+{
+    admin off
+}
+https://localhost {
+    tls internal
+    request_body {
+        max_size 51MB
+    }
+    reverse_proxy server:8000
+}

@@ -1,0 +1,14 @@
+# Additive override for cloud/local validation. Never use this TLS configuration on a public VPS.
+services:
+  server:
+    build:
+      secrets: [build_ca]
+  db:
+    ports: ["127.0.0.1:55433:5432"]
+  proxy:
+    ports: !override ["127.0.0.1:18443:443"]
+    volumes:
+      - ./tests/Caddyfile:/etc/caddy/Caddyfile:ro
+secrets:
+  build_ca:
+    file: ${ARCHIVE_BUILD_CA:-/etc/ssl/certs/ca-certificates.crt}

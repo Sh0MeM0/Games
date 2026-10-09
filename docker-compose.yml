@@ -1,0 +1,66 @@
+name: shared-archive
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: archive
+      POSTGRES_USER: archive
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Заполните POSTGRES_PASSWORD в .env}
+    volumes:
+      - database:/var/lib/postgresql/data
+    networks: [internal]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging: &logging
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+  server:
+    build: ./server
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://archive:${POSTGRES_PASSWORD:?Заполните POSTGRES_PASSWORD}@db:5432/archive
+      JWT_SECRET: ${JWT_SECRET:?Заполните JWT_SECRET в .env}
+      DATA_DIR: /data/files
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
+      LOCK_TIMEOUT_SECONDS: ${LOCK_TIMEOUT_SECONDS:-180}
+      LOGIN_MAX_ATTEMPTS: ${LOGIN_MAX_ATTEMPTS:-8}
+      LOGIN_WINDOW_SECONDS: ${LOGIN_WINDOW_SECONDS:-900}
+      REQUIRE_HTTPS: "true"
+    volumes: [documents:/data/files]
+    depends_on:
+      db: {condition: service_healthy}
+    networks: [internal]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    logging: *logging
+  proxy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      DOMAIN: ${DOMAIN:?Заполните DOMAIN в .env}
+      ACME_EMAIL: ${ACME_EMAIL:?Заполните ACME_EMAIL в .env}
+      MAX_REQUEST_SIZE: ${MAX_REQUEST_SIZE:-51MB}
+      # Keep internal service traffic on the Docker network even in a proxied cloud environment.
+      NO_PROXY: server,db,localhost,127.0.0.1,::1
+      no_proxy: server,db,localhost,127.0.0.1,::1
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      server: {condition: service_healthy}
+    networks: [internal, public]
+    logging: *logging
+volumes:
+  database:
+  documents:
+  caddy_data:
+  caddy_config:
+networks:
+  internal: {internal: true}
+  public:
