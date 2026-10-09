@@ -8,7 +8,11 @@ FastAPI/Python 3.12 + PostgreSQL + файлы на диске; Windows-клие�
 
 ## Скачать проект и установщик
 
-Исходники проекта находятся в ветке [`shared-file-archive`](https://github.com/Sh0MeM0/Games/tree/shared-file-archive): нажмите **Code → Download ZIP**. Готовые установщики публикуются в [GitHub Releases](https://github.com/Sh0MeM0/Games/releases); скачайте `SharedArchive-Setup-1.0.0.exe` в разделе **Assets**. Первая сборка появляется после успешного завершения [Windows installer в GitHub Actions](https://github.com/Sh0MeM0/Games/actions/workflows/windows-installer.yml).
+Исходники проекта находятся в ветке [`shared-file-archive`](https://github.com/Sh0MeM0/Games/tree/shared-file-archive): нажмите **Code → Download ZIP**. Уже собранный [установщик Windows](https://github.com/Sh0MeM0/Games/blob/shared-file-archive/installers/SharedArchive-Setup-1.0.0.exe) хранится через Git LFS: откройте страницу файла и нажмите **Download raw file**. Проверочная сумма находится в `installers/SHA256SUMS.txt`.
+
+В ZIP исходников большой бинарный файл может быть представлен указателем Git LFS. Скачайте `.exe` отдельно по ссылке выше. Для получения установщика через Git установите Git LFS и выполните `git lfs pull`.
+
+Дополнительный канал — [GitHub Releases](https://github.com/Sh0MeM0/Games/releases). Установщик появляется в разделе **Assets** только после успешного завершения [Windows installer в GitHub Actions](https://github.com/Sh0MeM0/Games/actions/workflows/windows-installer.yml). Наличие тега само по себе не означает, что сборка выполнена.
 
 Тег `shared-archive-v*` запускает клиентские тесты, сборку Windows x64 и публикацию предварительного релиза с установщиком и SHA-256. Подпись издателя не добавляется; проверка установки и работы Office на настоящей Windows остаётся отдельным шагом.
 
