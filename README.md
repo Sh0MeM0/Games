@@ -6,6 +6,19 @@
 
 ## Установка и portable
 
+Готовые сборки версии 0.1.0 доступны в этом репозитории:
+
+- [Скачать установщик для Windows x64](https://github.com/Sh0MeM0/Games/archive/refs/heads/pdfmaster-installer-v0.1.0.zip)
+- [Скачать portable для Windows x64](https://github.com/Sh0MeM0/Games/archive/refs/heads/pdfmaster-portable-v0.1.0.zip)
+
+Распакуйте скачанный архив **целиком** и запустите `RESTORE.cmd`. Он соберёт
+исходный EXE или portable ZIP из частей и проверит SHA-256. Части нужны из-за
+ограничения GitHub в 100 МБ на один файл; компилировать программу не требуется.
+После сообщения `SUCCESS` запустите полученный установщик или распакуйте
+полученный portable ZIP и откройте `PDFMaster.exe`.
+
+При самостоятельной сборке дистрибутивы создаются в папке `dist`:
+
 - `dist/PDFMaster-Setup-x64.exe` — установщик для текущего пользователя.
 - `dist/PDFMaster-Portable-x64.zip` — распакуйте **весь архив** в отдельную папку
   и запустите `PDFMaster.exe`. Переносить один EXE без остальных файлов нельзя.
