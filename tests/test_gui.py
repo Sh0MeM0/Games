@@ -12,8 +12,9 @@ import pytest
 # Set the platform before importing/constructing any Qt application.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QEventLoop, QSettings, QTimer  # noqa: E402
-from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton  # noqa: E402
+from PySide6.QtCore import QEventLoop, QMimeData, QPoint, QPointF, QSettings, QTimer, Qt, QUrl  # noqa: E402
+from PySide6.QtGui import QDragEnterEvent, QDropEvent  # noqa: E402
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QPushButton  # noqa: E402
 
 from pdf2office import gui, runtime, service  # noqa: E402
 from pdf2office.gui import MainWindow, STYLE  # noqa: E402
@@ -130,7 +131,7 @@ def test_conversion_runs_in_worker_and_ui_remains_responsive(window, qt_app, tmp
         release.set()
 
     pump_until(qt_app, lambda: window._thread is None)
-    assert "Обработано PDF: 1" in window.status_label.text()
+    assert "Обработано файлов: 1" in window.status_label.text()
     assert "создано файлов: 2" in window.status_label.text()
     assert window.editor.isEnabled()
     assert window.convert_button.isEnabled()
@@ -160,7 +161,7 @@ def test_cancel_is_cooperative_and_clears_password(window, qt_app, tmp_path, mon
 
     assert cancellation_observed.is_set()
     assert "Остановлено" in window.status_label.text()
-    assert "PDF: 1 из 2" in window.status_label.text()
+    assert "файлов: 1 из 2" in window.status_label.text()
     assert "создано файлов: 1" in window.status_label.text()
     assert not window.password.text()
     assert window._worker is None
@@ -288,10 +289,10 @@ def test_small_laptop_window_keeps_controls_reachable_without_overlap(window, qt
     window.setStyleSheet(STYLE)
     window.resize(width, 700)
     qt_app.processEvents()
-    add_button = next(button for button in window.findChildren(QPushButton) if button.text() == "+ Добавить PDF")
+    add_button = next(button for button in window.findChildren(QPushButton) if button.text() == "+ Добавить файлы")
     list_bottom = window.file_list.mapToGlobal(window.file_list.rect().bottomLeft()).y()
     button_top = add_button.mapToGlobal(add_button.rect().topLeft()).y()
-    assert list_bottom < button_top, "PDF list overlaps file-selection buttons"
+    assert list_bottom < button_top, "Input list overlaps file-selection buttons"
     assert window.editor_scroll.horizontalScrollBar().maximum() == 0
 
     # Fixed actions stay visible; fields farther down are reachable by scrolling.
@@ -317,3 +318,99 @@ def test_small_laptop_window_keeps_controls_reachable_without_overlap(window, qt
     qt_app.processEvents()
     viewport = advanced_scroll.viewport()
     assert viewport.rect().contains(window.password.mapTo(viewport, window.password.rect().center()))
+
+
+def test_file_picker_accepts_pdf_and_both_tiff_extensions(window, tmp_path, monkeypatch):
+    paths = [tmp_path / name for name in ("чертёж.PDF", "скан.TIF", "два листа.tiff", "не поддержан.png")]
+    for path in paths:
+        path.touch()
+    captured = {}
+
+    def choose(parent, title, directory, filters):
+        captured["filters"] = filters
+        return [str(path) for path in paths] + [str(paths[1]), str(tmp_path / "нет.tif")], ""
+
+    monkeypatch.setattr(QFileDialog, "getOpenFileNames", choose)
+    window._choose_files()
+    accepted = [window.file_list.item(index).data(Qt.ItemDataRole.UserRole)
+                for index in range(window.file_list.count())]
+    assert accepted == [str(path) for path in paths[:3]]
+    assert "*.tif" in captured["filters"] and "*.tiff" in captured["filters"]
+    assert "*.TIF" in captured["filters"] and "*.TIFF" in captured["filters"]
+    assert "не поддержан.png" in window.log.toPlainText()
+    assert "нет.tif" in window.log.toPlainText()
+
+
+def test_drag_and_drop_accepts_local_tiff_and_rejects_unsupported_urls(window, tmp_path):
+    scan = tmp_path / "скан.TIFF"
+    scan.touch()
+    mime = QMimeData()
+    mime.setUrls([QUrl.fromLocalFile(str(scan)), QUrl("https://example.test/remote.tif")])
+    enter = QDragEnterEvent(QPoint(1, 1), Qt.DropAction.CopyAction, mime,
+                           Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    window.file_list.dragEnterEvent(enter)
+    assert enter.isAccepted()
+    drop = QDropEvent(QPointF(1, 1), Qt.DropAction.CopyAction, mime,
+                     Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    window.file_list.dropEvent(drop)
+    assert drop.isAccepted()
+    assert window.file_list.count() == 1
+    assert window.file_list.item(0).data(Qt.ItemDataRole.UserRole) == str(scan)
+
+    for url in (QUrl("https://example.test/remote.tif"), QUrl.fromLocalFile(str(tmp_path / "image.png"))):
+        mime.setUrls([url])
+        event = QDragEnterEvent(QPoint(1, 1), Qt.DropAction.CopyAction, mime,
+                               Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+        window.file_list.dragEnterEvent(event)
+        assert not event.isAccepted()
+
+
+def test_tiff_preparation_defaults_do_not_depend_on_old_pdf_vectorization_setting(window):
+    window.settings.setValue("vectorize", False)
+    window._load_settings()
+    assert not window.vectorize.isChecked()
+    assert window.vectorize_tiff.isChecked()
+    assert window.scan_cleanup.isChecked()
+    assert window.scan_deskew.isChecked()
+    assert window.scan_dpi.value() == 0
+    assert window.scan_dpi.text() == "Авто"
+    window.scan_dpi.stepUp()
+    assert window.scan_dpi.value() == 100
+    window.scan_dpi.stepDown()
+    assert window.scan_dpi.value() == 0
+
+
+def test_tiff_preparation_settings_persist_and_reach_conversion_worker(window, qt_app, tmp_path, monkeypatch):
+    scan = tmp_path / "лист.TIF"
+    scan.touch()
+    window._add_files([str(scan)])
+    window.scan_cleanup.setChecked(False)
+    window.scan_deskew.setChecked(False)
+    window.vectorize_tiff.setChecked(False)
+    window.scan_dpi.setValue(400)
+    observed = {}
+
+    def convert(request, progress, cancelled):
+        observed["request"] = request
+        return [ConversionResult(scan, [tmp_path / "лист.dwg", tmp_path / "лист.docx"])]
+
+    monkeypatch.setattr(service, "convert", convert)
+    window._start()
+    pump_until(qt_app, lambda: window._thread is None)
+    assert not window._test_dialogs
+    request = observed["request"]
+    assert request.inputs == [scan]
+    assert not request.scan_cleanup
+    assert not request.scan_deskew
+    assert not request.vectorize_tiff
+    assert request.scan_dpi == 400
+    assert "Обработано файлов: 1" in window.status_label.text()
+    reopened = MainWindow()
+    try:
+        assert not reopened.scan_cleanup.isChecked()
+        assert not reopened.scan_deskew.isChecked()
+        assert not reopened.vectorize_tiff.isChecked()
+        assert reopened.scan_dpi.value() == 400
+    finally:
+        reopened.close()
+        reopened.deleteLater()

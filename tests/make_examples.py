@@ -1,6 +1,7 @@
 """Create reproducible demonstration inputs without third-party drawings."""
 from pathlib import Path
 import io
+import random
 import sys
 
 import pymupdf as fitz
@@ -43,6 +44,24 @@ def make_examples(directory: Path):
         pdf.save(scan)
     print(vector)
     print(scan)
+    # Public synthetic TIFF for checking cleanup, deskew, OCR and curved paths.
+    tiff = Image.new("L", (1800, 1400), 246)
+    drawing = ImageDraw.Draw(tiff)
+    for y in (100, 400, 1000, 1300):
+        drawing.line((100, y, 1700, y), fill=0, width=4)
+    drawing.rectangle((100, 100, 1700, 1300), outline=0, width=4)
+    drawing.line((900, 400, 900, 1000), fill=0, width=4)
+    drawing.arc((250, 500, 700, 950), 15, 300, fill=0, width=4)
+    drawing.text((180, 200), "Чертёж детали 125 мм", font=text_font, fill=0)
+    drawing.text((1000, 640), "Сталь 20", font=text_font, fill=0)
+    drawing.text((180, 1100), "Проверка TIFF 400 DPI", font=text_font, fill=0)
+    noise = random.Random(42)
+    for _ in range(18000):
+        drawing.point((noise.randrange(tiff.width), noise.randrange(tiff.height)), fill=0)
+    tiff = tiff.rotate(-2.4, expand=True, fillcolor=246)
+    tiff_path = directory / "Пример — шумный скан.tif"
+    tiff.save(tiff_path, dpi=(400, 400), compression="tiff_lzw")
+    print(tiff_path)
 
 
 if __name__ == "__main__":

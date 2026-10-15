@@ -109,6 +109,9 @@ def main() -> int:
     parser.add_argument("--stage-only", action="store_true", help="Prepare files and launchers, without archives/installer")
     parser.add_argument("--portable-only", action="store_true", help="Build portable and source ZIPs without invoking NSIS or including an installer checksum")
     args = parser.parse_args()
+    # Verify the checked-in, licensed font additions before packaging them.
+    # This step is offline; restoration is an explicit separate command.
+    subprocess.run([sys.executable, str(ROOT / "scripts/fetch_fonts.py")], check=True)
     records = json.loads((ROOT / "packaging/windows-assets.lock.json").read_text())
     args.cache.mkdir(parents=True, exist_ok=True)
     with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
@@ -188,6 +191,20 @@ def main() -> int:
                 destination = licenses / "conda" / record["name"]
                 destination.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(info / "index.json", destination / "index.json")
+
+    # Apply the official accuracy-oriented language models after every conda
+    # package has been extracted, independent of lockfile ordering. Keep its
+    # compatible orientation/script model (osd) and runtime unchanged.
+    for record, archive in zip(records, archives):
+        if record["kind"] == "tessdata_model":
+            language = record["name"]
+            if language not in {"eng", "rus"}:
+                raise ValueError(f"Unexpected bundled OCR language: {language}")
+            shutil.copy2(archive, tess / "tessdata" / (language + ".traineddata"))
+        elif record["kind"] == "tessdata_license":
+            destination = licenses / "TesseractBest"
+            destination.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(archive, destination / "LICENSE.txt")
 
     (runtime / "python312._pth").write_text(".\nLib\nDLLs\nLib/site-packages\n../app\nimport site\n", encoding="utf-8")
     copy_tree(ROOT / "src/pdf2office", stage / "app/pdf2office")

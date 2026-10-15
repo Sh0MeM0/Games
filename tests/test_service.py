@@ -7,7 +7,7 @@ import ezdxf
 from ezdxf.lldxf.encoding import decode_dxf_unicode
 import pymupdf as fitz
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from pdf2office.service import ConversionRequest, convert
 
@@ -177,3 +177,72 @@ def test_invalid_scale_rejected_before_output(source, tmp_path, scale):
     with pytest.raises(ValueError, match="Масштаб"):
         convert(ConversionRequest([source], tmp_path / "out", scale=scale))
     assert not (tmp_path / "out").exists()
+
+
+def test_mixed_pdf_tiff_batch_preserves_resolution_geometry_and_source(source, tmp_path):
+    scan = tmp_path / "Скан.TIF"
+    image = Image.new("L", (800, 600), 255)
+    ImageDraw.Draw(image).rectangle((100, 100, 700, 500), outline=0, width=5)
+    image.save(scan, dpi=(400, 400))
+    original = scan.read_bytes()
+    results = convert(ConversionRequest([source, scan], tmp_path / "out", ("dxf", "docx"),
+                                        ocr_mode="off", scan_deskew=False))
+    assert all(not item.error and len(item.outputs) == 2 for item in results)
+    drawing = ezdxf.readfile(results[1].outputs[0])
+    assert not drawing.audit().has_errors
+    assert len(drawing.modelspace().query("LINE LWPOLYLINE")) >= 1
+    raster, = drawing.modelspace().query("IMAGE")
+    assert raster.dxf.image_size.x == 800
+    assert raster.dxf.u_pixel.x == pytest.approx(25.4 / 400)
+    report = json.loads((tmp_path / "out/Скан.conversion.json").read_text())
+    assert report["input_format"] == "tif"
+    assert report["tiff_settings"] == {"cleanup": True, "deskew": False, "dpi": 0, "vectorize": True}
+    assert scan.read_bytes() == original
+
+
+def test_tiff_controls_reach_extractor(tmp_path, monkeypatch):
+    from pdf2office.models import PdfPage
+    captured = {}
+
+    def extract(path, **kwargs):
+        captured.update(kwargs)
+        return [PdfPage(1, 72, 72, [], [], [])]
+
+    monkeypatch.setattr("pdf2office.scans.extract_tiff", extract)
+    result, = convert(ConversionRequest([tmp_path / "scan.tIfF"], tmp_path / "out", ("docx",),
+                                        scan_cleanup=False, scan_deskew=False,
+                                        scan_dpi=600, vectorize_tiff=False))
+    assert not result.error
+    assert captured["preprocess"] is False and captured["deskew"] is False
+    assert captured["dpi"] == 600 and captured["vectorize_scans"] is False
+    assert callable(captured["check_cancel"]) and callable(captured["progress"])
+
+
+@pytest.mark.parametrize("dpi", [-1, 1, 71, 2401, float("nan"), 300.5, True])
+def test_invalid_scan_dpi_rejected_before_output(source, tmp_path, dpi):
+    with pytest.raises(ValueError, match="DPI"):
+        convert(ConversionRequest([source], tmp_path / "out", scan_dpi=dpi))
+    assert not (tmp_path / "out").exists()
+
+
+def test_unsupported_extension_does_not_stop_batch(source, tmp_path):
+    results = convert(ConversionRequest([tmp_path / "scan.png", source], tmp_path / "out",
+                                        ("docx",), ocr_mode="off"))
+    assert ".tiff" in results[0].error
+    assert results[1].error is None
+
+
+def test_cancel_during_tiff_cleanup_leaves_no_partial_document(tmp_path):
+    scan = tmp_path / "scan.tif"
+    Image.new("1", (1600, 1600), 1).save(scan, dpi=(300, 300))
+    stop = False
+
+    def update(message):
+        nonlocal stop
+        if message.startswith("Очистка фона"):
+            stop = True
+
+    request = ConversionRequest([scan], tmp_path / "out", ("dxf",), ocr_mode="off")
+    result, = convert(request, progress=update, cancelled=lambda: stop)
+    assert "остановлена" in result.error
+    assert not result.outputs and not list(request.output_dir.glob("*.dxf"))

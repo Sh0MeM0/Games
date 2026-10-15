@@ -633,5 +633,35 @@
     "name": "typing_extensions",
     "version": "4.15.0",
     "source": "https://files.pythonhosted.org/packages/72/94/1a15dd82efb362ac84269196e94cf00f187f7ed21c242792a923cdb1c61f/typing_extensions-4.15.0.tar.gz"
+  },
+  {
+    "filename": "tessdata-best-eng.traineddata",
+    "url": "https://raw.githubusercontent.com/tesseract-ocr/tessdata_best/e12c65a915945e4c28e237a9b52bc4a8f39a0cec/eng.traineddata",
+    "sha256": "8280aed0782fe27257a68ea10fe7ef324ca0f8d85bd2fd145d1c2b560bcb66ba",
+    "kind": "tessdata_model",
+    "name": "eng",
+    "version": "e12c65a915945e4c28e237a9b52bc4a8f39a0cec",
+    "license": "Apache-2.0",
+    "source": "https://github.com/tesseract-ocr/tessdata_best/tree/e12c65a915945e4c28e237a9b52bc4a8f39a0cec"
+  },
+  {
+    "filename": "tessdata-best-rus.traineddata",
+    "url": "https://raw.githubusercontent.com/tesseract-ocr/tessdata_best/e12c65a915945e4c28e237a9b52bc4a8f39a0cec/rus.traineddata",
+    "sha256": "b617eb6830ffabaaa795dd87ea7fd251adfe9cf0efe05eb9a2e8128b7728d6b6",
+    "kind": "tessdata_model",
+    "name": "rus",
+    "version": "e12c65a915945e4c28e237a9b52bc4a8f39a0cec",
+    "license": "Apache-2.0",
+    "source": "https://github.com/tesseract-ocr/tessdata_best/tree/e12c65a915945e4c28e237a9b52bc4a8f39a0cec"
+  },
+  {
+    "filename": "tessdata-best-LICENSE.txt",
+    "url": "https://raw.githubusercontent.com/tesseract-ocr/tessdata_best/e12c65a915945e4c28e237a9b52bc4a8f39a0cec/LICENSE",
+    "sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9",
+    "kind": "tessdata_license",
+    "name": "tessdata_best",
+    "version": "e12c65a915945e4c28e237a9b52bc4a8f39a0cec",
+    "license": "Apache-2.0",
+    "source": "https://github.com/tesseract-ocr/tessdata_best/tree/e12c65a915945e4c28e237a9b52bc4a8f39a0cec"
   }
 ]

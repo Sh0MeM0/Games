@@ -364,7 +364,7 @@ def export_docx(
 
     warnings = [
         "DOCX: шрифты указаны по именам и не встроены; установите их на компьютере получателя.",
-        "DOCX: сложные заливки, обрезка, прозрачность и порядок наложения объектов могут отличаться от PDF.",
+        "DOCX: сложные заливки, обрезка, прозрачность и порядок наложения объектов могут отличаться от оригинала.",
     ]
     if mode == "layout":
         warnings.append(
@@ -394,8 +394,8 @@ def export_docx(
         warnings.append("DOCX: положение текста с поворотом, отличным от 90°, приблизительное.")
 
     document = Document()
-    document.core_properties.title = "PDF → Word"
-    document.core_properties.subject = "Редактируемый результат преобразования PDF"
+    document.core_properties.title = "PDF / TIFF → Word"
+    document.core_properties.subject = "Редактируемый результат преобразования PDF / TIFF"
     normal = document.styles["Normal"]
     normal.paragraph_format.space_after = Pt(0)
     fonts = _Fonts(font_overrides, warnings, font_catalog)
@@ -424,7 +424,7 @@ def export_docx(
                     warnings.append(
                         "DOCX: под распознанным текстом растр очищен цветом окружающего фона, "
                         "чтобы текст можно было заменить. Пересекающиеся линии и сложный фон "
-                        "могут быть повреждены и требуют проверки; исходный PDF не изменён."
+                        "могут быть повреждены и требуют проверки; исходный файл не изменён."
                     )
             for drawing in page.drawings:
                 shape = _drawing_shape(drawing, next_id, scale)

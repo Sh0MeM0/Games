@@ -319,38 +319,362 @@ def _ocr(page: fitz.Page, native: list[TextSpan], executable: Path, language: st
     return result, image
 
 
-def _trace_scan(image: Image.Image, page: PdfPage) -> list[Drawing]:
+def _trace_scan(image: Image.Image, page: PdfPage,
+                check_cancel: Callable[[], None] | None = None,
+                progress: Callable[[str], None] | None = None) -> list[Drawing]:
+    """Trace the centre of scanned ink into connected, editable paths.
+
+    Skeleton paths preserve short separate dashes and curved contours. Tracing
+    the two Canny edges of a pen stroke instead would create two CAD lines.
+    This recovers visible geometry, not dimension objects or CAD constraints.
+    """
     try:
         import cv2
         import numpy as np
     except ImportError:
         page.warnings.append("Векторизация скана недоступна: отсутствует OpenCV. Растр сохранён.")
         return []
-    working = image.copy()
-    working.thumbnail((2800, 2800))
-    gray = np.array(working.convert("L"))
+
+    import time
+
+    last_update = time.monotonic()
+    stage = "Векторизация скана"
+
+    def checkpoint(message=None):
+        nonlocal last_update, stage
+        if check_cancel:
+            check_cancel()
+        now = time.monotonic()
+        if message:
+            stage = message
+        if progress and (message or now - last_update >= 30):
+            progress(message or f"{stage}: обработка продолжается; ограничение времени отключено.")
+            last_update = now
+
+    checkpoint("Векторизация: подготовка линий скана")
+    # Keep native resolution for large engineering sheets (including 400 dpi
+    # A1 scans). The exceptional 100 MP limit bounds working-array memory, not
+    # processing time or the number of output objects.
+    ratio = min(1.0, math.sqrt(100_000_000 / (image.width * image.height)))
+    working = image.convert("L")
+    if ratio < 1:
+        working = working.resize((max(1, round(image.width * ratio)), max(1, round(image.height * ratio))), Image.Resampling.LANCZOS)
+        page.warnings.append(f"Векторизация выполнена на копии {working.width} × {working.height} пикселей; очень мелкие детали проверьте по растровой подложке.")
+    gray = np.array(working)
     sx, sy = page.width / working.width, page.height / working.height
-    _, mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
-    for span in page.texts:
+    _, mask = cv2.threshold(gray, 0, 1, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+    del gray, working
+
+    # Erase only recognized text boxes, with no generous padding into nearby
+    # drawing geometry. Restore actual ink on lines that cross the whole box
+    # and have evidence outside both sides. Never invent a line across a gap.
+    for number, span in enumerate(page.texts):
+        if number % 32 == 0:
+            checkpoint()
         x0, y0, x1, y1 = span.bbox
-        cv2.rectangle(mask, (max(0, int(x0 / sx) - 2), max(0, int(y0 / sy) - 2)),
-                      (int(x1 / sx) + 2, int(y1 / sy) + 2), 0, -1)
-    edges = cv2.Canny(mask, 50, 150)
-    lines = cv2.HoughLinesP(edges, 1, math.pi / 1800, threshold=35,
-                            minLineLength=max(25, round(12 / sx)), maxLineGap=7)
-    if lines is None:
-        page.warnings.append("На скане не обнаружены прямые отрезки для векторизации.")
-        return []
-    result = []
-    seen = set()
-    for x0, y0, x1, y1 in lines[:, 0][:5000]:
-        points = ((float(x0 * sx), float(y0 * sy)), (float(x1 * sx), float(y1 * sy)))
-        signature = tuple(sorted((round(x / 2), round(y / 2)) for x, y in points))
-        if signature in seen:
+        x0, x1 = max(0, math.floor(x0 / sx)), min(mask.shape[1], math.ceil(x1 / sx))
+        y0, y1 = max(0, math.floor(y0 / sy)), min(mask.shape[0], math.ceil(y1 / sy))
+        if x0 >= x1 or y0 >= y1:
             continue
-        seen.add(signature)
-        result.append(Drawing([Segment("line", points)], stroke=(0, 0, 0), width=0.5))
-    page.warnings.append("Векторизация скана приблизительная: восстановлены прямые отрезки; возможны двойные линии. Дуги, размеры, штриховки и масштаб требуют проверки; исходный растр сохранён.")
+        margin = max(6, min(40, max(x1 - x0, y1 - y0) // 2))
+        left, top = max(0, x0 - margin), max(0, y0 - margin)
+        right, bottom = min(mask.shape[1], x1 + margin), min(mask.shape[0], y1 + margin)
+        region = mask[top:bottom, left:right].copy()
+        bx0, by0, bx1, by1 = x0 - left, y0 - top, x1 - left, y1 - top
+        preserve = np.zeros_like(region)
+        candidates = cv2.HoughLinesP(region, 1, math.pi / 720, threshold=max(8, min(bx1 - bx0, by1 - by0)),
+                                     minLineLength=max(12, min(bx1 - bx0, by1 - by0) + 6), maxLineGap=1)
+        crossings = []
+        if candidates is not None:
+            for ax, ay, zx, zy in candidates[:, 0]:
+                # Liang-Barsky interval of the candidate inside the text box.
+                dx, dy = float(zx - ax), float(zy - ay)
+                enter, leave = 0.0, 1.0
+                intersects = True
+                for p, q in ((-dx, ax - bx0), (dx, bx1 - ax), (-dy, ay - by0), (dy, by1 - ay)):
+                    if p == 0:
+                        if q < 0:
+                            intersects = False
+                            break
+                    elif p < 0:
+                        enter = max(enter, q / p)
+                    else:
+                        leave = min(leave, q / p)
+                length = math.hypot(dx, dy)
+                if intersects and enter < leave and enter * length >= 3 and (1 - leave) * length >= 3:
+                    crossings.append((np.array((ax, ay), np.float32), np.array((zx, zy), np.float32)))
+        # Hough may report several positions across a thick pen stroke. Fit
+        # their common axis instead of restoring a broad band of nearby letters.
+        groups = []
+        for first, last in sorted(crossings, key=lambda pair: float(np.linalg.norm(pair[1] - pair[0])), reverse=True):
+            direction = last - first
+            direction /= np.linalg.norm(direction)
+            for group in groups:
+                group_direction = group[1] - group[0]
+                group_direction /= np.linalg.norm(group_direction)
+                cross = abs(float(direction[0] * group_direction[1] - direction[1] * group_direction[0]))
+                delta = (first + last - group[0] - group[1]) / 2
+                separation = abs(float(delta[0] * group_direction[1] - delta[1] * group_direction[0]))
+                if cross < 0.025 and separation < 3:
+                    group.extend((first, last))
+                    break
+            else:
+                groups.append([first, last])
+        for group in groups:
+            vx, vy, cx, cy = cv2.fitLine(np.array(group), cv2.DIST_L2, 0, 0.01, 0.01).ravel()
+            direction = np.array((vx, vy))
+            center_point = np.array((cx, cy))
+            projections = (np.array(group) - center_point) @ direction
+            first = np.rint(center_point + projections.min() * direction).astype(int)
+            last = np.rint(center_point + projections.max() * direction).astype(int)
+            cv2.line(preserve, tuple(first), tuple(last), 1, 3)
+        mask[y0:y1, x0:x1] = region[by0:by1, bx0:bx1] & preserve[by0:by1, bx0:bx1]
+
+    checkpoint("Векторизация: удаление отдельных точек и выделение осей линий")
+    # Measure the scanned pen, not the denoising filter: smoothing can fill
+    # pinholes inside old-print stains and would inflate their stroke widths.
+    widths = cv2.distanceTransform(mask, cv2.DIST_L2, 3)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    extent = np.maximum(stats[:, cv2.CC_STAT_WIDTH], stats[:, cv2.CC_STAT_HEIGHT])
+    minor = np.minimum(stats[:, cv2.CC_STAT_WIDTH], stats[:, cv2.CC_STAT_HEIGHT])
+    area = stats[:, cv2.CC_STAT_AREA]
+    compact = (area < 30) & (extent < 12) & (extent < 3 * np.maximum(minor, 1))
+    noisy = np.count_nonzero(compact[1:]) > max(1000, mask.size // 5000)
+    if noisy:
+        checkpoint("Векторизация: подавление густого точечного шума с сохранением тонких линий")
+        # This copy is exclusively for geometric tracing. Median filtering
+        # suppresses blot edges, while monotone paths protect long thin
+        # strokes and curves. Separate slender dashes and sparse components are
+        # also retained so that they need not survive a median filter.
+        thin = (area >= 5) & (extent >= 6) & ((area <= 1.5 * extent) | ((area <= 4 * extent) & (area < 0.15 * extent * minor)))
+        thin[0] = False
+        protected = thin[labels].astype(np.uint8)
+        del labels, stats, thin, extent, minor, area, compact
+        kernel_size = min(7, max(3, round(1.3 / max(sx, sy)) | 1))
+        cleaned = cv2.medianBlur(mask, kernel_size) | protected
+        del protected
+        # A straight morphological kernel would fragment 1 px curves. Dynamic
+        # paths may turn by one pixel per row, so both near-horizontal and
+        # near-vertical curves survive without expanding the scanned ink.
+        for rows, target in ((mask, cleaned), (mask.T, cleaned.T)):
+            forward = np.empty(rows.shape, np.uint8)
+            previous = np.zeros(rows.shape[1] + 2, np.uint8)
+            for row_number in range(rows.shape[0]):
+                if row_number % 128 == 0:
+                    checkpoint()
+                best = np.maximum(np.maximum(previous[:-2], previous[1:-1]), previous[2:])
+                current = np.minimum(best + 1, 25) * rows[row_number]
+                forward[row_number] = current
+                previous[1:-1] = current
+            previous.fill(0)
+            for row_number in range(rows.shape[0] - 1, -1, -1):
+                if row_number % 128 == 0:
+                    checkpoint()
+                best = np.maximum(np.maximum(previous[:-2], previous[1:-1]), previous[2:])
+                current = np.minimum(best + 1, 25) * rows[row_number]
+                target[row_number] |= ((forward[row_number] + current >= 26) & (forward[row_number] >= 6) & (current >= 6)).astype(np.uint8)
+                previous[1:-1] = current
+            del forward
+        del rows, target, previous, current, best
+        removed = int(np.count_nonzero(mask & (1 - cleaned)))
+        mask = cleaned
+        del cleaned
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        page.warnings.append(f"Для векторной геометрии дополнительно подавлен точечный шум ({max(0, removed)} пикселей); мелкие детали проверьте по сохранённой подложке.")
+    # Discard isolated dirt but keep tiny long dashes / thin construction lines.
+    keep = (stats[:, cv2.CC_STAT_AREA] >= 5) & (np.maximum(stats[:, cv2.CC_STAT_WIDTH], stats[:, cv2.CC_STAT_HEIGHT]) >= 4)
+    keep[0] = False
+    mask = keep[labels].astype(np.uint8)
+    del labels, stats, keep
+    if not mask.any():
+        page.warnings.append("На скане не обнаружена геометрия для векторизации; растровая подложка сохранена.")
+        return []
+
+    # Zhang-Suen topology-preserving thinning. A small LUT avoids allocating
+    # eight full-size neighbour arrays each iteration; OpenCV does the stencil
+    # in native code. No arbitrary iteration/time cutoff is imposed.
+    kernel = np.array([[128, 1, 2], [64, 0, 4], [32, 16, 8]], dtype=np.float32)
+    codes = np.arange(256, dtype=np.uint16)
+    bits = [(codes >> bit) & 1 for bit in range(8)]
+    neighbours = sum(bits)
+    transitions = sum((bits[bit] == 0) & (bits[(bit + 1) % 8] == 1) for bit in range(8))
+    eligible = (neighbours >= 2) & (neighbours <= 6) & (transitions == 1)
+    erase = [
+        (eligible & ((bits[0] * bits[2] * bits[4]) == 0) & ((bits[2] * bits[4] * bits[6]) == 0)).astype(np.uint8),
+        (eligible & ((bits[0] * bits[2] * bits[6]) == 0) & ((bits[0] * bits[4] * bits[6]) == 0)).astype(np.uint8),
+    ]
+    skeleton = np.pad(mask, 1)
+    del mask
+    iteration = 0
+    while True:
+        checkpoint()
+        changed = False
+        for lookup in erase:
+            neighbourhood = cv2.filter2D(skeleton, cv2.CV_16U, kernel, borderType=cv2.BORDER_CONSTANT)
+            removal = skeleton & lookup[neighbourhood]
+            if removal.any():
+                skeleton -= removal
+                changed = True
+        iteration += 1
+        if not changed:
+            break
+        if iteration % 16 == 0:
+            checkpoint(f"Векторизация: выделение осей линий, проход {iteration}")
+    del neighbourhood, removal
+
+    # Encode undirected pixel graph edges once. Drop diagonal shortcuts around
+    # an existing orthogonal corner, avoiding triangles and duplicate paths.
+    directions = ((-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1), (-1, -1))
+    adjacency = np.zeros(skeleton.shape, np.uint8)
+    center = skeleton[1:-1, 1:-1]
+    height, width = center.shape
+    for bit, (dy, dx) in enumerate(directions):
+        links = center & skeleton[1 + dy:1 + dy + height, 1 + dx:1 + dx + width]
+        if dx and dy:
+            links &= 1 - (skeleton[1:1 + height, 1 + dx:1 + dx + width] | skeleton[1 + dy:1 + dy + height, 1:1 + width])
+        adjacency[1:-1, 1:-1] |= links << bit
+    del skeleton, center, links
+    stride = adjacency.shape[1]
+    flat = adjacency.ravel()
+    offsets = tuple(dy * stride + dx for dy, dx in directions)
+    bit_counts = np.array([value.bit_count() for value in range(256)], np.uint8)
+    low_bit = {1 << bit: bit for bit in range(8)}
+    degree = bit_counts[flat]
+
+    # Remove only short dead-end burrs attached to another stroke. Independent
+    # short marks and longer terminal strokes are preserved.
+    for _ in range(3):
+        pruned = False
+        for number, start in enumerate(np.flatnonzero(degree == 1)):
+            if number % 10000 == 0:
+                checkpoint()
+            current, previous = int(start), -1
+            path = []
+            for _step in range(13 if noisy else 4):
+                flags = int(flat[current])
+                choices = []
+                while flags:
+                    edge = flags & -flags
+                    bit = low_bit[edge]
+                    flags ^= edge
+                    following = current + offsets[bit]
+                    if following != previous:
+                        choices.append((bit, following))
+                if len(choices) != 1:
+                    break
+                bit, following = choices[0]
+                path.append((current, bit, following))
+                previous, current = current, following
+                if degree[current] != 2:
+                    break
+            radius = float(widths[current // stride - 1, current % stride - 1])
+            spur_limit = min(12, max(4, round(radius * 2))) if noisy else 3
+            if len(path) <= spur_limit and degree[current] >= 3:
+                for current, bit, following in path:
+                    flat[current] &= 255 ^ (1 << bit)
+                    flat[following] &= 255 ^ (1 << ((bit + 4) % 8))
+                pruned = True
+        if not pruned:
+            break
+        degree = bit_counts[flat]
+        checkpoint()
+
+    checkpoint("Векторизация: построение редактируемых линий и полилиний")
+    result = []
+    visited_pixels = 0
+
+    def trace(start, bit):
+        nonlocal visited_pixels
+        path = [start]
+        junction_positions = {start: 0}
+        current = start
+        while True:
+            following = current + offsets[bit]
+            flat[current] &= 255 ^ (1 << bit)
+            flat[following] &= 255 ^ (1 << ((bit + 4) % 8))
+            path.append(following)
+            current = following
+            visited_pixels += 1
+            if visited_pixels % 20000 == 0:
+                checkpoint()
+            if current == start:
+                return path
+            if degree[current] >= 3 and current in junction_positions:
+                # Keep a loop as its own closed polyline when a stroke
+                # leads into it tangentially.
+                split = junction_positions[current]
+                add_path(path[split:])
+                return path[:split + 1]
+            if not flat[current] or degree[current] == 1:
+                return path
+            if degree[current] >= 3:
+                junction_positions[current] = len(path) - 1
+                earlier = path[max(0, len(path) - 6)]
+                incoming_x = current % stride - earlier % stride
+                incoming_y = current // stride - earlier // stride
+                incoming_length = math.hypot(incoming_x, incoming_y)
+                choices = []
+                flags = int(flat[current])
+                while flags:
+                    edge = flags & -flags
+                    candidate = low_bit[edge]
+                    flags ^= edge
+                    next_node = current + offsets[candidate]
+                    dx = next_node % stride - current % stride
+                    dy = next_node // stride - current // stride
+                    alignment = (incoming_x * dx + incoming_y * dy) / max(incoming_length * math.hypot(dx, dy), 1e-9)
+                    choices.append((alignment, candidate))
+                choices.sort(reverse=True)
+                # Join only an unambiguous smooth continuation. All unchosen
+                # branches remain in the graph and are traced separately.
+                if not choices or choices[0][0] < 0.8 or (len(choices) > 1 and choices[0][0] - choices[1][0] < 0.1):
+                    return path
+                bit = choices[0][1]
+                continue
+            flags = int(flat[current])
+            bit = low_bit[flags & -flags]
+
+    def add_path(path):
+        # A short edge between two junctions can be part of a long table rule.
+        # Dropping it merely because it has few pixels punctures the backbone.
+        if len(path) < 2 or (len(path) < 5 and not (degree[path[0]] >= 3 and degree[path[-1]] >= 3)):
+            return
+        coordinates = np.array([(index % stride - 1, index // stride - 1) for index in path], np.float32)
+        closed = path[0] == path[-1]
+        if closed and abs(cv2.contourArea(coordinates)) < 6:
+            return
+        # Subpixel simplification removes stair steps, while curved lines retain
+        # enough vertices to remain editable rather than being replaced by chords.
+        simplified = cv2.approxPolyDP(coordinates, 0.85, closed).reshape(-1, 2)
+        if len(simplified) < (3 if closed else 2):
+            return
+        points = [(float(x * sx), float(y * sy)) for x, y in simplified]
+        if closed:
+            points.append(points[0])
+        segments = [Segment("line", (first, last)) for first, last in zip(points, points[1:])]
+        samples = coordinates[::max(1, len(coordinates) // 64)].astype(np.int32)
+        radius = float(np.median(widths[samples[:, 1], samples[:, 0]]))
+        # Distance runs between pixel centres; 2r would nearly double a 1 px
+        # stroke. Subtract the shared centre pixel before applying page units.
+        pen_width = max(1.0, 2 * radius - 1) * (sx + sy) / 2
+        result.append(Drawing(segments, stroke=(0, 0, 0), width=pen_width, closed=closed))
+
+    # Start at graph junctions and endpoints; the remaining edges form loops.
+    for node_mask in (degree == 1, degree >= 3):
+        for start in np.flatnonzero(node_mask):
+            start = int(start)
+            while flat[start]:
+                flags = int(flat[start])
+                add_path(trace(start, low_bit[flags & -flags]))
+    for start in np.flatnonzero(flat):
+        start = int(start)
+        if flat[start]:
+            flags = int(flat[start])
+            add_path(trace(start, low_bit[flags & -flags]))
+    checkpoint(f"Векторизация завершена: {len(result)} редактируемых линий и полилиний")
+    page.warnings.append("Векторизация скана приблизительная: восстановлены оси линий и полилинии кривых; текст, мелкие детали, размеры и масштаб требуют проверки по сохранённой растровой подложке.")
+    if len(result) > 20000:
+        page.warnings.append("Скан содержит много мелких контуров: часть шума или нераспознанных букв могла попасть в векторную геометрию.")
     return result
 
 
@@ -418,7 +742,7 @@ def extract_pdf(path: Path, pages: str = "", password: str = "", ocr_mode: str =
                 if rendered is None:
                     pixmap = source.get_pixmap(matrix=fitz.Matrix(min(3, 2800 / max(source.rect.width, source.rect.height)), min(3, 2800 / max(source.rect.width, source.rect.height))), colorspace=fitz.csRGB, alpha=False)
                     rendered = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
-                page.drawings.extend(_trace_scan(rendered, page))
+                page.drawings.extend(_trace_scan(rendered, page, check_cancel=check_cancel, progress=progress))
             if images:
                 warnings.append("Растровые изображения сохранены; их пиксели не становятся редактируемыми объектами автоматически.")
             if any("\ufffd" in span.text for span in page.texts):

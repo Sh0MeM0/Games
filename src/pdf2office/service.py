@@ -29,6 +29,10 @@ class ConversionRequest:
     font_overrides: dict[str, str] = field(default_factory=dict)
     font_dirs: list[Path] = field(default_factory=list)
     overwrite: bool = False
+    scan_cleanup: bool = True
+    scan_deskew: bool = True
+    scan_dpi: int = 0
+    vectorize_tiff: bool = True
 
 
 @dataclass
@@ -82,14 +86,15 @@ def convert(
     progress: Callable[[str], None] | None = None,
     cancelled: Callable[[], bool] | None = None,
 ) -> list[ConversionResult]:
-    """Process each PDF independently and report partial failures explicitly."""
+    """Process each PDF/TIFF independently and report partial failures explicitly."""
     from .cad import export_dwg, export_dxf, image_directory_name
     from .extract import extract_pdf
+    from .scans import extract_tiff
     from .fonts import FontCatalog
     from .word import export_docx
 
     if not request.inputs:
-        raise ValueError("Выберите хотя бы один PDF-файл.")
+        raise ValueError("Выберите хотя бы один файл PDF или TIFF.")
     formats = tuple(dict.fromkeys(s.lower() for s in request.formats))
     if not formats or any(s not in {"dwg", "dxf", "docx"} for s in formats):
         raise ValueError("Выберите формат DWG, DXF или DOCX.")
@@ -99,6 +104,9 @@ def convert(
         raise ValueError("Неизвестный режим OCR.")
     if request.docx_mode not in {"layout", "flow"}:
         raise ValueError("Неизвестный режим DOCX.")
+    if (not isinstance(request.scan_dpi, int) or isinstance(request.scan_dpi, bool)
+            or (request.scan_dpi != 0 and not 72 <= request.scan_dpi <= 2400)):
+        raise ValueError("DPI скана: 0 для автоматического выбора или целое число от 72 до 2400.")
     directory = Path(request.output_dir).expanduser().resolve()
     directory.mkdir(parents=True, exist_ok=True)
     setup_runtime()
@@ -126,13 +134,20 @@ def convert(
         errors: list[str] = []
         try:
             notify(f"Чтение: {source.name}")
-            pages = extract_pdf(
-                source, pages=request.pages, password=request.password,
-                ocr_mode=request.ocr_mode, ocr_language=request.ocr_language,
-                tesseract_path=tool_path("tesseract"),
-                vectorize_scans=request.vectorize_scans, progress=notify,
-                check_cancel=check_cancel,
-            )
+            options = dict(pages=request.pages, ocr_mode=request.ocr_mode,
+                           ocr_language=request.ocr_language,
+                           tesseract_path=tool_path("tesseract"),
+                           progress=notify, check_cancel=check_cancel)
+            if source.suffix.lower() in {".tif", ".tiff"}:
+                pages = extract_tiff(source, **options,
+                                     vectorize_scans=request.vectorize_tiff,
+                                     preprocess=request.scan_cleanup,
+                                     deskew=request.scan_deskew, dpi=request.scan_dpi)
+            elif source.suffix.lower() == ".pdf":
+                pages = extract_pdf(source, **options, password=request.password,
+                                    vectorize_scans=request.vectorize_scans)
+            else:
+                raise ValueError("Поддерживаются файлы .pdf, .tif и .tiff.")
             for page in pages:
                 result.warnings.extend(page.warnings)
             overrides = dict(request.font_overrides)
@@ -201,12 +216,17 @@ def convert(
             "application": "PDF Master " + __version__,
             "created_utc": datetime.now(timezone.utc).isoformat(),
             "input": str(source),
+            "input_format": source.suffix.lower().lstrip("."),
             "outputs": [str(p) for p in result.outputs],
             "formats_requested": formats,
             "pages": request.pages or "all",
             "ocr_mode": request.ocr_mode,
             "ocr_language": request.ocr_language,
             "vectorize_scans": request.vectorize_scans,
+            "tiff_settings": {"cleanup": request.scan_cleanup,
+                              "deskew": request.scan_deskew,
+                              "dpi": request.scan_dpi,
+                              "vectorize": request.vectorize_tiff},
             "cad_scale": request.scale,
             "docx_mode": request.docx_mode,
             "warnings": result.warnings,

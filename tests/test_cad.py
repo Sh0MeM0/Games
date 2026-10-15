@@ -104,6 +104,17 @@ def test_wildcard_font_override_is_honored(tmp_path):
     assert "Serif" in doc.styles.get(text.dxf.style).dxf.font
 
 
+def test_unsuccessful_ocr_keeps_only_raster_visible(tmp_path):
+    png = io.BytesIO()
+    Image.new("L", (20, 10), 128).save(png, "PNG")
+    scanned = PdfPage(1, 100, 50, [], [], [RasterImage((0, 0, 100, 50), png.getvalue())], ocr_used=True)
+    output = tmp_path / "unrecognized.dxf"
+    export_dxf([scanned], output)
+    doc = ezdxf.readfile(output)
+    raster, = doc.modelspace().query("IMAGE")
+    assert not doc.layers.get(raster.dxf.layer).is_off()
+
+
 @pytest.mark.parametrize("angle", [0, 37, 90, -90])
 def test_positioned_text_keeps_baseline_cap_height_and_pdf_advance(tmp_path, angle):
     p = page()
