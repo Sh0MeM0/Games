@@ -1,0 +1,39 @@
+{
+  "name": "LibreDWG 0.14 — PDF Master DXF import performance fix",
+  "license": "GPL-3.0-or-later",
+  "source": {
+    "path": "assets/licenses/libredwg-0.14.tar.xz",
+    "url": "https://github.com/LibreDWG/libredwg/releases/download/0.14/libredwg-0.14.tar.xz",
+    "sha256": "62ebb73b984f865960f20ed26619ea5f8789d5e3fd088fa40a2598384da81275"
+  },
+  "signature": {
+    "path": "assets/licenses/libredwg-0.14.tar.xz.sig",
+    "url": "https://github.com/LibreDWG/libredwg/releases/download/0.14/libredwg-0.14.tar.xz.sig",
+    "sha256": "68a6752f7e04c7eefc5389962acf49565567559c26ef03a406bc24e9d742f03a",
+    "key": "packaging/keys/libredwg-maintainer.asc",
+    "fingerprint": "38A4167B0DB69E49C5F7216CB8C28866AB27A7A2"
+  },
+  "patch": {
+    "path": "packaging/patches/libredwg-0.14-linear-dxf.patch",
+    "sha256": "62e1607dd4644cc0cce774484c86da3c78cd86c5f02550d7cdf4989abd0b5dc1",
+    "description": "Bound DXF MIF prefix checks and retain the indexed representative of repeated NULL handles; keep fallback for non-NULL duplicate references."
+  },
+  "target": "x86_64-w64-mingw32",
+  "configure": [
+    "--host=x86_64-w64-mingw32",
+    "--disable-shared",
+    "--enable-static",
+    "--disable-bindings",
+    "--disable-python",
+    "--disable-docs",
+    "--disable-werror"
+  ],
+  "cflags": "-O2 -g0 -fno-ident",
+  "ldflags": "-static -static-libgcc -Wl,--no-insert-timestamp",
+  "program_ldflags": "-all-static -static-libgcc -Wl,--no-insert-timestamp",
+  "expected_imports": [
+    "ADVAPI32.dll",
+    "KERNEL32.dll",
+    "msvcrt.dll"
+  ]
+}

@@ -96,7 +96,14 @@
     "kind": "libredwg",
     "name": "GNU LibreDWG",
     "version": "0.14",
-    "source": "https://github.com/LibreDWG/libredwg/releases/download/0.14/libredwg-0.14.tar.xz"
+    "source": "https://github.com/LibreDWG/libredwg/releases/download/0.14/libredwg-0.14.tar.xz",
+    "pdfmaster_dxf2dwg_patch": {
+      "manifest": "packaging/libredwg-patch.lock.json",
+      "source_sha256": "62ebb73b984f865960f20ed26619ea5f8789d5e3fd088fa40a2598384da81275",
+      "patch_sha256": "62e1607dd4644cc0cce774484c86da3c78cd86c5f02550d7cdf4989abd0b5dc1",
+      "license": "GPL-3.0-or-later",
+      "recipe": "scripts/build_libredwg_windows.py"
+    }
   },
   {
     "filename": "tesseract-5.5.3-he87eeb8_0.conda",

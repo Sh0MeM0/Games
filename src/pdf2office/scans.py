@@ -8,6 +8,7 @@ reliably from a damaged original.
 from __future__ import annotations
 
 import csv
+from functools import lru_cache
 import io
 import math
 from pathlib import Path
@@ -17,7 +18,7 @@ from typing import Callable
 
 import cv2
 import numpy as np
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
 
 from .extract import (PdfExtractionError, _find_tesseract, _run_tesseract,
                       _tesseract_options, _trace_scan, parse_page_range)
@@ -270,6 +271,93 @@ def _prepare_ocr_tile(image: Image.Image, dpi: float) -> tuple[Image.Image, bool
     return Image.fromarray(np.where(keep[labels], 0, 255).astype(np.uint8)), True
 
 
+@lru_cache(maxsize=1)
+def _ocr_check_fonts():
+    from .fonts import bundled_font_dir
+    fonts = []
+    for name in ("LiberationSans-Regular.ttf", "LiberationSans-Bold.ttf",
+                 "LiberationSerif-Regular.ttf", "LiberationSerif-Bold.ttf"):
+        try:
+            fonts.append(ImageFont.truetype(str(bundled_font_dir() / name), 128))
+        except (OSError, ValueError):
+            pass
+    return fonts
+
+
+def _glyph_shape_agreement(mask: np.ndarray, text: str) -> float:
+    fonts = _ocr_check_fonts()
+    if not fonts:
+        return 1.0  # Missing optional check fonts must not discard OCR text.
+    target = cv2.resize(mask, (64, 64), interpolation=cv2.INTER_AREA) > 64
+    kernel = np.ones((5, 5), np.uint8)
+    target_near = cv2.dilate(target.astype(np.uint8), kernel) > 0
+    best = 0.0
+    for font in fonts:
+        bounds = font.getbbox(text)
+        glyph = Image.new("L", (max(1, bounds[2] - bounds[0]), max(1, bounds[3] - bounds[1])))
+        ImageDraw.Draw(glyph).text((-bounds[0], -bounds[1]), text, font=font, fill=255)
+        reference = cv2.resize(np.asarray(glyph), (64, 64), interpolation=cv2.INTER_AREA) > 64
+        reference_near = cv2.dilate(reference.astype(np.uint8), kernel) > 0
+        precision = np.count_nonzero(target & reference_near) / max(1, np.count_nonzero(target))
+        recall = np.count_nonzero(reference & target_near) / max(1, np.count_nonzero(reference))
+        best = max(best, 2 * precision * recall / max(0.001, precision + recall))
+    return best
+
+
+def _reject_ocr_geometry(image: Image.Image, dpi: tuple[float, float], spans: list[TextSpan],
+                         messages: list[str], *, preprocess=True, check_cancel=None) -> list[TextSpan]:
+    """Keep drawings/signatures misread as giant short words as geometry.
+
+    Size alone never rejects text. Only anomalous short tokens are inspected;
+    a genuine large heading/dimension with plausible glyphs is retained. Local
+    shape agreement tolerates different face weights/serifs. Large handwriting
+    that fails this conservative check remains in the reference and tracing.
+    """
+    if len(spans) < 8 or not _ocr_check_fonts():
+        return spans
+    ordinary_height = float(np.median([span.bbox[3] - span.bbox[1] for span in spans]))
+    retained = []
+    rejected = 0
+    for span in spans:
+        _check(check_cancel)
+        height = span.bbox[3] - span.bbox[1]
+        if height <= ordinary_height * 2.2 or sum(c.isalnum() for c in span.text) > 4:
+            retained.append(span)
+            continue
+        x0, y0, x1, y1 = [round(value * dpi[index % 2] / 72) for index, value in enumerate(span.bbox)]
+        padding = max(12, (y1 - y0) // 2)
+        box = (max(0, x0 - padding), max(0, y0 - padding),
+               min(image.width, x1 + padding), min(image.height, y1 + padding))
+        crop = image.crop(box).convert("L")
+        original_width, original_height = crop.size
+        crop.thumbnail((1200, 1200))
+        sx, sy = crop.width / original_width, crop.height / original_height
+        if preprocess:
+            crop, _ = _prepare_ocr_tile(crop, math.sqrt(dpi[0] * dpi[1]) * math.sqrt(sx * sy))
+        mask = np.uint8(np.asarray(crop) < 128) * 255
+        left, top = round((x0 - box[0]) * sx), round((y0 - box[1]) * sy)
+        right, bottom = round((x1 - box[0]) * sx), round((y1 - box[1]) * sy)
+        inside = mask[top:bottom, left:right]
+        if not inside.size:
+            retained.append(span)
+            continue
+        agreement = _glyph_shape_agreement(inside, span.text)
+        count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        ink_counts = np.bincount(labels[top:bottom, left:right].ravel(), minlength=count)
+        ink_counts[0] = 0
+        margin = max(3, (bottom - top) * 0.1)
+        crossing = (((stats[:, 0] < left - margin) & (stats[:, 0] + stats[:, 2] > right + margin))
+                    | ((stats[:, 1] < top - margin) & (stats[:, 1] + stats[:, 3] > bottom + margin)))
+        continued_ink = ink_counts[crossing].sum() / max(1, ink_counts.sum())
+        if agreement < 0.78 or (agreement < 0.85 and continued_ink > 0.40):
+            rejected += 1
+        else:
+            retained.append(span)
+    if rejected:
+        messages.append(f"Отклонено сомнительных крупных OCR-фрагментов: {rejected}. Контуры, подписи и повреждённые надписи не заменены предположительными буквами; они сохранены в подложке и доступной векторизации.")
+    return retained
+
+
 def _ocr_tiles(image: Image.Image, dpi: tuple[float, float], environment, language: str,
                messages: list[str], *, check_cancel=None, progress=None, preprocess=True) -> list[TextSpan]:
     executable, options, cwd, _ = environment
@@ -323,6 +411,7 @@ def _ocr_tiles(image: Image.Image, dpi: tuple[float, float], environment, langua
                     continue
                 result.append(TextSpan(text, bbox, "Liberation Sans", max(2, height * sy), (0, 0, 0),
                                        origin=(bbox[0], bbox[3]), from_ocr=True, advance=width * sx))
+    result = _reject_ocr_geometry(image, dpi, result, messages, preprocess=preprocess, check_cancel=check_cancel)
     messages.append("OCR скана требует проверки: рукописные, повреждённые и наклонные надписи могут быть пропущены или распознаны неверно; шрифт определяется приблизительно.")
     if not result:
         messages.append("На TIFF не удалось уверенно распознать текст; очищенная растровая подложка сохранена.")

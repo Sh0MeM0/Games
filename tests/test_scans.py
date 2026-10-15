@@ -274,3 +274,60 @@ def test_multipage_tiff_uses_each_frames_own_dpi(tmp_path):
             output.newFrame()
     pages = extract_tiff(path, ocr_mode="off", vectorize_scans=False, deskew=False)
     assert [page.width for page in pages] == [144, 72]
+
+
+def _synthetic_ocr_title(image, text, position, font_name, size):
+    from pdf2office.fonts import bundled_font_dir
+    from pdf2office.models import TextSpan
+    font = ImageFont.truetype(str(bundled_font_dir() / font_name), size)
+    draw = ImageDraw.Draw(image)
+    bounds = draw.textbbox(position, text, font=font)
+    draw.text(position, text, font=font, fill=0)
+    return TextSpan(text, tuple(float(v) for v in bounds), "Liberation Sans", size, (0, 0, 0), from_ocr=True)
+
+
+@pytest.mark.parametrize("face,text", [("LiberationSans-Regular.ttf", "ПЛАН"),
+                                       ("LiberationSerif-Bold.ttf", "1200"),
+                                       ("LiberationSans-Italic.ttf", "ABC"),
+                                       ("LiberationSerif-Italic.ttf", "TITLE")])
+def test_large_real_title_and_dimension_not_rejected_by_size(face, text):
+    from pdf2office.scans import _reject_ocr_geometry
+    image = Image.new("L", (1200, 700), 255)
+    spans = [_synthetic_ocr_title(image, "125", (30 + i * 120, 500), "LiberationSans-Regular.ttf", 22) for i in range(8)]
+    title = _synthetic_ocr_title(image, text, (70, 80), face, 120)
+    spans.append(title)
+    # A nearby underline/dimension line must not disqualify coherent glyphs.
+    ImageDraw.Draw(image).line((40, title.bbox[3] + 6, 750, title.bbox[3] + 6), fill=0, width=2)
+    messages = []
+    result = _reject_ocr_geometry(image, (72, 72), spans, messages)
+    assert title in result and len(result) == len(spans)
+    assert not messages
+
+
+def test_large_geometry_misrecognized_as_word_is_rejected_without_rescaling():
+    from pdf2office.models import TextSpan
+    from pdf2office.scans import _reject_ocr_geometry
+    image = Image.new("L", (1000, 700), 255)
+    spans = [_synthetic_ocr_title(image, "125", (25 + i * 120, 500), "LiberationSans-Regular.ttf", 22) for i in range(8)]
+    draw = ImageDraw.Draw(image)
+    draw.line((100, 80, 650, 280), fill=0, width=3)
+    draw.arc((120, 60, 560, 330), 0, 280, fill=0, width=3)
+    draw.line((180, 20, 180, 380), fill=0, width=3)
+    false = TextSpan("237", (150, 90, 540, 280), "Liberation Sans", 190, (0, 0, 0), from_ocr=True)
+    spans.append(false)
+    original = np.array(image)
+    messages = []
+    result = _reject_ocr_geometry(image, (72, 72), spans, messages)
+    assert false not in result and len(result) == 8
+    assert all(a.bbox == b.bbox for a, b in zip(result, spans[:8]))
+    assert np.array_equal(original, np.asarray(image))
+    assert any("сомнительных" in message for message in messages)
+
+
+def test_outlier_check_without_bundled_fonts_keeps_text(monkeypatch):
+    import pdf2office.scans as scans
+    from pdf2office.models import TextSpan
+    spans = [TextSpan("A", (0, 0, 10, 10), "Any", 10, (0, 0, 0)) for _ in range(8)]
+    spans.append(TextSpan("BIG", (0, 0, 100, 100), "Any", 100, (0, 0, 0)))
+    monkeypatch.setattr(scans, "_ocr_check_fonts", lambda: [])
+    assert scans._reject_ocr_geometry(Image.new("L", (200, 200), 255), (72, 72), spans, []) == spans

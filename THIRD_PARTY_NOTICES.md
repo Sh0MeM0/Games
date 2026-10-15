@@ -15,7 +15,8 @@ Tesseract. Шрифты сторонних коммерческих продук
 | PySide6 Essentials, Shiboken6, Qt | 6.8.3 | LGPL-3.0 / GPL-3.0; https://github.com/pyside/pyside-setup/tree/v6.8.3 ; https://github.com/qt/qtbase/tree/v6.8.3 |
 | PyMuPDF | 1.26.6 | AGPL-3.0; https://github.com/pymupdf/PyMuPDF/tree/1.26.6 |
 | MuPDF (в PyMuPDF) | 1.26.11 | AGPL-3.0; https://github.com/ArtifexSoftware/mupdf/tree/1.26.11 |
-| GNU LibreDWG | 0.14 | GPL-3.0-or-later; https://github.com/LibreDWG/libredwg/releases/download/0.14/libredwg-0.14.tar.xz |
+| GNU LibreDWG | 0.14; `dxf2dwg.exe` с исправлением PDF Мастер | GPL-3.0-or-later; `licenses/LibreDWG-PDFMaster`; https://github.com/LibreDWG/libredwg/releases/download/0.14/libredwg-0.14.tar.xz |
+| GCC runtime и MinGW-w64 (статический импортер) | GCC 14, точная сборка в `vendor/libredwg/PDFMASTER_BUILD.json` | GPL-3.0 с GCC Runtime Library Exception 3.1; лицензии MinGW-w64; `assets/licenses/GCC-Runtime-NOTICES.txt`, `assets/licenses/MinGW-w64-NOTICES.txt` |
 | PCRE2 (в поставке LibreDWG) | 10.47 | BSD-3-Clause; https://github.com/PCRE2Project/pcre2/tree/pcre2-10.47 |
 | GNU libiconv (в поставке LibreDWG) | 1.18 | LGPL-2.1-or-later; https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.18.tar.gz |
 | Tesseract | 5.5.3 | Apache-2.0; https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.3.tar.gz |
@@ -67,6 +68,19 @@ https://download.qt.io/archive/qt/6.8/6.8.3/single/qt-everywhere-src-6.8.3.tar.x
 Исходники PyMuPDF также доступны по прямому URL `source` в `DEPENDENCIES.json`;
 этот архив содержит сборочный рецепт точной версии MuPDF и инструкции сборки.
 Сведения об исходниках нужно передавать вместе с бинарной поставкой.
+
+Импортер `dxf2dwg.exe` изменён проектом PDF Мастер 15 октября 2026 года:
+ограничена стоимость проверки префикса при чтении DXF и сохранён быстрый поиск
+ссылок при повторных нулевых ссылках. Ненулевые дубликаты сохраняют прежнюю
+защитную обработку. Полные соответствующие исходники доступны непосредственно
+в portable и исходном ZIP: `assets/licenses/libredwg-0.14.tar.xz`, точный patch
+и рецепт в `licenses/LibreDWG-PDFMaster` (portable) или `packaging/patches` и
+`scripts/build_libredwg_windows.py` (исходный ZIP). Манифест закрепляет архив,
+подпись, patch и параметры сборки. Исходный ZIP содержит готовую структуру
+каталогов для пересборки; для неё нужны Linux/WSL, MinGW-w64, GNU make/patch,
+GnuPG и Python 3.12+. Исходники не заменены предложением получить их по запросу.
+Подпись сопровождающего LibreDWG удостоверяет исходный архив, а не изменённый
+EXE. Официальные утилиты обратного чтения DWG оставлены без изменений.
 
 Архивы получены через HTTPS с проверкой TLS. Пакеты PyPI и conda сверены с
 SHA-256, опубликованными в метаданных соответствующего реестра. Все входящие

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Build an offline Windows x64 distribution on Linux or Windows.
+"""Build an offline Windows x64 distribution on Linux or WSL.
 
-Requires Python >=3.12, zstandard, GnuPG and MinGW-w64 GCC. NSIS is needed only
+Requires Python >=3.12, zstandard, GnuPG, GNU make/patch and MinGW-w64 GCC. NSIS is needed only
 for installer builds. All downloaded runtime artifacts are pinned by SHA-256
 in packaging/windows-assets.lock.json.
 """
@@ -123,6 +123,8 @@ def main() -> int:
     libredwg_archive = next(path for record, path in zip(records, archives) if record["kind"] == "libredwg")
     subprocess.run(["gpg", "--batch", "--homedir", str(keyring), "--verify",
                     str(ROOT / "packaging/keys/libredwg-0.14-win64.zip.sig"), str(libredwg_archive)], check=True)
+    from build_libredwg_windows import build_backend
+    patched_importer, importer_provenance = build_backend(args.cache, args.cc)
     dist = ROOT / "dist"
     stage = dist / "PDFMaster-Portable-x64"
     # Only delete the dedicated build staging directory, never a user-selected folder.
@@ -191,6 +193,35 @@ def main() -> int:
                 destination = licenses / "conda" / record["name"]
                 destination.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(info / "index.json", destination / "index.json")
+
+    # Keep the official readers/DLLs, but use our source-built importer with
+    # bounded DXF parsing and NULL-handle indexing fixes for large drawings.
+    shutil.copy2(patched_importer, stage / "vendor/libredwg/dxf2dwg.exe")
+    shutil.copy2(importer_provenance, stage / "vendor/libredwg/PDFMASTER_BUILD.json")
+    native_license = licenses / "LibreDWG-PDFMaster"
+    native_license.mkdir()
+    for source, name in [
+        (ROOT / "scripts/build_libredwg_windows.py", "build_libredwg_windows.py"),
+        (ROOT / "packaging/libredwg-patch.lock.json", "libredwg-patch.lock.json"),
+        (ROOT / "packaging/patches/libredwg-0.14-linear-dxf.patch", "libredwg-0.14-linear-dxf.patch"),
+        (ROOT / "packaging/keys/libredwg-maintainer.asc", "libredwg-maintainer.asc"),
+        (ROOT / "assets/licenses/LibreDWG-COPYING.txt", "COPYING"),
+    ]:
+        shutil.copy2(source, native_license / name)
+    (native_license / "README.txt").write_text(
+        "dxf2dwg.exe is a modified GNU LibreDWG 0.14 build (GPL-3.0-or-later).\n"
+        "The complete upstream source archive and signature are included at\n"
+        "../../assets/licenses/libredwg-0.14.tar.xz and libredwg-0.14.tar.xz.sig.\n"
+        "This directory contains the exact patch, pinned manifest, build recipe,\n"
+        "upstream public key and GPL license. The full runnable source layout\n"
+        "is in PDFMaster-Source.zip, supplied alongside this portable archive.\n"
+        "On Linux/WSL with Python 3.12+, GnuPG, GNU make/patch and MinGW-w64:\n"
+        "  python scripts/build_libredwg_windows.py --cc x86_64-w64-mingw32-gcc\n"
+        "Build provenance and the binary SHA-256 are recorded in\n"
+        "../../vendor/libredwg/PDFMASTER_BUILD.json.\n"
+        "The upstream signature authenticates its source archive, not this\n"
+        "modified executable. No endorsement or binary signature is claimed.\n",
+        encoding="utf-8")
 
     # Apply the official accuracy-oriented language models after every conda
     # package has been extracted, independent of lockfile ordering. Keep its
