@@ -9,7 +9,7 @@
 </head>
 <body>
   <header>
-    <div class="brand"><span class="brand-icon" aria-hidden="true">✂</span><div><h1>Печати и подписи</h1><p>Отдельные изображения на белом фоне</p></div></div>
+    <div class="brand"><span class="brand-icon" aria-hidden="true">✂</span><div><h1>Печати и подписи</h1><p>2.0 · Удаление текста · Отдельный PNG для каждого объекта</p></div></div>
     <span class="offline">● Всё остаётся на вашем компьютере</span>
   </header>
   <nav class="toolbar" aria-label="Основные действия">
@@ -17,8 +17,7 @@
     <input id="file" type="file" accept=".png,.jpg,.jpeg,.webp,.bmp,image/png,image/jpeg,image/webp,image/bmp" hidden>
     <span class="divider"></span>
     <select id="detectMode" aria-label="Чернила для автопоиска"><option value="all">Все чернила</option><option value="colored">Только цветные</option><option value="blue">Синие</option><option value="red">Красные</option><option value="black">Тёмные</option></select>
-    <button id="detect" disabled>Найти области</button>
-    <label class="gap-label" title="Меньше — легче разделить близкие объекты; больше — объединить отдельные штрихи.">Объединение <input id="gap" type="range" min="1" max="28" value="10"><output id="gapValue">10</output></label>
+    <button id="detect" disabled>Повторить поиск</button>
     <button id="draw" disabled aria-pressed="false">+ Выделить вручную</button>
     <button id="saveAll" class="primary push-right" disabled>Сохранить все PNG</button>
   </nav>
@@ -29,30 +28,33 @@
         <div id="empty" class="empty"><div class="empty-symbol">▧</div><h2>Перетащите изображение сюда</h2><p>Скриншот, фотографию или скан<br>PNG, JPG, WEBP, BMP</p><button id="openEmpty">Выбрать файл</button><small>Оригинал останется без изменений</small></div>
         <div id="stage" hidden><canvas id="original"></canvas><canvas id="overlay" aria-label="Рамки выделенных объектов"></canvas></div>
       </div>
-      <div class="source-hint" id="sourceHint">1. Откройте изображение → 2. Выделите объекты → 3. Сохраните PNG</div>
+      <div class="source-hint" id="sourceHint">Откройте документ → проверьте найденные печати и подписи → сохраните отдельные PNG</div>
     </section>
     <aside>
-      <section class="objects-panel"><div class="panel-heading"><strong>Объекты <span id="count" class="badge">0</span></strong><button id="duplicate" disabled title="Копия рамки для отдельной цветовой обработки">Дублировать</button></div><div id="objects"><p class="muted">Нажмите «Найти области» или обведите нужный объект вручную.</p></div></section>
+      <section class="objects-panel"><div class="panel-heading"><strong>Объекты <span id="count" class="badge">0</span></strong><button id="duplicate" disabled title="Копия рамки для отдельной цветовой обработки">Дублировать</button></div><p id="analysisInfo" class="analysis-info">Автоматический поиск и очистка</p><div id="objects"><p class="muted">Откройте документ: поиск и очистка начнутся автоматически.</p></div></section>
       <section class="result-panel">
         <div class="panel-heading"><strong>Результат</strong><button id="compare" disabled aria-pressed="false">Показать оригинал</button></div>
         <div id="previewWrap"><p id="previewEmpty" class="muted">Выберите область на изображении</p><canvas id="preview" hidden></canvas><span id="previewBusy" hidden>Обработка…</span></div>
         <p id="previewInfo" class="preview-info">Белый непрозрачный фон · PNG</p>
         <fieldset id="editor" disabled>
           <label>Имя файла<input id="name" type="text" maxlength="100" placeholder="объект_01"></label>
+          <label>Тип объекта<select id="kind"><option value="stamp">Печать — сохранить её надписи</option><option value="signature">Подпись — удалить печатный текст</option><option value="candidate">Область — проверить результат</option></select></label>
+          <label class="check-label"><input id="removeText" type="checkbox" checked> Удалять печатный текст документа</label>
+          <label class="check-label"><input id="removeLines" type="checkbox" checked> Удалять линии бланка</label>
           <div class="two-columns"><label>Оставить чернила<select id="mode"><option value="all">Все цвета</option><option value="colored">Только цветные</option><option value="blue">Синие</option><option value="red">Красные</option><option value="black">Тёмные</option></select></label><label>Масштаб PNG<select id="scale"><option value="1">Исходный</option><option value="2">В 2 раза</option><option value="3">В 3 раза</option></select></label></div>
           <label class="slider-label">Удаление фона <output id="thresholdValue">18</output><input id="threshold" type="range" min="3" max="80" value="18"></label>
           <label class="slider-label">Убрать мелкий шум <output id="speckleValue">3</output><input id="speckle" type="range" min="0" max="30" value="3"></label>
           <label class="slider-label">Контраст штрихов <output id="contrastValue">1.2</output><input id="contrast" type="range" min="1" max="2.5" step="0.1" value="1.2"></label>
           <div class="brush-tools"><button id="erase" type="button" aria-pressed="true">Убрать</button><button id="restore" type="button" aria-pressed="false">Вернуть</button><button id="undo" type="button" title="Отменить последнее движение кисти">↶</button><button id="redo" type="button" title="Повторить движение кисти">↷</button></div>
           <label class="slider-label">Размер кисти <output id="brushValue">12</output><input id="brush" type="range" min="2" max="80" value="12"></label>
-          <p class="control-hint">Рисуйте на результате, чтобы убрать остатки текста. «Вернуть» восстанавливает существующие штрихи. Увеличение PNG не добавляет деталей.</p>
+          <p class="control-hint">При необходимости уточните автоматическую очистку кистью. «Вернуть» восстанавливает существующие штрихи. Увеличение PNG не добавляет деталей.</p>
           <button id="saveOne" type="button" class="primary wide">Сохранить этот PNG</button>
         </fieldset>
       </section>
     </aside>
   </main>
   <footer><span id="status" role="status" aria-live="polite">Готово к работе</span><button id="cancelExport" hidden>Остановить сохранение</button><button id="openOutput" disabled>Открыть папку результатов</button></footer>
-  <div class="limitation">Автопоиск предлагает области, включая текст. Проверяйте результат. Пересекающиеся штрихи нельзя достоверно восстановить по одному изображению.</div>
+  <div class="limitation">Если текст перекрывает подпись теми же чернилами, точное разделение может потребовать ручной правки. Скрытые штрихи не дорисовываются.</div>
   <script type="module" src="app.js"></script>
 </body>
 </html>

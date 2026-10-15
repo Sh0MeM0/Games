@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const { randomUUID } = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const { writeUniquePng } = require('./lib/export.cjs');
+const { OfflineOcr } = require('./lib/ocr.cjs');
 
 // Portable: Chromium profile and cache live in TEMP, not beside the original images.
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'StampExtractor-'));
@@ -15,6 +16,8 @@ app.setAppUserModelId('org.stampextractor.desktop');
 let window, lastDirectory;
 const sessions = new Map();
 const indexUrl = pathToFileURL(path.join(__dirname, 'renderer/index.html')).href;
+const ocr = new OfflineOcr({ modelDirectory: app.isPackaged
+  ? path.join(process.resourcesPath, 'ocr') : path.join(__dirname, 'resources', 'ocr') });
 
 function message(error) {
   if (error.code === 'ENOSPC') return 'На диске недостаточно места. Выберите другой диск.';
@@ -58,6 +61,7 @@ handle('export:open', async () => {
   if (error) throw new Error('Не удалось открыть папку результатов.');
   return {};
 });
+handle('ocr:recognize', async payload => ocr.recognize(payload?.buffer));
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
@@ -75,4 +79,4 @@ app.whenReady().then(() => {
   window.on('closed', () => { window = undefined; sessions.clear(); });
 });
 app.on('window-all-closed', () => app.quit());
-app.on('will-quit', () => { try { fs.rmSync(temporary, { recursive: true, force: true }); } catch {} });
+app.on('will-quit', () => { ocr.close(); try { fs.rmSync(temporary, { recursive: true, force: true }); } catch {} });

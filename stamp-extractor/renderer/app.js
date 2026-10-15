@@ -14,7 +14,7 @@ function call(type, payload = {}, transfer = []) {
   return new Promise((resolve, reject) => { const id = ++requestId; waiting.set(id, { resolve, reject }); worker.postMessage({ id, type, payload }, transfer); });
 }
 const state = { source: null, regions: [], selected: null, next: 1, drawing: false, busy: false,
-  tool: 'erase', zoom: 1, fit: 1, previewReady: false, previewRevision: 0, compare: false, stopExport: false };
+  tool: 'erase', zoom: 1, fit: 1, previewReady: false, previewRevision: 0, compare: false, stopExport: false, recognized: false };
 let previewRunning = false, previewAgain = false, previewTimer, draft, stroke;
 function status(text, error = false) { $('status').textContent = text; $('status').classList.toggle('error', error); $('status').title = text; }
 function selected() { return state.regions.find(r => r.id === state.selected); }
@@ -22,7 +22,7 @@ function busy(value) { state.busy = value; listRegions(); }
 function updateButtons() {
   const source = !!state.source, region = !!selected();
   for (const id of ['open','openEmpty']) $(id).disabled = state.busy;
-  for (const id of ['detect','draw','zoomIn','zoomOut','fit','detectMode','gap']) $(id).disabled = !source || state.busy;
+  for (const id of ['detect','draw','zoomIn','zoomOut','fit','detectMode']) $(id).disabled = !source || state.busy;
   $('saveAll').disabled = !state.regions.length || state.busy;
   $('saveAll').textContent = state.regions.length ? `Сохранить все PNG (${state.regions.length})` : 'Сохранить все PNG';
   $('duplicate').disabled = !region || state.busy || state.regions.length >= 80;
@@ -40,7 +40,13 @@ function updateButtons() {
 }
 function listRegions() {
   $('objects').replaceChildren();
-  if (!state.regions.length) { const p = document.createElement('p'); p.className = 'muted'; p.textContent = 'Нажмите «Найти области» или обведите нужный объект вручную.'; $('objects').append(p); }
+  if (state.source && !state.busy) {
+    const stamps = state.regions.filter(r => r.options.kind === 'stamp').length;
+    const signatures = state.regions.filter(r => r.options.kind === 'signature').length;
+    const uncertain = state.regions.length - stamps - signatures;
+    $('analysisInfo').textContent = `Печати: ${stamps} · Подписи: ${signatures}` + (uncertain ? ` · Проверить: ${uncertain}` : '');
+  }
+  if (!state.regions.length) { const p = document.createElement('p'); p.className = 'muted'; p.textContent = 'Откройте документ: печати и подписи будут выделены автоматически.'; $('objects').append(p); }
   for (let i = 0; i < state.regions.length; i++) {
     const region = state.regions[i], row = document.createElement('div'); row.className = 'object-row' + (region.id === state.selected ? ' active' : '');
     const button = document.createElement('button'); button.textContent = `${i + 1}. ${region.name}`; button.disabled = state.busy;
@@ -57,7 +63,8 @@ function choose(id) {
   const region = selected();
   if (region) {
     $('name').value = region.name; $('scale').value = region.scale;
-    for (const key of ['mode','threshold','speckle','contrast']) $(key).value = region.options[key];
+    for (const key of ['kind','mode','threshold','speckle','contrast']) $(key).value = region.options[key];
+    $('removeText').checked = region.options.removeText; $('removeLines').checked = region.options.removeLines;
     updateValues(); schedulePreview();
   } else {
     state.previewRevision++; $('preview').hidden = true; $('previewEmpty').hidden = false; $('previewBusy').hidden = true;
@@ -69,11 +76,11 @@ function newRegion(rect, options) {
   if (state.regions.length >= 80) throw new Error('Можно сохранить до 80 объектов за один раз.');
   const x = Math.max(0, Math.floor(rect.x)), y = Math.max(0, Math.floor(rect.y));
   const region = { id: state.next++, rect: { x, y, w: Math.min(state.source.width - x, Math.ceil(rect.w)), h: Math.min(state.source.height - y, Math.ceil(rect.h)) },
-    name: `объект_${String(state.next - 1).padStart(2,'0')}`, scale: 1,
-    options: { mode: 'all', threshold: 18, speckle: 3, contrast: 1.2, ...options }, strokes: [], redo: [] };
+    name: `${rect.kind === 'stamp' ? 'печать' : rect.kind === 'signature' ? 'подпись' : 'проверить'}_${String(state.next - 1).padStart(2,'0')}`, scale: 1,
+    options: { kind: rect.kind || 'candidate', mode: rect.mode || 'all', removeText: true, removeLines: true, threshold: 18, speckle: 3, contrast: 1.2, ...options }, strokes: [], redo: [] };
   state.regions.push(region); return region;
 }
-function updateValues() { for (const key of ['threshold','speckle','contrast','brush','gap']) $(key+'Value').textContent = $(key).value; }
+function updateValues() { for (const key of ['threshold','speckle','contrast','brush']) $(key+'Value').textContent = $(key).value; }
 function params(region) { return { rect: region.rect, options: region.options, strokes: region.strokes, scale: region.scale }; }
 function schedulePreview() {
   state.previewReady = false; state.previewRevision++; previewAgain = true; $('previewBusy').hidden = !selected();
@@ -148,28 +155,45 @@ async function openFile(file) {
     $('original').getContext('2d').drawImage(full,0,0,displayWidth,displayHeight);
     const pixels = ctx.getImageData(0,0,width,height).data; full.width = 1;
     await call('init', { width, height, buffer:pixels.buffer }, [pixels.buffer]);
+    $('analysisInfo').textContent = 'Распознавание…';
     state.source = { width,height,displayWidth,displayHeight,filename:file.name,stem:file.name.replace(/\.[^.]+$/,'') };
-    state.regions = []; state.selected = null; state.next = 1; state.drawing = true; state.zoom = 1; draft = undefined;
+    state.regions = []; state.selected = null; state.next = 1; state.recognized = false; state.drawing = false; state.zoom = 1; draft = undefined;
     $('stage').hidden = false; $('empty').hidden = true; choose(null); fitSource(); document.querySelector('aside').scrollTop=0;
     $('sourceInfo').textContent = `${file.name} · ${width} × ${height}`; $('sourceInfo').title = $('sourceInfo').textContent;
-    $('sourceHint').textContent = 'Обведите печать или подпись рамкой. Либо нажмите «Найти области».';
-    status(factor < 1 ? 'Открыто. Большое изображение уменьшено для обработки; оригинал сохранён.' : 'Открыто. Выделите объекты вручную или запустите поиск.');
-  } catch (error) { bitmap?.close(); status('Не удалось открыть изображение. Проверьте формат и целостность файла. '+error.message,true); }
+    $('sourceHint').textContent = 'Каждая рамка — отдельный PNG. Выберите объект, чтобы проверить очистку.';
+    await analyzeOpened();
+  } catch (error) { bitmap?.close(); status('Не удалось обработать изображение. '+error.message,true); }
   finally { busy(false); }
+}
+async function analyzeOpened() {
+  status('Распознаю печатный текст на русском и английском…');
+  const input = await call('ocrInput');
+  const ocr = await window.desktop.recognize(input);
+  if (!ocr.ok) throw new Error(ocr.error);
+  state.recognized = true;
+  await findObjects(ocr.words);
+}
+async function findObjects(words) {
+  status('Отделяю печати и подписи от текста и линий…');
+  const result = await call('detect', { words, mode: $('detectMode').value, threshold: 18 });
+  state.regions = []; state.next = 1;
+  for (const rect of result.regions) newRegion(rect);
+  state.drawing = !state.regions.length; choose(state.regions[0]?.id);
+  const stamps = result.regions.filter(r => r.kind === 'stamp').length;
+  const signatures = result.regions.filter(r => r.kind === 'signature').length;
+  const uncertain = result.regions.length - stamps - signatures;
+  $('analysisInfo').textContent = `Печати: ${stamps} · Подписи: ${signatures}` + (uncertain ? ` · Проверить: ${uncertain}` : '');
+  status(result.truncated ? 'Найдено больше 80 объектов. Показаны первые 80; проверьте результат.' : state.regions.length ?
+    `Выделено: ${state.regions.length}. Распознанный текст и фон удаляются автоматически. Проверьте результат и сохраните PNG.` :
+    'Печати и подписи не найдены. Можно выделить слабый или сложный объект вручную.');
 }
 async function detect() {
   if (!state.source || state.busy) return;
-  if (state.regions.length && !confirm('Заменить текущие области результатами автопоиска? Ручная очистка этих областей будет сброшена.')) return;
-  busy(true); listRegions(); status('Ищу отдельные области…');
-  try {
-    const mode = $('detectMode').value;
-    const result = await call('detect',{mode,gap:Number($('gap').value),threshold:18});
-    state.regions = []; state.next = 1;
-    for (const rect of result.regions) newRegion(rect,{mode});
-    state.drawing = !state.regions.length; choose(state.regions[0]?.id);
-    status(result.truncated ? 'Показаны первые 80 областей. Выберите отдельный фрагмент вручную.' : state.regions.length ? `Найдено областей: ${state.regions.length}. Проверьте рамки; лишние области удалите крестиком.` : 'Отдельные объекты не найдены. Обведите нужную область вручную или измените фильтр.');
-  } catch (error) { status(error.message,true); }
-  finally { busy(false); listRegions(); }
+  if (state.regions.length && !confirm('Повторить поиск? Ручная очистка текущих объектов будет сброшена.')) return;
+  busy(true);
+  try { if (state.recognized) await findObjects(); else await analyzeOpened(); }
+  catch (error) { status(error.message,true); }
+  finally { busy(false); }
 }
 async function save(all) {
   if (!selected() || state.busy) return;
@@ -206,17 +230,17 @@ window.addEventListener('dragover',event=>event.preventDefault());
 window.addEventListener('drop',event=>{event.preventDefault();openFile(event.dataTransfer.files[0]);});
 $('detect').onclick = detect;
 $('draw').onclick = () => { state.drawing = !state.drawing; updateButtons(); status(state.drawing ? 'Протяните рамку вокруг одного объекта на исходном изображении.' : 'Нажмите на рамку, чтобы выбрать объект.'); };
-$('duplicate').onclick = () => { const r=selected();if(!r)return;const copy=newRegion({...r.rect},{...r.options});copy.scale=r.scale;choose(copy.id);status('Область продублирована. Выберите отдельный цвет чернил.'); };
+$('duplicate').onclick = () => { const r=selected();if(!r)return;const copy=newRegion({...r.rect},{...r.options});copy.name=r.name+'_копия';copy.scale=r.scale;choose(copy.id);status('Область продублирована. Выберите отдельный цвет чернил.'); };
 $('zoomIn').onclick = () => { state.zoom=Math.min(8,state.zoom*1.3);applyZoom(); };
 $('zoomOut').onclick = () => { state.zoom=Math.max(.2,state.zoom/1.3);applyZoom(); };
 $('fit').onclick = () => { state.zoom=1;fitSource(); };
 new ResizeObserver(()=>fitSource()).observe($('viewport'));
-$('gap').oninput = updateValues;
 $('name').oninput = () => { if(selected()){selected().name=$('name').value;listRegions();} };
 $('scale').onchange = () => { if(selected())selected().scale=Number($('scale').value); };
-for (const key of ['mode','threshold','speckle','contrast']) $(key).addEventListener(key==='mode'?'change':'input',()=>{
-  if(!selected())return; selected().options[key]=key==='mode'?$(key).value:Number($(key).value);state.compare=false;updateValues();updateButtons();schedulePreview();
+for (const key of ['kind','mode','threshold','speckle','contrast']) $(key).addEventListener(['mode','kind'].includes(key)?'change':'input',()=>{
+  if(!selected())return; selected().options[key]=['mode','kind'].includes(key)?$(key).value:Number($(key).value);state.compare=false;updateValues();listRegions();schedulePreview();
 });
+for (const key of ['removeText','removeLines']) $(key).onchange = () => { if (!selected()) return; selected().options[key] = $(key).checked; state.compare = false; updateButtons(); schedulePreview(); };
 $('brush').oninput = updateValues;
 $('erase').onclick = () => { state.tool='erase';state.compare=false;updateButtons();schedulePreview(); };
 $('restore').onclick = () => { state.tool='restore';state.compare=false;updateButtons();schedulePreview(); };

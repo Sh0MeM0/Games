@@ -1,6 +1,6 @@
 {
   "name": "stamp-extractor",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "description": "Печати и подписи — выделение и очистка изображений",
   "author": "Stamp Extractor",
@@ -11,22 +11,64 @@
     "start": "electron .",
     "test": "node --test tests/*.test.mjs",
     "test:ui": "node tests/desktop.cjs",
-    "dist:win": "electron-builder --win portable --x64 --publish never"
+    "dist:win": "electron-builder --win portable --x64 --publish never",
+    "models:fetch": "python scripts/fetch-ocr-models.py",
+    "test:documents": "node tests/document-desktop.cjs"
   },
   "devDependencies": {
     "electron": "44.7.0",
     "electron-builder": "26.15.3",
-    "playwright": "1.62.1"
+    "playwright": "1.62.1",
+    "pngjs": "7.0.0"
   },
   "build": {
     "appId": "org.stampextractor.desktop",
     "productName": "Печати и подписи",
-    "directories": {"output": "release"},
-    "files": ["main.cjs", "preload.cjs", "lib/**/*", "renderer/**/*", "LICENSE", "README.md"],
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "lib/**/*",
+      "renderer/**/*",
+      "LICENSE",
+      "README.md"
+    ],
     "win": {
-      "target": [{"target": "portable", "arch": ["x64"]}],
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "artifactName": "StampExtractor-Portable-${version}.${ext}"
     },
-    "portable": {"requestExecutionLevel": "user", "unicode": true}
+    "portable": {
+      "requestExecutionLevel": "user",
+      "unicode": true
+    },
+    "asarUnpack": [
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/ocr",
+        "to": "ocr",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ]
+  },
+  "dependencies": {
+    "tesseract.js": "7.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Sh0MeM0/Games.git",
+    "directory": "stamp-extractor"
   }
 }

@@ -1,5 +1,6 @@
-import { cropImage, renderRegion, trimAndPad, detectRegions, MAX_OUTPUT_PIXELS } from '../lib/processing.js';
-let source;
+import { cropImage, renderRegion, trimAndPad, MAX_OUTPUT_PIXELS } from '../lib/processing.js';
+import { analyzeDocument, renderExtractedRegion, scaleAnalysis } from '../lib/extraction.js';
+let source, analysis, words, ocrSize;
 function canvasOf(image) {
   const canvas = new OffscreenCanvas(image.width, image.height);
   canvas.getContext('2d').putImageData(new ImageData(image.data, image.width, image.height), 0, 0);
@@ -21,22 +22,40 @@ self.onmessage = async event => {
     let result, transfer = [];
     if (type === 'init') {
       source = { width: payload.width, height: payload.height, data: new Uint8ClampedArray(payload.buffer) };
+      analysis = null; words = null; ocrSize = null;
       result = {};
     } else {
       if (!source) throw new Error('Сначала откройте изображение.');
-      if (type === 'detect') {
-        const analysis = fitImage(source, 1400);
-        const detected = detectRegions(analysis, payload);
-        const sx = source.width / analysis.width, sy = source.height / analysis.height;
-        result = { ...detected, regions: detected.regions.map(r => ({ x: Math.floor(r.x * sx), y: Math.floor(r.y * sy),
-          w: Math.min(source.width - Math.floor(r.x * sx), Math.ceil(r.w * sx)),
-          h: Math.min(source.height - Math.floor(r.y * sy), Math.ceil(r.h * sy)) })) };
+      if (type === 'ocrInput') {
+        const small = fitImage(source, 2400);
+        ocrSize = { width: small.width, height: small.height };
+        const cleaned = renderRegion(small, { x: 0, y: 0, w: small.width, h: small.height }, { threshold: 12, speckle: 2, contrast: 1 });
+        const canvas = canvasOf(cleaned);
+        const blob = await canvas.convertToBlob({ type: 'image/png' });
+        const buffer = await blob.arrayBuffer(); canvas.width = 1;
+        result = { buffer }; transfer = [buffer];
+      } else if (type === 'detect') {
+        if (payload.words) {
+          if (!ocrSize) throw new Error('Не подготовлено изображение для распознавания.');
+          const sx = source.width / ocrSize.width, sy = source.height / ocrSize.height;
+          words = payload.words.map(word => ({ ...word, bbox: {
+            x0: word.bbox.x0 * sx, y0: word.bbox.y0 * sy,
+            x1: word.bbox.x1 * sx, y1: word.bbox.y1 * sy } }));
+        }
+        if (!words) throw new Error('Сначала выполните распознавание текста.');
+        const small = fitImage(source, 1800);
+        const sx = small.width / source.width, sy = small.height / source.height;
+        const scaledWords = words.map(word => ({ ...word, bbox: {
+          x0: word.bbox.x0 * sx, y0: word.bbox.y0 * sy,
+          x1: word.bbox.x1 * sx, y1: word.bbox.y1 * sy } }));
+        analysis = scaleAnalysis(analyzeDocument(small, scaledWords, payload), 1 / sx, 1 / sy);
+        result = { regions: analysis.regions, stats: analysis.stats, truncated: analysis.truncated };
       } else if (type === 'previewOriginal') {
         const preview = fitImage(cropImage(source, payload.rect), 1200);
         result = { width: preview.width, height: preview.height, buffer: preview.data.buffer };
         transfer = [result.buffer];
       } else if (type === 'preview' || type === 'export') {
-        const rendered = renderRegion(source, payload.rect, payload.options, payload.strokes);
+        const rendered = renderExtractedRegion(source, payload.rect, payload.options, payload.strokes, analysis);
         if (type === 'preview') {
           const preview = fitImage(rendered, 1200);
           result = { width: preview.width, height: preview.height, inkPixels: rendered.inkPixels, buffer: preview.data.buffer };

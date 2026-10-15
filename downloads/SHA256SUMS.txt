@@ -1,1 +1,2 @@
 8198e67f4a9f51830e61b38b5c9cad76507f7d611b04b498f3b1cd4aa0aebfb6  StampExtractor-Portable-1.0.0.exe
+b7dca61606dcacb2a88f8b0a54b0c2bbee7762153a5274ddefe4cb697a494392  StampExtractor-Portable-2.0.0.exe

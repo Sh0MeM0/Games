@@ -1,0 +1,1285 @@
+{
+  "schema_version": 1,
+  "width": 1800,
+  "height": 1400,
+  "seed": 20261015,
+  "source": "../../examples/document-rotated.png",
+  "objects": [
+    {
+      "id": "seal-blue",
+      "kind": "stamp",
+      "color": "blue",
+      "bbox": {
+        "x": 255,
+        "y": 559,
+        "width": 332,
+        "height": 332
+      },
+      "mask": "seal-blue.rotated.mask.png",
+      "clean_reference": "seal-blue.rotated.expected.png",
+      "ink_pixels": 15732
+    },
+    {
+      "id": "seal-red",
+      "kind": "stamp",
+      "color": "red",
+      "bbox": {
+        "x": 1174,
+        "y": 511,
+        "width": 332,
+        "height": 332
+      },
+      "mask": "seal-red.rotated.mask.png",
+      "clean_reference": "seal-red.rotated.expected.png",
+      "ink_pixels": 15839
+    },
+    {
+      "id": "signature-blue",
+      "kind": "signature",
+      "color": "blue",
+      "bbox": {
+        "x": 300,
+        "y": 1037,
+        "width": 440,
+        "height": 127
+      },
+      "mask": "signature-blue.rotated.mask.png",
+      "clean_reference": "signature-blue.rotated.expected.png",
+      "ink_pixels": 6881
+    },
+    {
+      "id": "signature-black",
+      "kind": "signature",
+      "color": "black",
+      "bbox": {
+        "x": 1131,
+        "y": 993,
+        "width": 459,
+        "height": 134
+      },
+      "mask": "signature-black.rotated.mask.png",
+      "clean_reference": "signature-black.rotated.expected.png",
+      "ink_pixels": 5962
+    }
+  ],
+  "printed_words": [
+    {
+      "text": "УЧЕБНЫЙ",
+      "confidence": 99,
+      "bbox": {
+        "x0": 89,
+        "y0": 117,
+        "x1": 320,
+        "y1": 167
+      }
+    },
+    {
+      "text": "ДОКУМЕНТ",
+      "confidence": 99,
+      "bbox": {
+        "x0": 332,
+        "y0": 110,
+        "x1": 595,
+        "y1": 160
+      }
+    },
+    {
+      "text": "/",
+      "confidence": 99,
+      "bbox": {
+        "x0": 606,
+        "y0": 109,
+        "x1": 624,
+        "y1": 144
+      }
+    },
+    {
+      "text": "TEST",
+      "confidence": 99,
+      "bbox": {
+        "x0": 635,
+        "y0": 102,
+        "x1": 749,
+        "y1": 139
+      }
+    },
+    {
+      "text": "DOCUMENT",
+      "confidence": 99,
+      "bbox": {
+        "x0": 759,
+        "y0": 88,
+        "x1": 1018,
+        "y1": 133
+      }
+    },
+    {
+      "text": "Акт",
+      "confidence": 99,
+      "bbox": {
+        "x0": 92,
+        "y0": 194,
+        "x1": 153,
+        "y1": 219
+      }
+    },
+    {
+      "text": "проверки",
+      "confidence": 99,
+      "bbox": {
+        "x0": 161,
+        "y0": 190,
+        "x1": 323,
+        "y1": 221
+      }
+    },
+    {
+      "text": "извлечения",
+      "confidence": 99,
+      "bbox": {
+        "x0": 331,
+        "y0": 179,
+        "x1": 528,
+        "y1": 207
+      }
+    },
+    {
+      "text": "печатей",
+      "confidence": 99,
+      "bbox": {
+        "x0": 535,
+        "y0": 166,
+        "x1": 673,
+        "y1": 196
+      }
+    },
+    {
+      "text": "и",
+      "confidence": 99,
+      "bbox": {
+        "x0": 682,
+        "y0": 170,
+        "x1": 703,
+        "y1": 188
+      }
+    },
+    {
+      "text": "подписей",
+      "confidence": 99,
+      "bbox": {
+        "x0": 711,
+        "y0": 155,
+        "x1": 874,
+        "y1": 191
+      }
+    },
+    {
+      "text": "№",
+      "confidence": 99,
+      "bbox": {
+        "x0": 882,
+        "y0": 154,
+        "x1": 919,
+        "y1": 178
+      }
+    },
+    {
+      "text": "07",
+      "confidence": 99,
+      "bbox": {
+        "x0": 927,
+        "y0": 151,
+        "x1": 969,
+        "y1": 175
+      }
+    },
+    {
+      "text": "Дата:",
+      "confidence": 99,
+      "bbox": {
+        "x0": 96,
+        "y0": 260,
+        "x1": 174,
+        "y1": 288
+      }
+    },
+    {
+      "text": "15",
+      "confidence": 99,
+      "bbox": {
+        "x0": 179,
+        "y0": 258,
+        "x1": 214,
+        "y1": 280
+      }
+    },
+    {
+      "text": "октября",
+      "confidence": 99,
+      "bbox": {
+        "x0": 221,
+        "y0": 251,
+        "x1": 334,
+        "y1": 282
+      }
+    },
+    {
+      "text": "2026",
+      "confidence": 99,
+      "bbox": {
+        "x0": 340,
+        "y0": 248,
+        "x1": 408,
+        "y1": 271
+      }
+    },
+    {
+      "text": "года.",
+      "confidence": 99,
+      "bbox": {
+        "x0": 414,
+        "y0": 248,
+        "x1": 488,
+        "y1": 271
+      }
+    },
+    {
+      "text": "Все",
+      "confidence": 99,
+      "bbox": {
+        "x0": 494,
+        "y0": 241,
+        "x1": 544,
+        "y1": 263
+      }
+    },
+    {
+      "text": "изображения",
+      "confidence": 99,
+      "bbox": {
+        "x0": 550,
+        "y0": 230,
+        "x1": 736,
+        "y1": 265
+      }
+    },
+    {
+      "text": "созданы",
+      "confidence": 99,
+      "bbox": {
+        "x0": 743,
+        "y0": 228,
+        "x1": 860,
+        "y1": 254
+      }
+    },
+    {
+      "text": "искусственно.",
+      "confidence": 99,
+      "bbox": {
+        "x0": 866,
+        "y0": 217,
+        "x1": 1064,
+        "y1": 249
+      }
+    },
+    {
+      "text": "Обычный",
+      "confidence": 99,
+      "bbox": {
+        "x0": 98,
+        "y0": 305,
+        "x1": 227,
+        "y1": 333
+      }
+    },
+    {
+      "text": "печатный",
+      "confidence": 99,
+      "bbox": {
+        "x0": 233,
+        "y0": 298,
+        "x1": 369,
+        "y1": 326
+      }
+    },
+    {
+      "text": "текст",
+      "confidence": 99,
+      "bbox": {
+        "x0": 375,
+        "y0": 298,
+        "x1": 454,
+        "y1": 318
+      }
+    },
+    {
+      "text": "должен",
+      "confidence": 99,
+      "bbox": {
+        "x0": 460,
+        "y0": 292,
+        "x1": 569,
+        "y1": 318
+      }
+    },
+    {
+      "text": "исчезнуть",
+      "confidence": 99,
+      "bbox": {
+        "x0": 575,
+        "y0": 285,
+        "x1": 716,
+        "y1": 313
+      }
+    },
+    {
+      "text": "из",
+      "confidence": 99,
+      "bbox": {
+        "x0": 722,
+        "y0": 283,
+        "x1": 754,
+        "y1": 300
+      }
+    },
+    {
+      "text": "сохраняемых",
+      "confidence": 99,
+      "bbox": {
+        "x0": 760,
+        "y0": 273,
+        "x1": 945,
+        "y1": 303
+      }
+    },
+    {
+      "text": "изображений.",
+      "confidence": 99,
+      "bbox": {
+        "x0": 951,
+        "y0": 257,
+        "x1": 1147,
+        "y1": 293
+      }
+    },
+    {
+      "text": "Номер",
+      "confidence": 99,
+      "bbox": {
+        "x0": 101,
+        "y0": 356,
+        "x1": 191,
+        "y1": 387
+      }
+    },
+    {
+      "text": "договора:",
+      "confidence": 99,
+      "bbox": {
+        "x0": 197,
+        "y0": 354,
+        "x1": 335,
+        "y1": 382
+      }
+    },
+    {
+      "text": "12345.",
+      "confidence": 99,
+      "bbox": {
+        "x0": 340,
+        "y0": 344,
+        "x1": 433,
+        "y1": 369
+      }
+    },
+    {
+      "text": "Наименование:",
+      "confidence": 99,
+      "bbox": {
+        "x0": 439,
+        "y0": 332,
+        "x1": 652,
+        "y1": 364
+      }
+    },
+    {
+      "text": "тестовая",
+      "confidence": 99,
+      "bbox": {
+        "x0": 658,
+        "y0": 330,
+        "x1": 784,
+        "y1": 353
+      }
+    },
+    {
+      "text": "документация.",
+      "confidence": 99,
+      "bbox": {
+        "x0": 790,
+        "y0": 319,
+        "x1": 999,
+        "y1": 351
+      }
+    },
+    {
+      "text": "Printed",
+      "confidence": 99,
+      "bbox": {
+        "x0": 103,
+        "y0": 405,
+        "x1": 197,
+        "y1": 431
+      }
+    },
+    {
+      "text": "labels",
+      "confidence": 99,
+      "bbox": {
+        "x0": 204,
+        "y0": 401,
+        "x1": 282,
+        "y1": 425
+      }
+    },
+    {
+      "text": "and",
+      "confidence": 99,
+      "bbox": {
+        "x0": 288,
+        "y0": 398,
+        "x1": 339,
+        "y1": 421
+      }
+    },
+    {
+      "text": "paragraphs",
+      "confidence": 99,
+      "bbox": {
+        "x0": 345,
+        "y0": 389,
+        "x1": 496,
+        "y1": 423
+      }
+    },
+    {
+      "text": "must",
+      "confidence": 99,
+      "bbox": {
+        "x0": 502,
+        "y0": 386,
+        "x1": 570,
+        "y1": 410
+      }
+    },
+    {
+      "text": "not",
+      "confidence": 99,
+      "bbox": {
+        "x0": 576,
+        "y0": 384,
+        "x1": 621,
+        "y1": 406
+      }
+    },
+    {
+      "text": "become",
+      "confidence": 99,
+      "bbox": {
+        "x0": 627,
+        "y0": 377,
+        "x1": 732,
+        "y1": 403
+      }
+    },
+    {
+      "text": "signature",
+      "confidence": 99,
+      "bbox": {
+        "x0": 738,
+        "y0": 370,
+        "x1": 864,
+        "y1": 402
+      }
+    },
+    {
+      "text": "files.",
+      "confidence": 99,
+      "bbox": {
+        "x0": 869,
+        "y0": 366,
+        "x1": 932,
+        "y1": 391
+      }
+    },
+    {
+      "text": "Две",
+      "confidence": 99,
+      "bbox": {
+        "x0": 106,
+        "y0": 457,
+        "x1": 160,
+        "y1": 484
+      }
+    },
+    {
+      "text": "круглые",
+      "confidence": 99,
+      "bbox": {
+        "x0": 166,
+        "y0": 455,
+        "x1": 282,
+        "y1": 482
+      }
+    },
+    {
+      "text": "печати",
+      "confidence": 99,
+      "bbox": {
+        "x0": 289,
+        "y0": 449,
+        "x1": 386,
+        "y1": 470
+      }
+    },
+    {
+      "text": "содержат",
+      "confidence": 99,
+      "bbox": {
+        "x0": 393,
+        "y0": 442,
+        "x1": 530,
+        "y1": 470
+      }
+    },
+    {
+      "text": "собственные",
+      "confidence": 99,
+      "bbox": {
+        "x0": 536,
+        "y0": 427,
+        "x1": 715,
+        "y1": 457
+      }
+    },
+    {
+      "text": "буквы:",
+      "confidence": 99,
+      "bbox": {
+        "x0": 721,
+        "y0": 422,
+        "x1": 815,
+        "y1": 452
+      }
+    },
+    {
+      "text": "их",
+      "confidence": 99,
+      "bbox": {
+        "x0": 821,
+        "y0": 426,
+        "x1": 856,
+        "y1": 442
+      }
+    },
+    {
+      "text": "необходимо",
+      "confidence": 99,
+      "bbox": {
+        "x0": 862,
+        "y0": 410,
+        "x1": 1031,
+        "y1": 444
+      }
+    },
+    {
+      "text": "сохранить.",
+      "confidence": 99,
+      "bbox": {
+        "x0": 1037,
+        "y0": 407,
+        "x1": 1189,
+        "y1": 436
+      }
+    },
+    {
+      "text": "Левый",
+      "confidence": 99,
+      "bbox": {
+        "x0": 109,
+        "y0": 506,
+        "x1": 198,
+        "y1": 532
+      }
+    },
+    {
+      "text": "образец",
+      "confidence": 99,
+      "bbox": {
+        "x0": 205,
+        "y0": 500,
+        "x1": 320,
+        "y1": 532
+      }
+    },
+    {
+      "text": "—",
+      "confidence": 99,
+      "bbox": {
+        "x0": 326,
+        "y0": 510,
+        "x1": 353,
+        "y1": 520
+      }
+    },
+    {
+      "text": "синий;",
+      "confidence": 99,
+      "bbox": {
+        "x0": 359,
+        "y0": 493,
+        "x1": 452,
+        "y1": 521
+      }
+    },
+    {
+      "text": "правый",
+      "confidence": 99,
+      "bbox": {
+        "x0": 458,
+        "y0": 487,
+        "x1": 562,
+        "y1": 518
+      }
+    },
+    {
+      "text": "образец",
+      "confidence": 99,
+      "bbox": {
+        "x0": 568,
+        "y0": 481,
+        "x1": 682,
+        "y1": 513
+      }
+    },
+    {
+      "text": "—",
+      "confidence": 99,
+      "bbox": {
+        "x0": 689,
+        "y0": 491,
+        "x1": 717,
+        "y1": 501
+      }
+    },
+    {
+      "text": "красный.",
+      "confidence": 99,
+      "bbox": {
+        "x0": 723,
+        "y0": 472,
+        "x1": 850,
+        "y1": 504
+      }
+    },
+    {
+      "text": "Место",
+      "confidence": 99,
+      "bbox": {
+        "x0": 175,
+        "y0": 919,
+        "x1": 258,
+        "y1": 944
+      }
+    },
+    {
+      "text": "для",
+      "confidence": 99,
+      "bbox": {
+        "x0": 264,
+        "y0": 922,
+        "x1": 314,
+        "y1": 942
+      }
+    },
+    {
+      "text": "печати",
+      "confidence": 99,
+      "bbox": {
+        "x0": 320,
+        "y0": 916,
+        "x1": 414,
+        "y1": 936
+      }
+    },
+    {
+      "text": "/",
+      "confidence": 99,
+      "bbox": {
+        "x0": 420,
+        "y0": 910,
+        "x1": 431,
+        "y1": 933
+      }
+    },
+    {
+      "text": "Stamp",
+      "confidence": 99,
+      "bbox": {
+        "x0": 437,
+        "y0": 906,
+        "x1": 520,
+        "y1": 935
+      }
+    },
+    {
+      "text": "Вторая",
+      "confidence": 99,
+      "bbox": {
+        "x0": 1119,
+        "y0": 870,
+        "x1": 1214,
+        "y1": 899
+      }
+    },
+    {
+      "text": "печать",
+      "confidence": 99,
+      "bbox": {
+        "x0": 1220,
+        "y0": 869,
+        "x1": 1313,
+        "y1": 889
+      }
+    },
+    {
+      "text": "/",
+      "confidence": 99,
+      "bbox": {
+        "x0": 1319,
+        "y0": 864,
+        "x1": 1330,
+        "y1": 886
+      }
+    },
+    {
+      "text": "Second",
+      "confidence": 99,
+      "bbox": {
+        "x0": 1336,
+        "y0": 858,
+        "x1": 1430,
+        "y1": 883
+      }
+    },
+    {
+      "text": "stamp",
+      "confidence": 99,
+      "bbox": {
+        "x0": 1436,
+        "y0": 855,
+        "x1": 1516,
+        "y1": 883
+      }
+    },
+    {
+      "text": "Ответственный:",
+      "confidence": 99,
+      "bbox": {
+        "x0": 134,
+        "y0": 994,
+        "x1": 350,
+        "y1": 1026
+      }
+    },
+    {
+      "text": "Проверил:",
+      "confidence": 99,
+      "bbox": {
+        "x0": 1013,
+        "y0": 952,
+        "x1": 1152,
+        "y1": 984
+      }
+    },
+    {
+      "text": "Подпись",
+      "confidence": 99,
+      "bbox": {
+        "x0": 147,
+        "y0": 1240,
+        "x1": 261,
+        "y1": 1268
+      }
+    },
+    {
+      "text": "1",
+      "confidence": 99,
+      "bbox": {
+        "x0": 267,
+        "y0": 1239,
+        "x1": 285,
+        "y1": 1258
+      }
+    },
+    {
+      "text": "/",
+      "confidence": 99,
+      "bbox": {
+        "x0": 291,
+        "y0": 1238,
+        "x1": 302,
+        "y1": 1259
+      }
+    },
+    {
+      "text": "Signature",
+      "confidence": 99,
+      "bbox": {
+        "x0": 308,
+        "y0": 1230,
+        "x1": 430,
+        "y1": 1261
+      }
+    },
+    {
+      "text": "1",
+      "confidence": 99,
+      "bbox": {
+        "x0": 436,
+        "y0": 1230,
+        "x1": 454,
+        "y1": 1249
+      }
+    },
+    {
+      "text": "Подпись",
+      "confidence": 99,
+      "bbox": {
+        "x0": 1026,
+        "y0": 1194,
+        "x1": 1140,
+        "y1": 1222
+      }
+    },
+    {
+      "text": "2",
+      "confidence": 99,
+      "bbox": {
+        "x0": 1146,
+        "y0": 1191,
+        "x1": 1164,
+        "y1": 1212
+      }
+    },
+    {
+      "text": "/",
+      "confidence": 99,
+      "bbox": {
+        "x0": 1170,
+        "y0": 1192,
+        "x1": 1181,
+        "y1": 1213
+      }
+    },
+    {
+      "text": "Signature",
+      "confidence": 99,
+      "bbox": {
+        "x0": 1187,
+        "y0": 1184,
+        "x1": 1309,
+        "y1": 1215
+      }
+    },
+    {
+      "text": "2",
+      "confidence": 99,
+      "bbox": {
+        "x0": 1314,
+        "y0": 1183,
+        "x1": 1332,
+        "y1": 1203
+      }
+    },
+    {
+      "text": "Образцы",
+      "confidence": 99,
+      "bbox": {
+        "x0": 151,
+        "y0": 1314,
+        "x1": 265,
+        "y1": 1344
+      }
+    },
+    {
+      "text": "не",
+      "confidence": 99,
+      "bbox": {
+        "x0": 270,
+        "y0": 1317,
+        "x1": 303,
+        "y1": 1333
+      }
+    },
+    {
+      "text": "являются",
+      "confidence": 99,
+      "bbox": {
+        "x0": 308,
+        "y0": 1310,
+        "x1": 431,
+        "y1": 1331
+      }
+    },
+    {
+      "text": "подписями",
+      "confidence": 99,
+      "bbox": {
+        "x0": 436,
+        "y0": 1302,
+        "x1": 577,
+        "y1": 1328
+      }
+    },
+    {
+      "text": "реальных",
+      "confidence": 99,
+      "bbox": {
+        "x0": 583,
+        "y0": 1295,
+        "x1": 707,
+        "y1": 1322
+      }
+    },
+    {
+      "text": "людей",
+      "confidence": 99,
+      "bbox": {
+        "x0": 713,
+        "y0": 1286,
+        "x1": 798,
+        "y1": 1313
+      }
+    },
+    {
+      "text": "или",
+      "confidence": 99,
+      "bbox": {
+        "x0": 803,
+        "y0": 1289,
+        "x1": 852,
+        "y1": 1305
+      }
+    },
+    {
+      "text": "действующими",
+      "confidence": 99,
+      "bbox": {
+        "x0": 857,
+        "y0": 1272,
+        "x1": 1054,
+        "y1": 1307
+      }
+    },
+    {
+      "text": "печатями.",
+      "confidence": 99,
+      "bbox": {
+        "x0": 1060,
+        "y0": 1270,
+        "x1": 1190,
+        "y1": 1292
+      }
+    },
+    {
+      "text": "Текст",
+      "confidence": 99,
+      "bbox": {
+        "x0": 153,
+        "y0": 1362,
+        "x1": 226,
+        "y1": 1384
+      }
+    },
+    {
+      "text": "вне",
+      "confidence": 99,
+      "bbox": {
+        "x0": 232,
+        "y0": 1363,
+        "x1": 278,
+        "y1": 1380
+      }
+    },
+    {
+      "text": "объектов,",
+      "confidence": 99,
+      "bbox": {
+        "x0": 284,
+        "y0": 1351,
+        "x1": 412,
+        "y1": 1380
+      }
+    },
+    {
+      "text": "фон",
+      "confidence": 99,
+      "bbox": {
+        "x0": 418,
+        "y0": 1348,
+        "x1": 471,
+        "y1": 1376
+      }
+    },
+    {
+      "text": "и",
+      "confidence": 99,
+      "bbox": {
+        "x0": 476,
+        "y0": 1353,
+        "x1": 494,
+        "y1": 1368
+      }
+    },
+    {
+      "text": "линии",
+      "confidence": 99,
+      "bbox": {
+        "x0": 499,
+        "y0": 1348,
+        "x1": 579,
+        "y1": 1366
+      }
+    },
+    {
+      "text": "бланка",
+      "confidence": 99,
+      "bbox": {
+        "x0": 585,
+        "y0": 1337,
+        "x1": 677,
+        "y1": 1362
+      }
+    },
+    {
+      "text": "следует",
+      "confidence": 99,
+      "bbox": {
+        "x0": 682,
+        "y0": 1336,
+        "x1": 787,
+        "y1": 1362
+      }
+    },
+    {
+      "text": "убрать.",
+      "confidence": 99,
+      "bbox": {
+        "x0": 792,
+        "y0": 1326,
+        "x1": 889,
+        "y1": 1356
+      }
+    },
+    {
+      "text": "Страница",
+      "confidence": 99,
+      "bbox": {
+        "x0": 894,
+        "y0": 1320,
+        "x1": 1019,
+        "y1": 1351
+      }
+    },
+    {
+      "text": "1",
+      "confidence": 99,
+      "bbox": {
+        "x0": 1025,
+        "y0": 1319,
+        "x1": 1042,
+        "y1": 1339
+      }
+    },
+    {
+      "text": "из",
+      "confidence": 99,
+      "bbox": {
+        "x0": 1048,
+        "y0": 1321,
+        "x1": 1078,
+        "y1": 1338
+      }
+    },
+    {
+      "text": "1.",
+      "confidence": 99,
+      "bbox": {
+        "x0": 1084,
+        "y0": 1315,
+        "x1": 1109,
+        "y1": 1336
+      }
+    }
+  ],
+  "printed_lines": [
+    {
+      "text": "УЧЕБНЫЙ ДОКУМЕНТ / TEST DOCUMENT",
+      "bbox": [
+        89,
+        81,
+        1019,
+        173
+      ]
+    },
+    {
+      "text": "Акт проверки извлечения печатей и подписей № 07",
+      "bbox": [
+        92,
+        150,
+        970,
+        225
+      ]
+    },
+    {
+      "text": "Дата: 15 октября 2026 года. Все изображения созданы искусственно.",
+      "bbox": [
+        96,
+        212,
+        1064,
+        289
+      ]
+    },
+    {
+      "text": "Обычный печатный текст должен исчезнуть из сохраняемых изображений.",
+      "bbox": [
+        98,
+        257,
+        1146,
+        338
+      ]
+    },
+    {
+      "text": "Номер договора: 12345. Наименование: тестовая документация.",
+      "bbox": [
+        101,
+        314,
+        999,
+        387
+      ]
+    },
+    {
+      "text": "Printed labels and paragraphs must not become signature files.",
+      "bbox": [
+        103,
+        366,
+        933,
+        436
+      ]
+    },
+    {
+      "text": "Две круглые печати содержат собственные буквы: их необходимо сохранить.",
+      "bbox": [
+        106,
+        402,
+        1189,
+        485
+      ]
+    },
+    {
+      "text": "Левый образец — синий; правый образец — красный.",
+      "bbox": [
+        109,
+        472,
+        850,
+        537
+      ]
+    },
+    {
+      "text": "Место для печати / Stamp",
+      "bbox": [
+        175,
+        906,
+        520,
+        949
+      ]
+    },
+    {
+      "text": "Вторая печать / Second stamp",
+      "bbox": [
+        1119,
+        854,
+        1516,
+        899
+      ]
+    },
+    {
+      "text": "Ответственный:",
+      "bbox": [
+        134,
+        994,
+        350,
+        1026
+      ]
+    },
+    {
+      "text": "Проверил:",
+      "bbox": [
+        1013,
+        952,
+        1152,
+        984
+      ]
+    },
+    {
+      "text": "Подпись 1 / Signature 1",
+      "bbox": [
+        147,
+        1229,
+        454,
+        1270
+      ]
+    },
+    {
+      "text": "Подпись 2 / Signature 2",
+      "bbox": [
+        1026,
+        1183,
+        1333,
+        1224
+      ]
+    },
+    {
+      "text": "Образцы не являются подписями реальных людей или действующими печатями.",
+      "bbox": [
+        151,
+        1265,
+        1191,
+        1344
+      ]
+    },
+    {
+      "text": "Текст вне объектов, фон и линии бланка следует убрать. Страница 1 из 1.",
+      "bbox": [
+        153,
+        1314,
+        1109,
+        1389
+      ]
+    }
+  ],
+  "negative": "document-text-only.png",
+  "negative_blue": "document-text-only-blue.png",
+  "expected_negative_objects": 0,
+  "masks": "8-bit grayscale, 0=background, 255=ink; antialiased edges retained; full source size",
+  "notes": [
+    "Every seal, path, and document phrase is authored for this test; no real signature or official seal is used.",
+    "Photo differs only in illumination, sensor noise, and JPEG compression; coordinates are unchanged.",
+    "Printed word boxes are exact authored layout annotations, not claims about OCR accuracy.",
+    "This fixture does not establish accuracy on arbitrary real documents or overlapping same-colour strokes.",
+    "Source and ground-truth masks rotated 3 degrees anticlockwise without expanding the canvas."
+  ],
+  "rotation_degrees": 3
+}
