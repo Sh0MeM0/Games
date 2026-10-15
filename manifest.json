@@ -1,0 +1,27 @@
+{
+  "filename": "PDFMaster-Setup-x64.exe",
+  "size": 154353744,
+  "sha256": "115d89ad9b2ccb6129cb4aa48a15704637dc8fa1689908da76fdb4599b4d37e2",
+  "parts": [
+    {
+      "filename": "PDFMaster-Setup-x64.exe.part01",
+      "size": 47185920,
+      "sha256": "48dea1454995565bcf8eea985b10c16414c6957b39c77f2bdab4e80b37211a1f"
+    },
+    {
+      "filename": "PDFMaster-Setup-x64.exe.part02",
+      "size": 47185920,
+      "sha256": "d7630ee4a93ece14c646cb2ed96c09e0d9618db0e3f85c58afa816f0c1a00762"
+    },
+    {
+      "filename": "PDFMaster-Setup-x64.exe.part03",
+      "size": 47185920,
+      "sha256": "9f2a8028fa4d8aed1756b6cbd3f500f4ce8a6c01425f347f6c4416f2330666e2"
+    },
+    {
+      "filename": "PDFMaster-Setup-x64.exe.part04",
+      "size": 12795984,
+      "sha256": "d514219d23d49521174348d50c86bb77176268e7164d66db9799590a877ff3f9"
+    }
+  ]
+}
