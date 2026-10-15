@@ -1,8 +1,8 @@
 1 ICON "../assets/app.ico"
 1 24 "application.manifest"
 1 VERSIONINFO
-FILEVERSION 0,1,0,0
-PRODUCTVERSION 0,1,0,0
+FILEVERSION 0,1,1,0
+PRODUCTVERSION 0,1,1,0
 FILEOS 0x40004L
 FILETYPE 0x1L
 BEGIN
@@ -12,9 +12,9 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "PDF Master contributors"
       VALUE "FileDescription", "PDF Master - PDF to editable DWG and DOCX"
-      VALUE "FileVersion", "0.1.0"
+      VALUE "FileVersion", "0.1.1"
       VALUE "ProductName", "PDF Master"
-      VALUE "ProductVersion", "0.1.0"
+      VALUE "ProductVersion", "0.1.1"
       VALUE "LegalCopyright", "2026 PDF Master contributors"
     END
   END

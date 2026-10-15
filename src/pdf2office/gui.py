@@ -792,7 +792,7 @@ class MainWindow(QMainWindow):
     def _cancel(self) -> None:
         self._stop.set()
         self.cancel_button.setEnabled(False)
-        self.status_label.setText("Остановка после завершения текущей операции…")
+        self.status_label.setText("Остановка…")
         self._append_log("Запрошена остановка. Уже созданные файлы сохраняются.")
 
     def _open_output(self) -> None:

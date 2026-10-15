@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -9,6 +10,8 @@ import ezdxf
 from ezdxf.lldxf.encoding import decode_dxf_unicode
 from PIL import Image
 import pytest
+from fontTools.pens.boundsPen import BoundsPen
+from fontTools.ttLib import TTFont
 
 from pdf2office.cad import (
     CadConversionError,
@@ -20,6 +23,7 @@ from pdf2office.cad import (
     _conversion_directory,
 )
 from pdf2office.models import Drawing, PdfPage, RasterImage, Segment, TextSpan
+from pdf2office.fonts import FontCatalog
 
 
 def page(number=1):
@@ -54,7 +58,7 @@ def test_dxf_has_editable_entities_mm_and_cyrillic(tmp_path):
     assert curve.dxf.degree == 3
     assert len(curve.control_points) == 4
     assert tuple(curve.control_points[1]) == pytest.approx((20 * POINT_TO_MM * 2, 220 * POINT_TO_MM * 2, 0))
-    text = msp.query("MTEXT")[0]
+    text = msp.query("TEXT")[0]
     assert decode_dxf_unicode(text.plain_text()) == page().texts[0].text
     assert text.dxf.layer == "PAGE_1_TEXT"
     assert not doc.audit().errors
@@ -67,7 +71,7 @@ def test_pages_are_separated_and_rotated_text_stays_editable(tmp_path):
     output = tmp_path / "multi.dxf"
     export_dxf([page(), p], output)
     doc = ezdxf.readfile(output)
-    texts = list(doc.modelspace().query("MTEXT"))
+    texts = list(doc.modelspace().query("TEXT"))
     assert texts[1].dxf.layer == "PAGE_2_TEXT"
     assert texts[1].dxf.rotation == pytest.approx(-90)
     assert texts[1].dxf.insert.x > 200 * POINT_TO_MM
@@ -96,8 +100,73 @@ def test_wildcard_font_override_is_honored(tmp_path):
     output = tmp_path / "fonts.dxf"
     export_dxf([page()], output, font_overrides={"*": "Liberation Serif"})
     doc = ezdxf.readfile(output)
-    text = doc.modelspace().query("MTEXT")[0]
+    text = doc.modelspace().query("TEXT")[0]
     assert "Serif" in doc.styles.get(text.dxf.style).dxf.font
+
+
+@pytest.mark.parametrize("angle", [0, 37, 90, -90])
+def test_positioned_text_keeps_baseline_cap_height_and_pdf_advance(tmp_path, angle):
+    p = page()
+    span = TextSpan("Текст в таблице", (10, 5, 180, 90), "Liberation Serif", 9.96,
+                    (0, 0, 0), origin=(20, 75), angle=angle, advance=95.0)
+    p.texts = [span]
+    output = tmp_path / "baseline.dxf"
+    catalog = FontCatalog()
+    export_dxf([p], output, scale=2, font_catalog=catalog)
+    document = ezdxf.readfile(output)
+    entity = document.modelspace().query("TEXT")[0]
+    assert not document.modelspace().query("MTEXT")
+    assert entity.dxf.insert.isclose((20 * POINT_TO_MM * 2, 225 * POINT_TO_MM * 2, 0))
+    assert entity.dxf.rotation == pytest.approx(-angle)
+    assert entity.dxf.halign == entity.dxf.valign == 0  # left, baseline
+    with TTFont(catalog.resolve(span.font).path) as font:
+        units = font["head"].unitsPerEm
+        cap = font["OS/2"].sCapHeight / units
+        cmap = font.getBestCmap()
+        advance = sum(font["hmtx"][cmap[ord(char)]][0] for char in span.text) / units
+    assert entity.dxf.height == pytest.approx(9.96 * cap * POINT_TO_MM * 2)
+    assert advance * 9.96 * entity.dxf.width == pytest.approx(95)
+
+
+def test_ocr_text_fits_ink_box_including_descenders(tmp_path):
+    p = page()
+    p.texts = [TextSpan("Размер", (10, 20, 70, 30), "Liberation Sans", 10,
+                        (0, 0, 0), origin=(10, 30), from_ocr=True, advance=60)]
+    output = tmp_path / "ocr-box.dxf"
+    catalog = FontCatalog()
+    export_dxf([p], output, font_catalog=catalog)
+    entity = ezdxf.readfile(output).modelspace().query("TEXT")[0]
+    with TTFont(catalog.resolve("Liberation Sans").path) as font:
+        glyphs = font.getGlyphSet()
+        cmap = font.getBestCmap()
+        offset = 0
+        boxes = []
+        for char in p.texts[0].text:
+            name = cmap[ord(char)]
+            pen = BoundsPen(glyphs)
+            glyphs[name].draw(pen)
+            x0, y0, x1, y1 = pen.bounds
+            boxes.append((offset + x0, y0, offset + x1, y1))
+            offset += font["hmtx"][name][0]
+        cap = font["OS/2"].sCapHeight
+    glyph_scale = entity.dxf.height / cap
+    assert entity.dxf.insert.x + min(b[0] for b in boxes) * glyph_scale * entity.dxf.width == pytest.approx(10 * POINT_TO_MM)
+    assert entity.dxf.insert.x + max(b[2] for b in boxes) * glyph_scale * entity.dxf.width == pytest.approx(70 * POINT_TO_MM)
+    assert entity.dxf.insert.y + min(b[1] for b in boxes) * glyph_scale == pytest.approx(270 * POINT_TO_MM)
+    assert entity.dxf.insert.y + max(b[3] for b in boxes) * glyph_scale == pytest.approx(280 * POINT_TO_MM)
+
+
+def test_literal_cad_control_syntax_stays_literal_and_adjacent(tmp_path):
+    p = page()
+    literal = r"Параметр %%d, %%p, ^C и \U+0041 {текст} C:\Temp"
+    p.texts = [TextSpan(literal, (10, 20, 190, 40), "Liberation Sans", 12,
+                        (0, 0, 0), origin=(10, 35), advance=180)]
+    output = tmp_path / "literal.dxf"
+    export_dxf([p], output)
+    entities = list(ezdxf.readfile(output).modelspace().query("TEXT"))
+    assert "".join(decode_dxf_unicode(e.plain_text()) for e in entities) == literal
+    assert all(e.dxf.insert.y == pytest.approx(265 * POINT_TO_MM) for e in entities)
+    assert all(a.dxf.insert.x < b.dxf.insert.x for a, b in zip(entities, entities[1:]))
 
 
 def test_dashes_and_dots_keep_lengths_and_odd_pattern_repetition(tmp_path):
@@ -157,9 +226,10 @@ def test_failed_converter_does_not_replace_existing_output(tmp_path, monkeypatch
     def fail(args, **kwargs):
         assert args[-3:] == ["-o", "drawing.dwg", "drawing.dxf"]
         assert "shell" not in kwargs
+        assert kwargs.get("timeout") is None
         return subprocess.CompletedProcess(args, 7, b"Conversion failed")
 
-    monkeypatch.setattr(subprocess, "run", fail)
+    monkeypatch.setattr("pdf2office.cad.run_process", fail)
     with pytest.raises(CadConversionError, match="ошибкой 7"):
         export_dwg([page()], output, converter_path=converter)
     assert output.read_bytes() == b"original drawing"
@@ -174,7 +244,7 @@ def test_dxf_disguised_as_dwg_is_rejected(tmp_path, monkeypatch):
         (Path(kwargs["cwd"]) / "drawing.dwg").write_bytes(b"  0\nSECTION\n" + b" " * 1024)
         return subprocess.CompletedProcess(args, 0, b"")
 
-    monkeypatch.setattr(subprocess, "run", fake)
+    monkeypatch.setattr("pdf2office.cad.run_process", fake)
     with pytest.raises(CadConversionError, match="не является DWG"):
         export_dwg([page()], tmp_path / "invalid.dwg", converter_path=converter)
     assert not (tmp_path / "invalid.dwg").exists()
@@ -192,7 +262,14 @@ def test_actual_libredwg_roundtrip_preserves_geometry_and_cyrillic(tmp_path):
     first = page()
     first.drawings[0].dashes = (4, 2)
     first.drawings[1].dashes = (0, 2)
-    export_dwg([first, page(2)], output, converter_path=converter)
+    first.texts[0].origin = (12, 25)
+    first.texts[0].advance = 90
+    second = page(2)
+    second.texts[0].origin = (50, 60)
+    second.texts[0].angle = 37
+    second.texts[0].advance = 100
+    export_dxf([first, second], tmp_path / "expected.dxf")
+    export_dwg([first, second], output, converter_path=converter)
     assert output.read_bytes().startswith(b"AC1015")
     result = subprocess.run(
         [str(reader), "-y", "-o", "readback.dxf", output.name],
@@ -205,8 +282,21 @@ def test_actual_libredwg_roundtrip_preserves_geometry_and_cyrillic(tmp_path):
     assert len(msp.query("LWPOLYLINE")) == 2
     assert len(msp.query("HATCH")) == 2
     assert len(msp.query("SPLINE")) == 2
-    assert len(msp.query("MTEXT")) == 2
-    assert decode_dxf_unicode(msp.query("MTEXT")[0].plain_text()) == page().texts[0].text
+    assert len(msp.query("TEXT")) == 2
+    assert decode_dxf_unicode(msp.query("TEXT")[0].plain_text()) == page().texts[0].text
+    expected = ezdxf.readfile(tmp_path / "expected.dxf")
+    for actual, original in zip(msp.query("TEXT"), expected.modelspace().query("TEXT")):
+        # A structurally valid DWG can still have broken text dimensions:
+        # LibreDWG's MTEXT import used to set height=0 and width=height.
+        assert actual.dxf.height > 0
+        assert actual.dxf.height == pytest.approx(original.dxf.height)
+        assert actual.dxf.width == pytest.approx(original.dxf.width)
+        assert actual.dxf.insert.isclose(original.dxf.insert)
+        assert actual.dxf.rotation == pytest.approx(original.dxf.rotation)
+        assert actual.dxf.halign == original.dxf.halign == 0
+        assert actual.dxf.valign == original.dxf.valign == 0
+        assert actual.dxf.style == original.dxf.style
+        assert doc.styles.get(actual.dxf.style).get_extended_font_data() == expected.styles.get(original.dxf.style).get_extended_font_data()
     assert len(msp.query("SPLINE")[0].control_points) == 4
     assert msp.query("HATCH")[0].dxf.layer == "PAGE_1_GEOMETRY"
     dashed = doc.linetypes.get(msp.query("LINE")[0].dxf.linetype)
@@ -218,6 +308,37 @@ def test_actual_libredwg_roundtrip_preserves_geometry_and_cyrillic(tmp_path):
     audit = doc.audit()
     assert not audit.errors
     assert not audit.fixes
+
+
+def test_actual_dwg_keeps_complete_long_unicode_text(tmp_path):
+    try:
+        converter = find_dwg_converter()
+    except CadConversionError:
+        pytest.skip("Set PDF2OFFICE_DXF2DWG or install bundled native tools for DWG integration")
+    reader = converter.with_name("dwgread" + converter.suffix)
+    if not reader.is_file():
+        pytest.skip("LibreDWG dwgread required for direct DWG text validation")
+    p = page()
+    text = "Длинная редактируемая строка таблицы без потери начала и окончания. " * 3
+    p.texts = [TextSpan(text, (10, 20, 190, 34), "Liberation Serif", 9.96,
+                        (0, 0, 0), origin=(10, 30), advance=180)]
+    export_dxf([p], tmp_path / "expected.dxf")
+    export_dwg([p], tmp_path / "long-text.dwg", converter_path=converter)
+    result = subprocess.run([str(reader), "-O", "JSON", "-o", "readback.json", "long-text.dwg"],
+                            cwd=tmp_path, capture_output=True, timeout=30)
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    data = json.loads((tmp_path / "readback.json").read_text(encoding="utf-8"))
+    entities = [entity for entity in data["OBJECTS"] if entity.get("entity") == "TEXT"]
+    assert len(entities) == 1
+    assert entities[0]["text_value"] == text
+    expected = ezdxf.readfile(tmp_path / "expected.dxf").modelspace().query("TEXT")[0]
+    # dwg2dxf 0.14 wrongly splits long TEXT into MTEXT-style DXF groups 3+1.
+    # Read the stored DWG data directly so that reader bug cannot hide lost
+    # text or cause a correct DWG to be mistaken for a truncated conversion.
+    assert len(expected.dxf.text.encode("cp1252")) > 250
+    assert entities[0]["height"] == pytest.approx(expected.dxf.height)
+    assert entities[0]["width_factor"] == pytest.approx(expected.dxf.width)
+    assert entities[0]["ins_pt"] == pytest.approx(tuple(expected.dxf.insert)[:2])
 
 
 def test_actual_libredwg_image_and_curved_hatch_roundtrip(tmp_path):

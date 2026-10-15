@@ -10,6 +10,7 @@ import shutil
 from tempfile import TemporaryDirectory
 from typing import Callable
 
+from . import __version__
 from .runtime import setup_runtime, tool_path
 
 
@@ -130,6 +131,7 @@ def convert(
                 ocr_mode=request.ocr_mode, ocr_language=request.ocr_language,
                 tesseract_path=tool_path("tesseract"),
                 vectorize_scans=request.vectorize_scans, progress=notify,
+                check_cancel=check_cancel,
             )
             for page in pages:
                 result.warnings.extend(page.warnings)
@@ -159,7 +161,8 @@ def convert(
                         elif fmt == "dwg":
                             warnings = export_dwg(pages, staged, converter_path=tool_path("dxf2dwg"),
                                                   scale=request.scale, font_overrides=overrides,
-                                                  font_catalog=fonts)
+                                                  font_catalog=fonts, check_cancel=check_cancel,
+                                                  progress=notify)
                         else:
                             warnings = export_dxf(pages, staged, scale=request.scale,
                                                   font_overrides=overrides, font_catalog=fonts)
@@ -195,7 +198,7 @@ def convert(
         result.error = "\n".join(errors) or None
         # No PDF password is recorded or persisted.
         report = {
-            "application": "PDF Master 0.1.0",
+            "application": "PDF Master " + __version__,
             "created_utc": datetime.now(timezone.utc).isoformat(),
             "input": str(source),
             "outputs": [str(p) for p in result.outputs],

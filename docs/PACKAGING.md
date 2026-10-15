@@ -1,11 +1,16 @@
 # Сборка Windows x64
 
-Готовые файлы после сборки:
+Для выпуска 0.1.1 распространяется portable-версия. Готовые файлы после сборки
+с `--portable-only`:
 
-- `dist/PDFMaster-Setup-x64.exe` — установщик NSIS, установка для текущего пользователя без прав администратора.
 - `dist/PDFMaster-Portable-x64.zip` — распаковать **весь** архив и запустить `PDFMaster.exe`.
 - `dist/PDFMaster-Source.zip` — исходный код, тесты и сценарии сборки приложения.
-- `dist/SHA256SUMS.txt` — контрольные суммы трёх файлов.
+- `dist/SHA256SUMS.txt` — контрольные суммы portable и исходников.
+
+Обычная сборка без `--portable-only` дополнительно создаёт установщик
+`dist/PDFMaster-Setup-x64.exe` и включает его контрольную сумму. При portable-сборке
+NSIS не запускается; уже существующий установщик прежней версии в `dist` не
+обновляется и не входит в список файлов нового выпуска.
 
 Целевая система — Windows 10/11 x64. Python, Qt, OCR для русского и английского,
 модели OCR и конвертер DWG включены. Подключение к сети для конвертации не нужно.
@@ -20,23 +25,22 @@
 
 ## Воспроизводимая сборка
 
-Нужны Python 3.12+, пакет `zstandard`, GnuPG, MinGW-w64 (x86_64) и NSIS 3.11+
-(с поддержкой `amd64-unicode`). Сборка работает
+Нужны Python 3.12+, пакет `zstandard`, GnuPG и MinGW-w64 (x86_64). Для сборки
+установщика также нужен NSIS 3.11+ (с поддержкой `amd64-unicode`). Сборка работает
 на Linux без запуска Windows-компилятора Python: готовые официальные Windows
 пакеты извлекаются вместе с их лицензиями. Launcher действительно компилируется
 в PE x64, установщик создаётся NSIS; архивы не переименовываются в EXE.
 
 ```bash
 python -m pip install zstandard
-python scripts/build_windows.py
+python scripts/build_windows.py --portable-only
 ```
 
 Если инструменты не находятся в `PATH`:
 
 ```bash
-NSISDIR=/path/to/nsis/share/nsis python scripts/build_windows.py \
+python scripts/build_windows.py --portable-only \
   --cc /path/to/x86_64-w64-mingw32-gcc \
-  --makensis /path/to/makensis \
   --cache /path/to/download-cache
 ```
 

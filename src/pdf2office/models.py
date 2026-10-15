@@ -21,6 +21,9 @@ class TextSpan:
     origin: Point | None = None
     angle: float = 0.0
     from_ocr: bool = False
+    # Baseline advance in PDF points, independent of the axis-aligned bounding
+    # box, so rotated text keeps its original length.
+    advance: float | None = None
 
 
 @dataclass

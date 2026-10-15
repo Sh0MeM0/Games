@@ -11,6 +11,7 @@ import io
 import math
 import os
 from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path
 import re
 import shutil
@@ -22,9 +23,12 @@ import time
 import ezdxf
 from ezdxf.colors import DXF_DEFAULT_COLORS, int2rgb
 from PIL import Image
+from fontTools.pens.boundsPen import BoundsPen
+from fontTools.ttLib import TTFont
 
 from .fonts import FontCatalog
 from .models import PdfPage
+from .process import run_process
 from .runtime import tool_path
 
 
@@ -47,15 +51,109 @@ def _color_index(color: tuple[int, int, int] | None) -> int:
     )
 
 
-def _escape_mtext(text: str) -> str:
-    return (
-        text.replace("\\", "\\\\")
-        .replace("{", "\\{")
-        .replace("}", "\\}")
-        .replace("\r\n", "\n")
-        .replace("\r", "\n")
-        .replace("\n", "\\P")
-    )
+class _CadFontMetrics:
+    """Metrics of the font CAD will use, expressed in em units.
+
+    Keep the font in memory: a cached user font must not leave its file locked
+    on Windows. PDF sizes describe the em square; CAD TEXT height describes
+    capital letters. Confusing the two changes both height and line length.
+    """
+
+    def __init__(self, path: Path):
+        self.font = TTFont(io.BytesIO(path.read_bytes()), fontNumber=0)
+        self.units = self.font["head"].unitsPerEm
+        self.cmap = self.font.getBestCmap() or {}
+        self.glyphs = self.font.getGlyphSet()
+        self.bounds = {}
+        cap = getattr(self.font.get("OS/2"), "sCapHeight", 0)
+        if cap <= 0:
+            bounds = self._glyph_bounds(self.cmap.get(ord("H"), ".notdef"))
+            cap = bounds[3] if bounds else self.units * 0.7
+        self.cap_height = cap / self.units
+
+    def _glyph_bounds(self, name):
+        if name not in self.bounds:
+            pen = BoundsPen(self.glyphs)
+            self.glyphs[name].draw(pen)
+            self.bounds[name] = pen.bounds
+        return self.bounds[name]
+
+    def measure(self, text):
+        advance = 0.0
+        bounds = None
+        for char in text:
+            name = self.cmap.get(ord(char), ".notdef")
+            box = self._glyph_bounds(name)
+            if box is not None:
+                x0, y0, x1, y1 = box
+                box = (x0 + advance, y0, x1 + advance, y1)
+                if bounds is None:
+                    bounds = box
+                else:
+                    bounds = (min(bounds[0], box[0]), min(bounds[1], box[1]),
+                              max(bounds[2], box[2]), max(bounds[3], box[3]))
+            advance += self.font["hmtx"][name][0]
+        normalized = tuple(value / self.units for value in bounds) if bounds else None
+        return advance / self.units, normalized
+
+
+@lru_cache(maxsize=64)
+def _cad_font_metrics(path: Path | None):
+    if path is None:
+        return None
+    try:
+        return _CadFontMetrics(path)
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def _text_geometry(span, metrics):
+    """Return the PDF-space baseline, CAD capital height and width factor.
+
+    A native span is already a positioned line, so a baseline-aligned TEXT
+    avoids wrapping altogether. OCR instead supplies the ink rectangle; fit
+    the chosen font's glyph bounds into that rectangle, including descenders.
+    """
+    angle = math.radians(span.angle)
+    direction = (math.cos(angle), math.sin(angle))
+    up = (math.sin(angle), -math.cos(angle))
+    cap = metrics.cap_height if metrics else 0.7
+    advance, ink = metrics.measure(span.text) if metrics else (len(span.text) * 0.6, None)
+    target_advance = span.advance
+    if target_advance is None:
+        # Older callers may only have an axis-aligned rectangle. This fallback
+        # is exact for horizontal and vertical text; extraction supplies the
+        # actual baseline advance for arbitrary angles.
+        target_advance = ((span.bbox[2] - span.bbox[0]) * abs(direction[0])
+                          + (span.bbox[3] - span.bbox[1]) * abs(direction[1]))
+    size = max(float(span.size), 0.01)
+    anchor = span.origin
+    if span.from_ocr and ink and ink[3] > ink[1] and ink[2] > ink[0]:
+        # OCR size is measured ink height, rather than a PDF font size.
+        size /= ink[3] - ink[1]
+        width = target_advance / ((ink[2] - ink[0]) * size)
+        if anchor is None:
+            anchor = (span.bbox[0], span.bbox[3])
+        anchor = (anchor[0] - ink[0] * size * width * direction[0] - ink[1] * size * up[0],
+                  anchor[1] - ink[0] * size * width * direction[1] - ink[1] * size * up[1])
+    else:
+        width = target_advance / (advance * size) if advance > 0 else 1.0
+        if anchor is None:
+            anchor = (span.bbox[0] - cap * size * up[0],
+                      span.bbox[1] - cap * size * up[1])
+    if not math.isfinite(width) or width <= 0:
+        width = 1.0
+    return anchor, size * cap, width
+
+
+def _text_fragments(text: str) -> list[str]:
+    # TEXT interprets %%d/%%p and Unicode escape sequences.
+    # A PDF may contain those characters literally (for example a CAD manual).
+    # Separate only these exceptional runs into adjacent editable entities;
+    # ordinary text remains one entity per PDF span.
+    if re.search(r"%%[cdpkou]|\\U\+[0-9a-f]{4}", text, re.IGNORECASE):
+        return [part for part in re.split(r"([%\\])", text) if part]
+    return [text]
 
 
 def _font_name(font: str, overrides: dict[str, str]) -> str:
@@ -230,24 +328,35 @@ def _write_dxf(pages, output, scale, font_overrides, image_directory, font_catal
                 style = doc.styles.new(style_name, dxfattribs={"font": match.path.name if match.path else match.family})
                 style.set_extended_font_data(match.family, italic=match.italic, bold=match.bold)
                 styles[key] = style_name
+            metrics = _cad_font_metrics(match.path)
+            if metrics is None:
+                warnings.append(f"CAD: не удалось прочитать метрики шрифта «{match.family}»; размеры текста приближённые.")
+            anchor, height, width = _text_geometry(span, metrics)
             angle = float(span.angle)
-            anchor = (span.bbox[0], span.bbox[1])
-            if span.origin is not None and abs(angle) > 1e-6:
-                rad = math.radians(angle)
-                anchor = (span.origin[0] + math.sin(rad) * span.size, span.origin[1] - math.cos(rad) * span.size)
-            msp.add_mtext(
-                _escape_mtext(span.text),
-                dxfattribs={
-                    "layer": layers["TEXT"],
-                    "insert": transform(anchor),
-                    "char_height": max(span.size * factor, 0.01),
-                    "width": 0.0,
-                    "attachment_point": 1,
-                    "rotation": -angle,
-                    "style": styles[key],
-                    "color": _color_index(span.color),
-                },
-            )
+            direction = (math.cos(math.radians(angle)), math.sin(math.radians(angle)))
+            em_size = height / (metrics.cap_height if metrics else 0.7)
+            offset = 0.0
+            # Each extracted PDF span is a positioned line. TEXT has no line
+            # wrapping and preserves its baseline and explicit width factor.
+            # LibreDWG 0.14's MTEXT importer instead aliases height and width
+            # (DXF 40), writing zero height and a narrow wrapping rectangle.
+            for fragment in _text_fragments(span.text):
+                position = (anchor[0] + offset * direction[0], anchor[1] + offset * direction[1])
+                msp.add_text(
+                    # In DXF caret notation, "^ " represents a literal ^.
+                    fragment.replace("^", "^ "),
+                    dxfattribs={
+                        "layer": layers["TEXT"],
+                        "insert": transform(position),
+                        "height": max(height * factor, 0.01),
+                        "width": width,
+                        "rotation": -angle,
+                        "style": styles[key],
+                        "color": _color_index(span.color),
+                    },
+                )
+                length = metrics.measure(fragment)[0] if metrics else len(fragment) * 0.6
+                offset += length * em_size * width
 
         for index, raster in enumerate(page.images, start=1):
             try:
@@ -415,7 +524,7 @@ def _publish_dwg(source: Path, output: Path):
             sibling.unlink(missing_ok=True)
 
 
-def export_dwg(pages: list[PdfPage], output: Path, converter_path: Path | None = None, scale: float = 1.0, font_overrides: dict[str, str] | None = None, font_catalog: FontCatalog | None = None) -> list[str]:
+def export_dwg(pages: list[PdfPage], output: Path, converter_path: Path | None = None, scale: float = 1.0, font_overrides: dict[str, str] | None = None, font_catalog: FontCatalog | None = None, *, check_cancel=None, progress=None) -> list[str]:
     """Write a real AC1015 DWG, atomically replacing output only on success."""
     converter = find_dwg_converter(converter_path)
     output = Path(output).resolve()
@@ -424,23 +533,20 @@ def export_dwg(pages: list[PdfPage], output: Path, converter_path: Path | None =
         dxf = temporary / "drawing.dxf"
         dwg = temporary / "drawing.dwg"
         warnings = _write_dxf(pages, dxf, scale, font_overrides, output.with_name(image_directory_name(output.stem)), font_catalog, for_libredwg=True)
-        kwargs = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+        def heartbeat(elapsed):
+            if progress:
+                progress(f"Запись DWG продолжается: {int(elapsed)} с; ограничение времени отключено.")
+
         try:
-            result = subprocess.run(
+            result = run_process(
                 [str(converter), "--as", "r2000", "-y", "-o", dwg.name, dxf.name],
                 cwd=temporary,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                timeout=180,
-                check=False,
-                **kwargs,
+                check_cancel=check_cancel,
+                heartbeat=heartbeat,
             )
-        except subprocess.TimeoutExpired as exc:
-            raise CadConversionError("LibreDWG не завершил преобразование за 180 секунд. Уменьшите число страниц и повторите.") from exc
         except OSError as exc:
             raise CadConversionError(f"Не удалось запустить LibreDWG: {exc}") from exc
-        message = result.stdout.decode("utf-8", errors="replace")
+        message = ((result.stdout or b"") + (result.stderr or b"")).decode("utf-8", errors="replace")
         if result.returncode != 0:
             raise CadConversionError(f"LibreDWG завершился с ошибкой {result.returncode}: {message[-2000:]}")
         if not dwg.is_file() or dwg.stat().st_size < 128:

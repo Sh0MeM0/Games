@@ -31,6 +31,7 @@ def test_extract_native_geometry_text(tmp_path):
     assert page.texts[0].origin == pytest.approx((30, 50))
     assert page.texts[0].color == (255, 0, 0)
     assert page.texts[0].size == 12
+    assert page.texts[0].advance == pytest.approx(fitz.get_text_length("Editable text", fontsize=12), abs=0.001)
     assert not page.ocr_used
     line = next(d for d in page.drawings if d.stroke == (0, 0, 255))
     assert line.width == 2
@@ -46,10 +47,28 @@ def test_rotation_applies_to_all_geometry(tmp_path, rotation, size, origin, angl
     assert (page.width, page.height) == size
     assert page.texts[0].origin == pytest.approx(origin)
     assert page.texts[0].angle == pytest.approx(angle)
+    assert page.texts[0].advance == pytest.approx(fitz.get_text_length("Editable text", fontsize=12), abs=0.001)
     for drawing in page.drawings:
         for segment in drawing.segments:
             for x, y in segment.points:
                 assert 0 <= x <= page.width and 0 <= y <= page.height
+
+
+@pytest.mark.parametrize("page_rotation", [0, 90])
+def test_angled_text_keeps_baseline_advance_not_axis_aligned_box(tmp_path, page_rotation):
+    path = tmp_path / "angled.pdf"
+    text = "Angled editable baseline"
+    with fitz.open() as document:
+        page = document.new_page(width=300, height=400)
+        anchor = fitz.Point(50, 200)
+        page.insert_text(anchor, text, fontsize=12, morph=(anchor, fitz.Matrix(27)))
+        page.set_rotation(page_rotation)
+        document.save(path)
+    page, = extract_pdf(path, ocr_mode="off")
+    span, = page.texts
+    assert span.angle == pytest.approx(page_rotation - 27, abs=0.001)
+    assert span.advance == pytest.approx(fitz.get_text_length(text, fontsize=12), abs=0.01)
+    assert abs(span.advance - (span.bbox[2] - span.bbox[0])) > 1
 
 
 @pytest.mark.parametrize("bad", ["0", "2-1", "1,,2", "-1", "1-99999999999", "3", "x", "1;2", "1-"])
@@ -261,9 +280,9 @@ def test_unicode_ocr_data_and_temp_paths_use_ascii_native_arguments(tmp_path, mo
     invocations = []
     original_run = extraction._run_tesseract
 
-    def record_run(command, timeout=180, *, input_data=None, cwd=None):
+    def record_run(command, timeout=None, *, input_data=None, cwd=None, **kwargs):
         invocations.append((command, input_data, cwd))
-        return original_run(command, timeout, input_data=input_data, cwd=cwd)
+        return original_run(command, timeout, input_data=input_data, cwd=cwd, **kwargs)
 
     monkeypatch.setattr(extraction, "_run_tesseract", record_run)
     page, = extract_pdf(make_pdf(tmp_path), ocr_mode="always", ocr_language="eng")

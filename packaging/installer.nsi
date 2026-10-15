@@ -17,10 +17,10 @@ InstallDirRegKey HKCU "Software\PDFMaster" "InstallDir"
 RequestExecutionLevel user
 SetCompressor /SOLID lzma
 SetCompressorDictSize 32
-VIProductVersion "0.1.0.0"
+VIProductVersion "0.1.1.0"
 VIAddVersionKey /LANG=1049 "ProductName" "PDF Мастер"
 VIAddVersionKey /LANG=1049 "FileDescription" "Установка PDF Мастер"
-VIAddVersionKey /LANG=1049 "FileVersion" "0.1.0"
+VIAddVersionKey /LANG=1049 "FileVersion" "0.1.1"
 VIAddVersionKey /LANG=1049 "LegalCopyright" "PDF Master contributors"
 
 !define MUI_ABORTWARNING
@@ -59,7 +59,7 @@ Section "PDF Мастер" SEC_MAIN
   CreateShortcut "$DESKTOP\PDF Мастер.lnk" "$INSTDIR\PDFMaster.exe"
   WriteRegStr HKCU "Software\PDFMaster" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PDFMaster" "DisplayName" "PDF Мастер"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PDFMaster" "DisplayVersion" "0.1.0"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PDFMaster" "DisplayVersion" "0.1.1"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PDFMaster" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PDFMaster" "DisplayIcon" "$INSTDIR\PDFMaster.exe"
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\PDFMaster" "NoModify" 1

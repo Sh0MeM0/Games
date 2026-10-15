@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Build an offline Windows x64 distribution on Linux or Windows.
 
-Requires Python >=3.12, zstandard, GnuPG, MinGW-w64 GCC and NSIS. All downloaded
-runtime artifacts are pinned by SHA-256 in packaging/windows-assets.lock.json.
+Requires Python >=3.12, zstandard, GnuPG and MinGW-w64 GCC. NSIS is needed only
+for installer builds. All downloaded runtime artifacts are pinned by SHA-256
+in packaging/windows-assets.lock.json.
 """
 from __future__ import annotations
 
@@ -106,6 +107,7 @@ def main() -> int:
     parser.add_argument("--windres", default=os.environ.get("MINGW_WINDRES"))
     parser.add_argument("--makensis", default=os.environ.get("MAKENSIS", "makensis"))
     parser.add_argument("--stage-only", action="store_true", help="Prepare files and launchers, without archives/installer")
+    parser.add_argument("--portable-only", action="store_true", help="Build portable and source ZIPs without invoking NSIS or including an installer checksum")
     args = parser.parse_args()
     records = json.loads((ROOT / "packaging/windows-assets.lock.json").read_text())
     args.cache.mkdir(parents=True, exist_ok=True)
@@ -235,13 +237,17 @@ def main() -> int:
     if args.stage_only:
         print(stage)
         return 0
-    flag = "/" if os.name == "nt" else "-"
-    subprocess.run([args.makensis, f"{flag}V2", f"{flag}DPAYLOAD={stage}",
-                    f"{flag}DOUTPUT={dist / 'PDFMaster-Setup-x64.exe'}",
-                    str(ROOT / "packaging/installer.nsi")], check=True)
+    outputs = []
+    if not args.portable_only:
+        flag = "/" if os.name == "nt" else "-"
+        installer = dist / "PDFMaster-Setup-x64.exe"
+        subprocess.run([args.makensis, f"{flag}V2", f"{flag}DPAYLOAD={stage}",
+                        f"{flag}DOUTPUT={installer}",
+                        str(ROOT / "packaging/installer.nsi")], check=True)
+        outputs.append(installer)
     shutil.make_archive(str(dist / "PDFMaster-Portable-x64"), "zip", dist, stage.name)
     make_source_archive(dist / "PDFMaster-Source.zip")
-    outputs = [dist / "PDFMaster-Setup-x64.exe", dist / "PDFMaster-Portable-x64.zip", dist / "PDFMaster-Source.zip"]
+    outputs += [dist / "PDFMaster-Portable-x64.zip", dist / "PDFMaster-Source.zip"]
     (dist / "SHA256SUMS.txt").write_text("\n".join(f"{digest(path)}  {path.name}" for path in outputs) + "\n")
     for path in outputs:
         print(f"Built {path} ({path.stat().st_size / 1024 / 1024:.1f} MiB)")

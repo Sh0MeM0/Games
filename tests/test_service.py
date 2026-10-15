@@ -34,7 +34,7 @@ def test_real_dxf_docx_batch_is_editable_and_non_destructive(source, tmp_path):
     assert {p.suffix for p in result.outputs} == {".dxf", ".docx"}
     drawing = ezdxf.readfile(next(p for p in result.outputs if p.suffix == ".dxf"))
     assert not drawing.audit().has_errors
-    assert "План здания" in " ".join(decode_dxf_unicode(e.plain_text()) for e in drawing.modelspace().query("MTEXT"))
+    assert "План здания" in " ".join(decode_dxf_unicode(e.plain_text()) for e in drawing.modelspace().query("TEXT"))
     assert len(drawing.modelspace().query("SPLINE")) == 1
     assert len(drawing.modelspace().query("LWPOLYLINE")) >= 1
     docx = next(p for p in result.outputs if p.suffix == ".docx")
@@ -104,6 +104,34 @@ def test_cancel_during_page_progress_leaves_no_partial_document(source, tmp_path
     assert len(results) == 1
     assert "остановлена" in results[0].error
     assert not list(request.output_dir.glob("*.docx"))
+
+
+def test_cancellation_reaches_running_dwg_and_skips_later_outputs(source, tmp_path, monkeypatch):
+    stop = False
+    messages = []
+
+    def update(message):
+        messages.append(message)
+
+    def native_run(command, **kwargs):
+        nonlocal stop
+        assert kwargs.get("timeout") is None
+        kwargs["heartbeat"](181.0)
+        stop = True
+        kwargs["check_cancel"]()
+        raise AssertionError("Cancellation did not reach the DWG child")
+
+    monkeypatch.setattr("pdf2office.cad.find_dwg_converter", lambda _: Path("native-converter"))
+    monkeypatch.setattr("pdf2office.cad.run_process", native_run)
+    request = ConversionRequest([source, source], tmp_path / "out", ("dwg", "docx"), ocr_mode="off")
+    result, = convert(request, progress=update, cancelled=lambda: stop)
+    assert "остановлена" in result.error
+    assert not result.outputs
+    assert any("181 с" in line for line in messages)
+    assert not any("Ошибка DWG" in line for line in messages)
+    assert not list(request.output_dir.glob("*.dwg"))
+    assert not list(request.output_dir.glob("*.docx"))
+    assert not list(request.output_dir.glob(".pdf-master-*"))
 
 
 def test_report_never_contains_password(tmp_path):

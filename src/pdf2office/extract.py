@@ -17,6 +17,7 @@ from PIL import Image
 
 from .fonts import resource_root
 from .models import Drawing, PdfPage, RasterImage, Segment, TextSpan
+from .process import run_process
 
 
 class PdfExtractionError(ValueError):
@@ -82,11 +83,14 @@ def _native_text(page: fitz.Page, blocks: list[dict]) -> list[TextSpan]:
                 if not span.get("text", "").strip():
                     continue
                 flags = span.get("flags", 0)
+                quad = fitz.recover_quad(direction, span)
+                advance = math.hypot(quad.ur.x - quad.ul.x, quad.ur.y - quad.ul.y)
                 result.append(TextSpan(
                     text=span["text"], bbox=_bbox(span["bbox"], matrix),
                     font=span.get("font", "Helvetica"), size=float(span.get("size", 12)),
                     color=_color(span.get("color", 0)), bold=bool(flags & 16),
                     italic=bool(flags & 2), origin=_point(span["origin"], matrix), angle=angle,
+                    advance=advance,
                 ))
     return result
 
@@ -225,21 +229,22 @@ def _tesseract_options(executable: Path) -> list[str]:
     return []
 
 
-def _run_tesseract(command: list[str], timeout: int = 180, *,
-                   input_data: bytes | None = None, cwd: Path | None = None) -> subprocess.CompletedProcess:
+def _run_tesseract(command: list[str], timeout: int | None = None, *,
+                   input_data: bytes | None = None, cwd: Path | None = None,
+                   check_cancel=None, heartbeat=None) -> subprocess.CompletedProcess:
     try:
-        result = subprocess.run(command, capture_output=True, input=input_data, cwd=cwd,
-                                timeout=timeout, check=False, creationflags=0x08000000 if os.name == "nt" else 0)
+        result = run_process(command, input_data=input_data, cwd=cwd,
+                             timeout=timeout, check_cancel=check_cancel, heartbeat=heartbeat)
         return subprocess.CompletedProcess(result.args, result.returncode,
                                            result.stdout.decode("utf-8", errors="replace"),
                                            result.stderr.decode("utf-8", errors="replace"))
     except subprocess.TimeoutExpired as error:
-        raise PdfExtractionError(f"Превышено время OCR для страницы ({timeout} секунд).") from error
+        raise PdfExtractionError(f"Tesseract не ответил на служебный запрос за {timeout} секунд.") from error
     except OSError as error:
         raise PdfExtractionError(f"Не удалось запустить Tesseract OCR: {error}") from error
 
 
-def _ocr(page: fitz.Page, native: list[TextSpan], executable: Path, language: str, warnings: list[str]) -> tuple[list[TextSpan], Image.Image]:
+def _ocr(page: fitz.Page, native: list[TextSpan], executable: Path, language: str, warnings: list[str], *, check_cancel=None, progress=None) -> tuple[list[TextSpan], Image.Image]:
     if not re.fullmatch(r"[A-Za-z0-9_]+(?:\+[A-Za-z0-9_]+)*", language):
         raise PdfExtractionError("Некорректный язык OCR. Пример: rus+eng.")
     executable = executable.resolve()
@@ -250,7 +255,7 @@ def _ocr(page: fitz.Page, native: list[TextSpan], executable: Path, language: st
     cwd = Path(options[1]).resolve() if options else None
     if cwd is not None:
         options = ["--tessdata-dir", "."]
-    available = _run_tesseract([str(executable), "--list-langs", *options], timeout=30, cwd=cwd)
+    available = _run_tesseract([str(executable), "--list-langs", *options], timeout=30, cwd=cwd, check_cancel=check_cancel)
     languages = set(available.stdout.splitlines()[1:])
     missing = set(language.split("+")) - languages
     if available.returncode or missing:
@@ -269,7 +274,8 @@ def _ocr(page: fitz.Page, native: list[TextSpan], executable: Path, language: st
     image_data = png_stream.getvalue()
     if "osd" in languages:
         try:
-            orientation = _run_tesseract([str(executable), "stdin", "stdout", *options, "-l", "osd", "--dpi", str(dpi), "--psm", "0", "-c", "min_characters_to_try=15"], timeout=30, input_data=image_data, cwd=cwd)
+            orientation = _run_tesseract([str(executable), "stdin", "stdout", *options, "-l", "osd", "--dpi", str(dpi), "--psm", "0", "-c", "min_characters_to_try=15"], input_data=image_data, cwd=cwd, check_cancel=check_cancel,
+                                         heartbeat=lambda elapsed: progress(f"Определение ориентации скана продолжается: {int(elapsed)} с.") if progress else None)
             rotate_match = re.search(r"Rotate:\s*(0|90|180|270)\b", orientation.stdout)
             confidence_match = re.search(r"Orientation confidence:\s*([0-9.]+)", orientation.stdout)
             if orientation.returncode == 0 and rotate_match and confidence_match and float(confidence_match[1]) >= 2:
@@ -284,7 +290,8 @@ def _ocr(page: fitz.Page, native: list[TextSpan], executable: Path, language: st
         extent = fitz.Rect(0, 0, image.width, image.height) * transform
         transform.e, transform.f = -extent.x0, -extent.y0
         mapping = (~transform) * mapping
-    run = _run_tesseract([str(executable), "stdin", "stdout", *options, "-l", language, "--dpi", str(dpi), "--psm", "3", "-c", "tessedit_create_tsv=1"], input_data=image_data, cwd=cwd)
+    run = _run_tesseract([str(executable), "stdin", "stdout", *options, "-l", language, "--dpi", str(dpi), "--psm", "3", "-c", "tessedit_create_tsv=1"], input_data=image_data, cwd=cwd, check_cancel=check_cancel,
+                         heartbeat=lambda elapsed: progress(f"Распознавание текста продолжается: {int(elapsed)} с; ограничение времени отключено.") if progress else None)
     if run.returncode:
         raise PdfExtractionError("Ошибка распознавания Tesseract: " + run.stderr.strip()[-1200:])
     result = []
@@ -306,7 +313,8 @@ def _ocr(page: fitz.Page, native: list[TextSpan], executable: Path, language: st
             continue
         result.append(TextSpan(text, bbox, "Liberation Sans", max(3.0, height * math.hypot(mapping.c, mapping.d)), (0, 0, 0),
                                origin=_point((x, y + height), mapping),
-                               angle=math.degrees(math.atan2(mapping.b, mapping.a)), from_ocr=True))
+                               angle=math.degrees(math.atan2(mapping.b, mapping.a)), from_ocr=True,
+                               advance=width * math.hypot(mapping.a, mapping.b)))
     warnings.append("Распознанный текст требует проверки: шрифт и начертание скана определяются приблизительно.")
     return result, image
 
@@ -348,7 +356,8 @@ def _trace_scan(image: Image.Image, page: PdfPage) -> list[Drawing]:
 
 def extract_pdf(path: Path, pages: str = "", password: str = "", ocr_mode: str = "auto",
                 ocr_language: str = "rus+eng", tesseract_path: Path | None = None,
-                vectorize_scans: bool = False, progress: Callable[[str], None] | None = None) -> list[PdfPage]:
+                vectorize_scans: bool = False, progress: Callable[[str], None] | None = None,
+                check_cancel: Callable[[], None] | None = None) -> list[PdfPage]:
     """Extract editable primitives and optionally recognize the rendered page.
 
     ``ocr_mode``: auto supplements native text without duplicates; always uses
@@ -375,6 +384,8 @@ def extract_pdf(path: Path, pages: str = "", password: str = "", ocr_mode: str =
         indices = parse_page_range(pages, document.page_count)
         executable = None
         for index in indices:
+            if check_cancel:
+                check_cancel()
             if progress:
                 progress(f"Чтение страницы {index + 1} из {document.page_count}")
             source = document[index]
@@ -392,7 +403,8 @@ def extract_pdf(path: Path, pages: str = "", password: str = "", ocr_mode: str =
                     progress(f"Распознавание текста: страница {index + 1}")
                 executable = executable or _find_tesseract(tesseract_path)
                 recognized, rendered = _ocr(source, [] if ocr_mode == "always" else texts,
-                                           executable, ocr_language, warnings)
+                                           executable, ocr_language, warnings,
+                                           check_cancel=check_cancel, progress=progress)
                 if ocr_mode == "always":
                     page.texts = recognized
                     if texts:
