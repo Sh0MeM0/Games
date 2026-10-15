@@ -1,6 +1,6 @@
 {
   "name": "stamp-extractor",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
   "description": "Печати и подписи — выделение и очистка изображений",
   "author": "Stamp Extractor",
@@ -13,7 +13,8 @@
     "test:ui": "node tests/desktop.cjs",
     "dist:win": "electron-builder --win portable --x64 --publish never",
     "models:fetch": "python scripts/fetch-ocr-models.py",
-    "test:documents": "node tests/document-desktop.cjs"
+    "test:documents": "node tests/document-desktop.cjs",
+    "test:failures": "node tests/failure-desktop.cjs"
   },
   "devDependencies": {
     "electron": "44.7.0",

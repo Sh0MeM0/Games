@@ -9,7 +9,7 @@
 </head>
 <body>
   <header>
-    <div class="brand"><span class="brand-icon" aria-hidden="true">✂</span><div><h1>Печати и подписи</h1><p>2.0 · Удаление текста · Отдельный PNG для каждого объекта</p></div></div>
+    <div class="brand"><span class="brand-icon" aria-hidden="true">✂</span><div><h1>Печати и подписи</h1><p>3.0 · Печати и подписи отдельно · Восстановление коротких разрывов</p></div></div>
     <span class="offline">● Всё остаётся на вашем компьютере</span>
   </header>
   <nav class="toolbar" aria-label="Основные действия">
@@ -35,12 +35,18 @@
       <section class="result-panel">
         <div class="panel-heading"><strong>Результат</strong><button id="compare" disabled aria-pressed="false">Показать оригинал</button></div>
         <div id="previewWrap"><p id="previewEmpty" class="muted">Выберите область на изображении</p><canvas id="preview" hidden></canvas><span id="previewBusy" hidden>Обработка…</span></div>
+        <div class="repair-view"><button id="highlightRepairs" type="button" disabled aria-pressed="false">Подсветить достроенные участки</button></div>
         <p id="previewInfo" class="preview-info">Белый непрозрачный фон · PNG</p>
         <fieldset id="editor" disabled>
           <label>Имя файла<input id="name" type="text" maxlength="100" placeholder="объект_01"></label>
           <label>Тип объекта<select id="kind"><option value="stamp">Печать — сохранить её надписи</option><option value="signature">Подпись — удалить печатный текст</option><option value="candidate">Область — проверить результат</option></select></label>
           <label class="check-label"><input id="removeText" type="checkbox" checked> Удалять печатный текст документа</label>
           <label class="check-label"><input id="removeLines" type="checkbox" checked> Удалять линии бланка</label>
+          <label id="stampLayerLabel">Состав печати<select id="stampLayer"><option value="printed">Рамка и печатный текст</option><option value="whole">Всё внутри рамки</option></select></label>
+          <label class="check-label"><input id="isolate" type="checkbox" checked> Убирать посторонние штрихи</label>
+          <label class="check-label"><input id="repair" type="checkbox" checked> Соединять короткие разрывы</label>
+          <label class="slider-label">Максимальный разрыв, пикс. <output id="repairGapValue">18</output><input id="repairGap" type="range" min="4" max="24" value="18"></label>
+          <p class="control-hint">Соединения предполагаемые. Подсветка показывает добавленные участки; в PNG она не попадает.</p>
           <div class="two-columns"><label>Оставить чернила<select id="mode"><option value="all">Все цвета</option><option value="colored">Только цветные</option><option value="blue">Синие</option><option value="red">Красные</option><option value="black">Тёмные</option></select></label><label>Масштаб PNG<select id="scale"><option value="1">Исходный</option><option value="2">В 2 раза</option><option value="3">В 3 раза</option></select></label></div>
           <label class="slider-label">Удаление фона <output id="thresholdValue">18</output><input id="threshold" type="range" min="3" max="80" value="18"></label>
           <label class="slider-label">Убрать мелкий шум <output id="speckleValue">3</output><input id="speckle" type="range" min="0" max="30" value="3"></label>
@@ -54,7 +60,7 @@
     </aside>
   </main>
   <footer><span id="status" role="status" aria-live="polite">Готово к работе</span><button id="cancelExport" hidden>Остановить сохранение</button><button id="openOutput" disabled>Открыть папку результатов</button></footer>
-  <div class="limitation">Если текст перекрывает подпись теми же чернилами, точное разделение может потребовать ручной правки. Скрытые штрихи не дорисовываются.</div>
+  <div class="limitation">Если текст перекрывает подпись теми же чернилами, точное разделение может потребовать ручной правки. Короткие разрывы можно соединить; точность скрытых штрихов не гарантируется.</div>
   <script type="module" src="app.js"></script>
 </body>
 </html>

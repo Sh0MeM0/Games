@@ -1,8 +1,12 @@
-/** Document extraction: OCR suppresses printed words; measured ink geometry
- * protects closed seal borders and connected handwriting. No missing ink is
- * reconstructed. The detector deliberately leaves ambiguous overlaps editable.
+/** Document extraction: OCR, measured frame geometry and stroke layers separate
+ * printed seal lettering from signatures and annotation rows. Optional short
+ * gap inference is reported separately and never changes the original image.
  */
 import { prepareInk, cropImage, normalizeRect, maxFilter, applyStrokes } from './processing.js';
+import { detectStampFrames, pointInStampFrame, extractStampMask } from './stamps.js';
+import { separateStampLayers } from './stamp-layers.js';
+import { filterSignatureGroups, isolateSignatureMask, suppressAnnotationRows } from './signatures.js';
+import { repairStrokes } from './repair.js';
 
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 const area = r => r.w * r.h;
@@ -51,12 +55,13 @@ function normalizeWords(words,width,height) {
     const text=String(word.text||'').trim(),confidence=Number(word.confidence??word.conf??0);
     if(![x,y,w,h,confidence].every(Number.isFinite)||w<=0||h<=0||confidence<30||!/[\p{L}\p{N}]/u.test(text))continue;
     if(w>width*.9||h>height*.15)continue;
-    try { result.push({...normalizeRect({x:x-1,y:y-1,w:w+2,h:h+2},width,height),text,confidence}); } catch { /* invalid OCR box */ }
+    try { result.push({...normalizeRect({x:x-1,y:y-1,w:w+2,h:h+2},width,height),text,confidence,symbols:word.symbols||[]}); } catch { /* invalid OCR box */ }
   }
   return result;
 }
 
 function atStamp(stamp,x,y) {
+  if(stamp.quad) return pointInStampFrame(stamp,x,y,2);
   if(!contains(stamp,x,y,2))return false;
   if(stamp.shape==='ellipse') {
     const nx=(x-stamp.x-stamp.w/2)/(stamp.w/2+3),ny=(y-stamp.y-stamp.h/2)/(stamp.h/2+3);
@@ -185,8 +190,18 @@ export function analyzeDocument(image,words=[],options={}) {
   const channels=Array.from({length:4},()=>new Uint8Array(width*height));
   for(let i=0;i<prepared.mask.length;i++)if(prepared.mask[i]) { const p=i*4;channels[inkClass(prepared.data[p],prepared.data[p+1],prepared.data[p+2])][i]=1; }
   const textBoxes=normalizeWords(words,width,height),textHeight=median(textBoxes.filter(b=>b.confidence>50).map(b=>b.h));
+  for(const word of textBoxes) {
+    const counts=[0,0,0,0];
+    for(let y=word.y;y<word.y+word.h;y++)for(let x=word.x;x<word.x+word.w;x++){
+      const i=y*width+x;if(!prepared.mask[i])continue;const p=i*4;counts[inkClass(prepared.data[p],prepared.data[p+1],prepared.data[p+2])]++;
+    }
+    word.inkMode=modes[counts.indexOf(Math.max(...counts))];
+  }
   let stamps=[];
-  for(let channel=0;channel<4;channel++)stamps.push(...findStamps(channels[channel],width,height,modes[channel]));
+  for(let channel=0;channel<4;channel++) {
+    stamps.push(...detectStampFrames(channels[channel],width,height,modes[channel]));
+    stamps.push(...findStamps(channels[channel],width,height,modes[channel]));
+  }
   // A large printed O/0 belongs to its recognized word, not to a seal. Require
   // several OCR characters so a real circular seal misread as "O" survives.
   stamps=stamps.filter(stamp=>!textBoxes.some(word=>word.confidence>=50&&word.text.replace(/[^\p{L}\p{N}]/gu,'').length>=2&&
@@ -194,10 +209,32 @@ export function analyzeDocument(image,words=[],options={}) {
   stamps.sort((a,b)=>area(b)-area(a));
   stamps=stamps.filter((stamp,index,list)=>!list.slice(0,index).some(outer=>outer.mode===stamp.mode&&intersection(outer,stamp)>area(stamp)*.85));
   const ruleBoxes=findRules(channels[0],width,height,stamps);
+  const layers = new Map();
+  for (const stamp of stamps) if (stamp.quad) {
+    const inputMask=channels[modes.indexOf(stamp.mode)];
+    const isolated=extractStampMask(image,inputMask,stamp,{removeForeignInk:true});
+    // Use a narrow ownership band when subtracting a frame from a signature.
+    // The wider protection used to render the stamp itself must not erase pen
+    // strokes running next to its border. Detached frame remnants are filtered
+    // by their measured direction when the signature is rendered.
+    const split=separateStampLayers({data:prepared.data,mask:isolated.mask},width,height,stamp,words,{borderRadius:2});
+    // Ink outside the learned stamp colour is still available to the signature
+    // detector; removing it from the stamp must not discard the signature.
+    for(let y=Math.max(0,stamp.y);y<Math.min(height,stamp.y+stamp.h);y++)for(let x=Math.max(0,stamp.x);x<Math.min(width,stamp.x+stamp.w);x++) {
+      const i=y*width+x;if(inputMask[i]&&atStamp(stamp,x,y)&&!split.stampMask[i])split.handwritingMask[i]=1;
+    }
+    layers.set(stamp,split);
+  }
   const signatureRegions=[],handwritingBoxes=[];
-  let removedTextPixels=0,removedRulePixels=0;
+  let removedTextPixels=0,removedRulePixels=0,rejectedText=0;
   for(let channel=0;channel<4;channel++) {
-    const mode=modes[channel],mask=channels[channel];
+    const mode=modes[channel];
+    const ruleEvidence=new Uint8Array(width*height);
+    for(const rule of ruleBoxes)paintBox(ruleEvidence,width,height,rule,1,(x,y)=>inRule(rule,x,y));
+    // Repair is used here only to find the complete object's extent. The final
+    // output independently respects the user's repair toggle and original ink.
+    const joined=repairStrokes({mask:channels[channel],width,height,ruleMask:ruleEvidence},{enabled:true,maxGap:18});
+    let mask=joined.mask;
     const original=connected(mask,width,height),protectedIds=new Set();
     for(const c of original.boxes)if(handwritingSeed(c,textHeight,mode)&&!printedGlyph(c,textBoxes)&&!stamps.some(s=>intersection(s,c)>area(c)*.65)) {
       // Do not protect page/table lines joined to text as handwriting.
@@ -205,6 +242,7 @@ export function analyzeDocument(image,words=[],options={}) {
       protectedIds.add(c.id);
     }
     for(const box of textBoxes) {
+      if(box.inkMode!==mode)continue;
       const shape=textLooksPrinted(box,original,width,mask);
       if(shape.glyphs===0)continue;
       paintBox(mask,width,height,box,0,(x,y)=>{
@@ -220,7 +258,15 @@ export function analyzeDocument(image,words=[],options={}) {
       if(mask[y*width+x])removedRulePixels++;return true;
     });
     // Seal contents are exported with their frame, never as extra signatures.
-    for(const stamp of stamps)if(stamp.mode===mode)paintBox(mask,width,height,stamp,0,(x,y)=>atStamp(stamp,x,y));
+    for(const stamp of stamps)if(stamp.mode===mode) {
+      const handwriting=layers.get(stamp)?.handwritingMask;
+      paintBox(mask,width,height,stamp,0,(x,y)=>{
+        if(!atStamp(stamp,x,y))return false;
+        return !handwriting || !handwriting[y*width+x];
+      });
+    }
+    const annotationCleanup=suppressAnnotationRows(mask,width,height,{textHeight,words,stamps});
+    mask=annotationCleanup.mask;
     const residual=connected(mask,width,height),seeds=residual.boxes.filter(c=>handwritingSeed(c,textHeight,mode));
     const groups=[];
     for(const seed of seeds.sort((a,b)=>b.area-a.area)) {
@@ -232,78 +278,184 @@ export function analyzeDocument(image,words=[],options={}) {
       if(nearby){const joined=union(nearby,seed);Object.assign(nearby,joined);nearby.members.push(seed.id);nearby.ink+=seed.area;}
       else groups.push({...seed,members:[seed.id],ink:seed.area});
     }
-    for(const group of groups) {
+    const context={mask,width,height,textHeight,words,components:residual,stamps};
+    const classified=filterSignatureGroups(groups,context);
+    rejectedText+=classified.rejected.length;
+    for(const {group,confidence:conf} of classified.accepted) {
       const margin=Math.min(22,Math.max(5,group.h*.18)),neighborhood={x:group.x-margin,y:group.y-margin,w:group.w+margin*2,h:group.h+margin*2};
       for(const c of residual.boxes)if(!group.members.includes(c.id)&&c.area>=3&&c.w<group.w*.45&&intersection(neighborhood,c)>area(c)*.8)Object.assign(group,union(group,c));
-      const conf=mode==='black'?.78:.87;
       const rect=normalizeRect({x:group.x-6,y:group.y-6,w:group.w+12,h:group.h+12},width,height);
-      signatureRegions.push({...rect,kind:'signature',mode,confidence:conf});
+      const isolated=isolateSignatureMask(mask,width,height,group,context);
+      const selectedMask=isolated.mask||isolated;
+      const selectionMask=new Uint8Array(rect.w*rect.h);
+      for(let y=0;y<rect.h;y++)for(let x=0;x<rect.w;x++)selectionMask[y*rect.w+x]=selectedMask[(y+rect.y)*width+x+rect.x];
+      let uncertainPixels=0;
+      for(let y=rect.y;y<rect.y+rect.h;y++)for(let x=rect.x;x<rect.x+rect.w;x++)
+        if(annotationCleanup.uncertainMask[y*width+x])uncertainPixels++;
+      signatureRegions.push({...rect,kind:'signature',mode,confidence:conf,uncertainPixels,selection:{...rect,width:rect.w,height:rect.h,mask:selectionMask}});
       handwritingBoxes.push({...rect,mode});
     }
   }
-  const regions=[...stamps.map(s=>({...normalizeRect({x:s.x-6,y:s.y-6,w:s.w+12,h:s.h+12},width,height),kind:'stamp',mode:s.mode,confidence:s.confidence,shape:s.shape})),...signatureRegions];
+  const regions=[...stamps.map(s=>({...normalizeRect({x:s.x-6,y:s.y-6,w:s.w+12,h:s.h+12},width,height),kind:'stamp',mode:s.mode,confidence:s.confidence,shape:s.shape,quad:s.quad})),...signatureRegions];
   regions.sort((a,b)=>a.y-b.y||a.x-b.x);
+  regions.forEach((region,index)=>region.key='object-'+index);
   const selected=regions.filter(r=>!options.mode||options.mode==='all'||options.mode===r.mode||(options.mode==='colored'&&r.mode!=='black'));
-  return {width,height,regions:selected.slice(0,80),textBoxes,ruleBoxes,protectedStamps:stamps,handwritingBoxes,
-    stats:{ocrWords:textBoxes.length,removedTextPixels,removedRulePixels,stamps:stamps.length,signatures:signatureRegions.length},truncated:regions.length>80};
+  return {width,height,regions:selected.slice(0,80),textBoxes,ocrWords:words,ruleBoxes,protectedStamps:stamps,handwritingBoxes,
+    stats:{ocrWords:textBoxes.length,removedTextPixels,removedRulePixels,rejectedText,stamps:stamps.length,signatures:signatureRegions.length},truncated:regions.length>80};
 }
 
 export function scaleAnalysis(analysis,scaleX,scaleY=scaleX) {
+  const ocrBox=b=>({x0:b.x0*scaleX,y0:b.y0*scaleY,x1:b.x1*scaleX,y1:b.y1*scaleY});
   const box=b=>{
     const result={...b,x:b.x*scaleX,y:b.y*scaleY,w:b.w*scaleX,h:b.h*scaleY};
     if(b.line){const dx=b.line.dx*scaleX,dy=b.line.dy*scaleY,length=Math.hypot(dx,dy);result.line={...b.line,cx:b.line.cx*scaleX,cy:b.line.cy*scaleY,dx:dx/length,dy:dy/length,radius:b.line.radius*Math.max(scaleX,scaleY)};}
+    if(b.quad)result.quad=b.quad.map(p=>({x:p.x*scaleX,y:p.y*scaleY}));
+    if(b.symbols)result.symbols=b.symbols.map(s=>({...s,bbox:ocrBox(s.bbox)}));
+    if(b.selection)result.selection={...b.selection,x:b.selection.x*scaleX,y:b.selection.y*scaleY,w:b.selection.w*scaleX,h:b.selection.h*scaleY};
     return result;
   };
   return {...analysis,width:Math.round(analysis.width*scaleX),height:Math.round(analysis.height*scaleY),
+    ocrWords:(analysis.ocrWords||[]).map(word=>{
+      return {...word,bbox:ocrBox(word.bbox),symbols:(word.symbols||[]).map(s=>({...s,bbox:ocrBox(s.bbox)}))};
+    }),
     regions:(analysis.regions||[]).map(box),textBoxes:(analysis.textBoxes||[]).map(box),ruleBoxes:(analysis.ruleBoxes||[]).map(box),
     protectedStamps:(analysis.protectedStamps||[]).map(box),handwritingBoxes:(analysis.handwritingBoxes||[]).map(box)};
 }
 
+function shiftedFrame(frame, x, y) {
+  return {...frame,x:frame.x-x,y:frame.y-y,quad:frame.quad?.map(p=>({x:p.x-x,y:p.y-y}))};
+}
+function shiftedWords(words, x, y) {
+  const shift=b=>({x0:b.x0-x,y0:b.y0-y,x1:b.x1-x,y1:b.y1-y});
+  return words.map(word=>({...word,bbox:shift(word.bbox),symbols:(word.symbols||[]).map(s=>({...s,bbox:shift(s.bbox)}))}));
+}
+function markFrameEdges(mask,width,height,frame,radius=2) {
+  if(!frame.quad)return;
+  for(let side=0;side<4;side++) {
+    const a=frame.quad[side],b=frame.quad[(side+1)%4],dx=b.x-a.x,dy=b.y-a.y,steps=Math.ceil(Math.hypot(dx,dy)*2);
+    for(let k=0;k<=steps;k++) {
+      const x=Math.round(a.x+dx*k/steps),y=Math.round(a.y+dy*k/steps);
+      for(let yy=y-radius;yy<=y+radius;yy++)for(let xx=x-radius;xx<=x+radius;xx++)
+        if(xx>=0&&xx<width&&yy>=0&&yy<height)mask[yy*width+xx]=1;
+    }
+  }
+}
+function selectionAt(selection, x, y) {
+  const px=Math.floor((x-selection.x)/selection.w*selection.width);
+  const py=Math.floor((y-selection.y)/selection.h*selection.height);
+  // Preserve measured anti-aliased stroke edges around the selected core. Known
+  // printed frames are excluded separately so their edges cannot return here.
+  for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++) {
+    const xx=px+dx,yy=py+dy;
+    if(xx>=0&&xx<selection.width&&yy>=0&&yy<selection.height&&selection.mask[yy*selection.width+xx])return true;
+  }
+  return false;
+}
+
 export function renderExtractedRegion(image,rect,options={},strokes=[],analysis=null) {
-  const region=normalizeRect(rect,image.width,image.height),prepared=prepareInk(cropImage(image,region),options);
+  const region=normalizeRect(rect,image.width,image.height),crop=cropImage(image,region);
+  const prepared=prepareInk(crop,options);
   const width=prepared.width,height=prepared.height,mode=options.mode||'all';
   if(mode==='black')for(let i=0;i<prepared.mask.length;i++) {
     const p=i*4;
     if(inkClass(prepared.data[p],prepared.data[p+1],prepared.data[p+2])!==0)prepared.mask[i]=0;
   }
-  let removedTextPixels=0,removedRulePixels=0;
+  const sourceMask=new Uint8Array(prepared.mask),removedMask=new Uint8Array(width*height),ruleMask=new Uint8Array(width*height);
+  let removedTextPixels=0,removedRulePixels=0,uncertainPixels=0,ownStamp;
   if(analysis) {
     const local=b=>({...b,x:b.x-region.x,y:b.y-region.y});
     const stamps=(analysis.protectedStamps||[]).filter(s=>intersection(s,region)>0&&(mode==='all'||mode===s.mode||(mode==='colored'&&s.mode!=='black')));
-    const ownStamp=options.kind==='stamp'?stamps.find(s=>intersection(s,region)>area(s)*.7):null;
-    const textHeight=median((analysis.textBoxes||[]).filter(b=>b.confidence>50).map(b=>b.h));
-    const sourceComponents=connected(prepared.mask,width,height),handwrittenIds=new Set();
-    for(const c of sourceComponents.boxes)if(handwritingSeed(c,textHeight,mode)) {
-      const global={...c,x:c.x+region.x,y:c.y+region.y};
-      if(printedGlyph(global,analysis.textBoxes||[]))continue;
-      if(!(analysis.ruleBoxes||[]).some(r=>intersection(r,global)>area(r)*.7&&r.w>c.w*.8))handwrittenIds.add(c.id);
+    ownStamp=options.kind==='stamp'?stamps.find(s=>intersection(s,region)>area(s)*.7):null;
+    const selected=analysis.regions?.find(r=>r.key===(options.objectKey||options.key));
+    const autoSelection=options.kind==='signature'&&options.isolate!==false&&selected?.selection;
+    if(autoSelection)uncertainPixels=selected.uncertainPixels||0;
+    if(autoSelection)for(let y=0;y<height;y++)for(let x=0;x<width;x++) {
+      if(!selectionAt(autoSelection,x+region.x,y+region.y)) {
+        const i=y*width+x;
+        if(prepared.mask[i]&&stamps.some(s=>atStamp(s,x+region.x,y+region.y)))removedMask[i]=1;
+        prepared.mask[i]=0;
+      }
     }
-    if(options.removeText!==false&&!(options.kind==='stamp'&&!ownStamp))for(const box of analysis.textBoxes||[]) {
-      if(intersection(box,region)<=0)continue;
-      paintBox(prepared.mask,width,height,local(box),0,(x,y)=>{
-        const gx=x+region.x,gy=y+region.y;
-        if(stamps.some(s=>atStamp(s,gx,gy)))return false;
-        // Retain connected handwriting, not an entire rectangular word/region.
-        const localIndex=y*width+x;
-        if(handwrittenIds.has(sourceComponents.labels[localIndex]))return false;
-        if(prepared.mask[localIndex])removedTextPixels++;
-        return true;
-      });
+    if(autoSelection) {
+      // Remove detached straight frame remnants. Erasing an entire border band
+      // would also cut a genuine signature running close and parallel to it.
+      const detectionScale=Math.max(1,autoSelection.w/autoSelection.width,autoSelection.h/autoSelection.height);
+      for(const stamp of stamps)markFrameEdges(ruleMask,width,height,shiftedFrame(stamp,region.x,region.y),Math.ceil(2*detectionScale));
+      const pieces=connected(prepared.mask,width,height),frameIds=new Set();
+      for(const piece of pieces.boxes) {
+        if(piece.linearity>.025||piece.minor>1.6*detectionScale*detectionScale||Math.max(piece.w,piece.h)<4*detectionScale)continue;
+        const angle=.5*Math.atan2(2*piece.cov,piece.vx-piece.vy),px=Math.cos(angle),py=Math.sin(angle);
+        const followsFrame=stamps.some(stamp=>stamp.quad?.some((a,side)=>{
+          const b=stamp.quad[(side+1)%4],dx=b.x-a.x,dy=b.y-a.y;
+          return Math.abs(px*dx+py*dy)/Math.hypot(dx,dy)>.98;
+        }));
+        if(!followsFrame)continue;
+        let onFrame=0;
+        for(let y=piece.y;y<piece.y+piece.h;y++)for(let x=piece.x;x<piece.x+piece.w;x++) {
+          const i=y*width+x;if(pieces.labels[i]===piece.id&&ruleMask[i])onFrame++;
+        }
+        if(onFrame>piece.area*.9)frameIds.add(piece.id);
+      }
+      for(let i=0;i<prepared.mask.length;i++)if(frameIds.has(pieces.labels[i])) {
+        prepared.mask[i]=0;removedMask[i]=1;removedRulePixels++;
+      }
+    }
+    if(ownStamp) {
+      const wholeStamp=options.stampLayer==='whole';
+      const clipped=extractStampMask(crop,prepared.mask,ownStamp,{originX:region.x,originY:region.y,removeForeignInk:!wholeStamp&&options.isolate!==false});
+      prepared.mask=clipped.mask;
+      if((options.stampLayer||'printed')==='printed'&&ownStamp.quad) {
+        const layers=separateStampLayers(prepared,width,height,shiftedFrame(ownStamp,region.x,region.y),shiftedWords(analysis.ocrWords||[],region.x,region.y));
+        prepared.mask=layers.stampMask;
+        uncertainPixels=layers.uncertainMask?.reduce((n,p)=>n+!!p,0)||0;
+      }
+      // Never OCR-erase a stamp's own printed lettering. A stamp is treated as
+      // a source layer with a protected border, not as a text-removal rectangle.
+    } else if(options.kind!=='stamp'&&!autoSelection&&options.removeText!==false) {
+      const textHeight=median((analysis.textBoxes||[]).filter(b=>b.confidence>50).map(b=>b.h));
+      const sourceComponents=connected(prepared.mask,width,height),handwrittenIds=new Set();
+      for(const c of sourceComponents.boxes)if(handwritingSeed(c,textHeight,mode)) {
+        const global={...c,x:c.x+region.x,y:c.y+region.y};
+        if(printedGlyph(global,analysis.textBoxes||[]))continue;
+        if(!(analysis.ruleBoxes||[]).some(r=>intersection(r,global)>area(r)*.7&&r.w>c.w*.8))handwrittenIds.add(c.id);
+      }
+      for(const box of analysis.textBoxes||[]) {
+        if(mode!=='all'&&mode!=='colored'&&box.inkMode&&box.inkMode!==mode)continue;
+        if(intersection(box,region)<=0)continue;
+        paintBox(prepared.mask,width,height,local(box),0,(x,y)=>{
+          const gx=x+region.x,gy=y+region.y;
+          if(stamps.some(s=>atStamp(s,gx,gy)))return false;
+          const i=y*width+x;
+          if(handwrittenIds.has(sourceComponents.labels[i]))return false;
+          if(prepared.mask[i]){removedTextPixels++;removedMask[i]=1;}
+          return true;
+        });
+      }
     }
     if(options.removeLines!==false)for(const box of analysis.ruleBoxes||[]) {
       if(intersection(box,region)<=0)continue;
       paintBox(prepared.mask,width,height,local(box),0,(x,y)=>{
         if(!inRule(box,x+region.x,y+region.y))return false;
-        if(stamps.some(s=>atStamp(s,x+region.x,y+region.y)))return false;
-        if(prepared.mask[y*width+x])removedRulePixels++;return true;
+        if(ownStamp&&atStamp(ownStamp,x+region.x,y+region.y))return false;
+        const i=y*width+x;ruleMask[i]=1;
+        if(prepared.mask[i]){removedRulePixels++;removedMask[i]=1;}
+        return true;
       });
     }
-    if(ownStamp)for(let y=0;y<height;y++)for(let x=0;x<width;x++)if(!atStamp(ownStamp,x+region.x,y+region.y))prepared.mask[y*width+x]=0;
+    if(ownStamp&&options.repair===true) {
+      // Four known border segments are evidence for a short interrupted frame;
+      // only tiny endpoint-compatible gaps can be inferred by repairStrokes.
+      markFrameEdges(ruleMask,width,height,shiftedFrame(ownStamp,region.x,region.y));
+    }
   }
+  const repaired=repairStrokes({mask:prepared.mask,data:prepared.data,sourceMask,width,height,removedMask,ruleMask},
+    {enabled:options.repair===true,maxGap:Number(options.repairGap)||12});
+  prepared.mask=repaired.mask;prepared.data=repaired.data||prepared.data;
   applyStrokes(prepared.mask,prepared.available,width,height,strokes);
-  let inkPixels=0;
+  let inkPixels=0,inferredPixels=0;
   for(let i=0;i<prepared.mask.length;i++) {
-    if(!prepared.mask[i]){const p=i*4;prepared.data[p]=prepared.data[p+1]=prepared.data[p+2]=255;}else inkPixels++;
+    if(!prepared.mask[i]){const p=i*4;prepared.data[p]=prepared.data[p+1]=prepared.data[p+2]=255;repaired.inferredMask[i]=0;}
+    else {inkPixels++;if(repaired.inferredMask[i])inferredPixels++;}
   }
-  return {width,height,data:prepared.data,inkPixels,removedTextPixels,removedRulePixels};
+  return {width,height,data:prepared.data,inkPixels,removedTextPixels,removedRulePixels,inferredPixels,inferredMask:repaired.inferredMask,uncertainPixels};
 }

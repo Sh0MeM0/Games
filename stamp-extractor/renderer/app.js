@@ -14,7 +14,7 @@ function call(type, payload = {}, transfer = []) {
   return new Promise((resolve, reject) => { const id = ++requestId; waiting.set(id, { resolve, reject }); worker.postMessage({ id, type, payload }, transfer); });
 }
 const state = { source: null, regions: [], selected: null, next: 1, drawing: false, busy: false,
-  tool: 'erase', zoom: 1, fit: 1, previewReady: false, previewRevision: 0, compare: false, stopExport: false, recognized: false };
+  tool: 'erase', zoom: 1, fit: 1, previewReady: false, previewRevision: 0, compare: false, stopExport: false, recognized: false, highlightRepairs: false };
 let previewRunning = false, previewAgain = false, previewTimer, draft, stroke;
 function status(text, error = false) { $('status').textContent = text; $('status').classList.toggle('error', error); $('status').title = text; }
 function selected() { return state.regions.find(r => r.id === state.selected); }
@@ -27,6 +27,9 @@ function updateButtons() {
   $('saveAll').textContent = state.regions.length ? `Сохранить все PNG (${state.regions.length})` : 'Сохранить все PNG';
   $('duplicate').disabled = !region || state.busy || state.regions.length >= 80;
   $('compare').disabled = !region || state.busy;
+  $('highlightRepairs').disabled = !region || state.busy;
+  $('highlightRepairs').setAttribute('aria-pressed',String(state.highlightRepairs));
+  $('stampLayerLabel').hidden = selected()?.options.kind !== 'stamp';
   $('editor').disabled = !region || state.busy;
   $('undo').disabled = !selected()?.strokes.length;
   $('redo').disabled = !selected()?.redo.length;
@@ -63,8 +66,8 @@ function choose(id) {
   const region = selected();
   if (region) {
     $('name').value = region.name; $('scale').value = region.scale;
-    for (const key of ['kind','mode','threshold','speckle','contrast']) $(key).value = region.options[key];
-    $('removeText').checked = region.options.removeText; $('removeLines').checked = region.options.removeLines;
+    for (const key of ['kind','mode','threshold','speckle','contrast','stampLayer','repairGap']) $(key).value = region.options[key];
+    for(const key of ['removeText','removeLines','isolate','repair']) $(key).checked=region.options[key];
     updateValues(); schedulePreview();
   } else {
     state.previewRevision++; $('preview').hidden = true; $('previewEmpty').hidden = false; $('previewBusy').hidden = true;
@@ -76,12 +79,13 @@ function newRegion(rect, options) {
   if (state.regions.length >= 80) throw new Error('Можно сохранить до 80 объектов за один раз.');
   const x = Math.max(0, Math.floor(rect.x)), y = Math.max(0, Math.floor(rect.y));
   const region = { id: state.next++, rect: { x, y, w: Math.min(state.source.width - x, Math.ceil(rect.w)), h: Math.min(state.source.height - y, Math.ceil(rect.h)) },
+    quad: rect.quad,
     name: `${rect.kind === 'stamp' ? 'печать' : rect.kind === 'signature' ? 'подпись' : 'проверить'}_${String(state.next - 1).padStart(2,'0')}`, scale: 1,
-    options: { kind: rect.kind || 'candidate', mode: rect.mode || 'all', removeText: true, removeLines: true, threshold: 18, speckle: 3, contrast: 1.2, ...options }, strokes: [], redo: [] };
+    options: { objectKey: rect.key, kind: rect.kind || 'candidate', mode: rect.mode || 'all', stampLayer: rect.shape==='quadrilateral'?'printed':'whole', isolate:true, repair:true,repairGap:18, removeText: true, removeLines: true, threshold: 18, speckle: 3, contrast: 1.2, ...options }, strokes: [], redo: [] };
   state.regions.push(region); return region;
 }
-function updateValues() { for (const key of ['threshold','speckle','contrast','brush']) $(key+'Value').textContent = $(key).value; }
-function params(region) { return { rect: region.rect, options: region.options, strokes: region.strokes, scale: region.scale }; }
+function updateValues() { for (const key of ['threshold','speckle','contrast','brush','repairGap']) $(key+'Value').textContent = $(key).value; }
+function params(region) { return { rect: region.rect, options: region.options, strokes: region.strokes, scale: region.scale, highlightRepairs:state.highlightRepairs }; }
 function schedulePreview() {
   state.previewReady = false; state.previewRevision++; previewAgain = true; $('previewBusy').hidden = !selected();
   clearTimeout(previewTimer); previewTimer = setTimeout(pumpPreview, 90);
@@ -97,7 +101,7 @@ async function pumpPreview() {
     $('preview').width = result.width; $('preview').height = result.height;
     $('preview').getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(result.buffer), result.width, result.height), 0, 0);
     $('preview').hidden = false; $('previewEmpty').hidden = true;
-    $('previewInfo').textContent = compare ? 'Оригинальная область · кисти работают на результате' : `${region.rect.w} × ${region.rect.h} пикс. · ${result.inkPixels ? 'белый фон' : 'пусто — уменьшите удаление фона'}`;
+    $('previewInfo').textContent = compare ? 'Оригинальная область · кисти работают на результате' : `${region.rect.w} × ${region.rect.h} пикс. · ${result.inkPixels ? 'белый фон' : 'пусто — уменьшите удаление фона'}` + (result.inferredPixels ? ` · достроено ${result.inferredPixels} пикс. (предположение)` : '') + (result.uncertainPixels ? ' · пересечения: проверьте' : '');
     state.previewReady = !compare;
   } catch (error) { if (revision === state.previewRevision) status(error.message, true); }
   finally {
@@ -126,7 +130,7 @@ function drawOverlay() {
     const region = state.regions[i], rect = region.rect, active = region.id === state.selected;
     const x = rect.x * sx, y = rect.y * sy, w = rect.w * sx, h = rect.h * sy;
     context.fillStyle = active ? '#e89b1e19' : '#235bc010'; context.fillRect(x, y, w, h);
-    context.strokeStyle = active ? '#d38b18' : '#3971ce'; context.lineWidth = active ? 3 : 2; context.strokeRect(x, y, w, h);
+    context.strokeStyle = active ? '#d38b18' : '#3971ce'; context.lineWidth = active ? 3 : 2; if(region.quad){context.beginPath();region.quad.forEach((p,j)=>j?context.lineTo(p.x*sx,p.y*sy):context.moveTo(p.x*sx,p.y*sy));context.closePath();context.stroke();}else context.strokeRect(x, y, w, h);
     context.fillStyle = context.strokeStyle; context.fillRect(x, y, 24, 20); context.fillStyle = 'white'; context.font = '12px sans-serif'; context.fillText(String(i+1), x+5, y+14);
   }
   if (draft) { context.strokeStyle = '#d38b18'; context.lineWidth = 2; context.setLineDash([6,4]); context.strokeRect(Math.min(draft.x,draft.endX)*sx,Math.min(draft.y,draft.endY)*sy,Math.abs(draft.endX-draft.x)*sx,Math.abs(draft.endY-draft.y)*sy); context.setLineDash([]); }
@@ -211,7 +215,7 @@ async function save(all) {
       try {
         const result = await call('export',params(region));
         if (state.stopExport) break;
-        const written = await window.desktop.writeImage(token,`${stem}_${region.name}`,new Uint8Array(result.buffer));
+        const written = await window.desktop.writeImage(token,`${stem}_${region.name}${result.inferredPixels?'_достроено':''}`,new Uint8Array(result.buffer));
         if (!written.ok) throw new Error(written.error);
         saved++;
       } catch (error) { errors.push(`${region.name}: ${error.message}`); }
@@ -237,15 +241,16 @@ $('fit').onclick = () => { state.zoom=1;fitSource(); };
 new ResizeObserver(()=>fitSource()).observe($('viewport'));
 $('name').oninput = () => { if(selected()){selected().name=$('name').value;listRegions();} };
 $('scale').onchange = () => { if(selected())selected().scale=Number($('scale').value); };
-for (const key of ['kind','mode','threshold','speckle','contrast']) $(key).addEventListener(['mode','kind'].includes(key)?'change':'input',()=>{
-  if(!selected())return; selected().options[key]=['mode','kind'].includes(key)?$(key).value:Number($(key).value);state.compare=false;updateValues();listRegions();schedulePreview();
+for (const key of ['kind','mode','threshold','speckle','contrast','stampLayer','repairGap']) $(key).addEventListener(['mode','kind','stampLayer'].includes(key)?'change':'input',()=>{
+  if(!selected())return; selected().options[key]=['mode','kind','stampLayer'].includes(key)?$(key).value:Number($(key).value);state.compare=false;updateValues();listRegions();schedulePreview();
 });
-for (const key of ['removeText','removeLines']) $(key).onchange = () => { if (!selected()) return; selected().options[key] = $(key).checked; state.compare = false; updateButtons(); schedulePreview(); };
+for (const key of ['removeText','removeLines','isolate','repair']) $(key).onchange = () => { if (!selected()) return; selected().options[key] = $(key).checked; state.compare = false; updateButtons(); schedulePreview(); };
 $('brush').oninput = updateValues;
 $('erase').onclick = () => { state.tool='erase';state.compare=false;updateButtons();schedulePreview(); };
 $('restore').onclick = () => { state.tool='restore';state.compare=false;updateButtons();schedulePreview(); };
 $('undo').onclick = () => { const r=selected();if(r?.strokes.length){r.redo.push(r.strokes.pop());state.compare=false;updateButtons();schedulePreview();} };
 $('redo').onclick = () => { const r=selected();if(r?.redo.length){r.strokes.push(r.redo.pop());state.compare=false;updateButtons();schedulePreview();} };
+$('highlightRepairs').onclick=()=>{state.highlightRepairs=!state.highlightRepairs;state.compare=false;updateButtons();schedulePreview();};
 $('compare').onclick = () => { state.compare=!state.compare;updateButtons();schedulePreview(); };
 $('saveOne').onclick = () => save(false); $('saveAll').onclick = () => save(true);
 $('cancelExport').onclick = () => {state.stopExport=true;status('Останавливаю после текущей операции…');};

@@ -42,7 +42,13 @@ function flattenWords(blocks, width, height) {
       };
       const text = String(word.text || '').trim();
       if (!text || bbox.x1 <= bbox.x0 || bbox.y1 <= bbox.y0) continue;
-      words.push({ text, confidence: Number.isFinite(word.confidence) ? word.confidence : 0, bbox });
+      const symbols = (word.symbols || []).filter(symbol => symbol.bbox &&
+        ['x0','y0','x1','y1'].every(key => Number.isFinite(symbol.bbox[key]))).map(symbol => ({
+          text: String(symbol.text || ''), confidence: Number(symbol.confidence) || 0,
+          bbox: { x0: Math.max(0, Math.floor(symbol.bbox.x0)), y0: Math.max(0, Math.floor(symbol.bbox.y0)),
+            x1: Math.min(width, Math.ceil(symbol.bbox.x1)), y1: Math.min(height, Math.ceil(symbol.bbox.y1)) }
+        }));
+      words.push({ text, confidence: Number.isFinite(word.confidence) ? word.confidence : 0, bbox, symbols });
       if (words.length >= 30_000) return words;
     }
   }

@@ -1,6 +1,10 @@
 import { cropImage, renderRegion, trimAndPad, MAX_OUTPUT_PIXELS } from '../lib/processing.js';
 import { analyzeDocument, renderExtractedRegion, scaleAnalysis } from '../lib/extraction.js';
 let source, analysis, words, ocrSize;
+function scaleWord(word, sx, sy) {
+  const bbox = b => ({ x0: b.x0*sx, y0:b.y0*sy, x1:b.x1*sx, y1:b.y1*sy });
+  return { ...word, bbox:bbox(word.bbox), symbols:(word.symbols||[]).map(symbol=>({...symbol,bbox:bbox(symbol.bbox)})) };
+}
 function canvasOf(image) {
   const canvas = new OffscreenCanvas(image.width, image.height);
   canvas.getContext('2d').putImageData(new ImageData(image.data, image.width, image.height), 0, 0);
@@ -38,18 +42,14 @@ self.onmessage = async event => {
         if (payload.words) {
           if (!ocrSize) throw new Error('Не подготовлено изображение для распознавания.');
           const sx = source.width / ocrSize.width, sy = source.height / ocrSize.height;
-          words = payload.words.map(word => ({ ...word, bbox: {
-            x0: word.bbox.x0 * sx, y0: word.bbox.y0 * sy,
-            x1: word.bbox.x1 * sx, y1: word.bbox.y1 * sy } }));
+          words = payload.words.map(word => scaleWord(word, sx, sy));
         }
         if (!words) throw new Error('Сначала выполните распознавание текста.');
         const small = fitImage(source, 1800);
         const sx = small.width / source.width, sy = small.height / source.height;
-        const scaledWords = words.map(word => ({ ...word, bbox: {
-          x0: word.bbox.x0 * sx, y0: word.bbox.y0 * sy,
-          x1: word.bbox.x1 * sx, y1: word.bbox.y1 * sy } }));
+        const scaledWords = words.map(word => scaleWord(word, sx, sy));
         analysis = scaleAnalysis(analyzeDocument(small, scaledWords, payload), 1 / sx, 1 / sy);
-        result = { regions: analysis.regions, stats: analysis.stats, truncated: analysis.truncated };
+        result = { regions: analysis.regions.map(({selection, ...region}) => region), stats: analysis.stats, truncated: analysis.truncated };
       } else if (type === 'previewOriginal') {
         const preview = fitImage(cropImage(source, payload.rect), 1200);
         result = { width: preview.width, height: preview.height, buffer: preview.data.buffer };
@@ -57,8 +57,17 @@ self.onmessage = async event => {
       } else if (type === 'preview' || type === 'export') {
         const rendered = renderExtractedRegion(source, payload.rect, payload.options, payload.strokes, analysis);
         if (type === 'preview') {
+          if(payload.highlightRepairs&&rendered.inferredMask) {
+            const mask=rendered.inferredMask;
+            for(let y=0;y<rendered.height;y++)for(let x=0;x<rendered.width;x++)if(mask[y*rendered.width+x]) {
+              for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++) {const xx=x+dx,yy=y+dy;
+                if(xx<0||xx>=rendered.width||yy<0||yy>=rendered.height)continue;
+                const p=(yy*rendered.width+xx)*4;rendered.data[p]=245;rendered.data[p+1]=110;rendered.data[p+2]=20;
+              }
+            }
+          }
           const preview = fitImage(rendered, 1200);
-          result = { width: preview.width, height: preview.height, inkPixels: rendered.inkPixels, buffer: preview.data.buffer };
+          result = { width: preview.width, height: preview.height, inkPixels: rendered.inkPixels, inferredPixels: rendered.inferredPixels || 0, uncertainPixels: rendered.uncertainPixels || 0, buffer: preview.data.buffer };
           transfer = [result.buffer];
         } else {
           const image = trimAndPad(rendered, 16), scale = [1, 2, 3].includes(payload.scale) ? payload.scale : 1;
@@ -72,7 +81,7 @@ self.onmessage = async event => {
           }
           const blob = await canvas.convertToBlob({ type: 'image/png' });
           const buffer = await blob.arrayBuffer(); canvas.width = 1;
-          result = { buffer, width, height }; transfer = [buffer];
+          result = { buffer, width, height, inferredPixels:rendered.inferredPixels||0 }; transfer = [buffer];
         }
       } else throw new Error('Неизвестная операция обработки.');
     }
