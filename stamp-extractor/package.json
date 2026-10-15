@@ -1,0 +1,32 @@
+{
+  "name": "stamp-extractor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Печати и подписи — выделение и очистка изображений",
+  "author": "Stamp Extractor",
+  "license": "MIT",
+  "type": "module",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/*.test.mjs",
+    "test:ui": "node tests/desktop.cjs",
+    "dist:win": "electron-builder --win portable --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3",
+    "playwright": "1.62.1"
+  },
+  "build": {
+    "appId": "org.stampextractor.desktop",
+    "productName": "Печати и подписи",
+    "directories": {"output": "release"},
+    "files": ["main.cjs", "preload.cjs", "lib/**/*", "renderer/**/*", "LICENSE", "README.md"],
+    "win": {
+      "target": [{"target": "portable", "arch": ["x64"]}],
+      "artifactName": "StampExtractor-Portable-${version}.${ext}"
+    },
+    "portable": {"requestExecutionLevel": "user", "unicode": true}
+  }
+}

@@ -1,0 +1,12 @@
+node_modules/
+release/
+test-results/
+*.log
+.env
+.venv/
+__pycache__/
+# Retained local build caches belonging to other application branches.
+/client/
+/server/
+/data/
+/backups/
