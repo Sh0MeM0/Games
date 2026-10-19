@@ -1,0 +1,37 @@
+{
+  "filename": "PDFMaster-Portable-x64.zip",
+  "size": 273249838,
+  "sha256": "b52c6fa1ad97c5ff4e4a71cfcc67d0c9a8b6a652630c18fdc434644b206ce3c3",
+  "parts": [
+    {
+      "filename": "PDFMaster-Portable-x64.zip.part01",
+      "size": 47185920,
+      "sha256": "9821e5bdd5fe39cb2ab8d6cf6dbbf75620ced0b5e0c40cfe34657aeeb12e4060"
+    },
+    {
+      "filename": "PDFMaster-Portable-x64.zip.part02",
+      "size": 47185920,
+      "sha256": "a7ae2a9654e57c24445e7d672a84b6d96a144359a647b51db506b6bd326ba7a8"
+    },
+    {
+      "filename": "PDFMaster-Portable-x64.zip.part03",
+      "size": 47185920,
+      "sha256": "9c31ae841252e20476694ec01fed5a1d3bbf98f989090b80eec28432458ebacf"
+    },
+    {
+      "filename": "PDFMaster-Portable-x64.zip.part04",
+      "size": 47185920,
+      "sha256": "8bc18d9120100729e306135df5b178b811551dd9ee13229037ee7328ef1d4db9"
+    },
+    {
+      "filename": "PDFMaster-Portable-x64.zip.part05",
+      "size": 47185920,
+      "sha256": "5577bbf211040fb4f63512e6a43ef7306730134cbf677b9157de3520dce14653"
+    },
+    {
+      "filename": "PDFMaster-Portable-x64.zip.part06",
+      "size": 37320238,
+      "sha256": "39fd90dadb47bfaf9884a8565030a07ad754e35afac3513c689dda47cbecb48c"
+    }
+  ]
+}
