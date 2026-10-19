@@ -207,6 +207,9 @@ def test_portable_settings_travel_with_folder_without_storing_password(qt_app, t
     try:
         original.output_dir.setText(str(tmp_path / "results"))
         original.scale.setValue(50.0)
+        original.vectorize_images.setChecked(False)
+        original.scan_cleanup.setChecked(False)
+        original.scan_dpi.setValue(400)
         original.password.setText(password)
         original._save_settings()
         assert original.settings.format() == QSettings.Format.IniFormat
@@ -225,6 +228,9 @@ def test_portable_settings_travel_with_folder_without_storing_password(qt_app, t
     moved = MainWindow()
     try:
         assert moved.scale.value() == 50.0
+        assert not moved.vectorize_images.isChecked()
+        assert not moved.scan_cleanup.isChecked()
+        assert moved.scan_dpi.value() == 400
         assert moved.output_dir.text() == str(tmp_path / "results")
         assert not moved.password.text()
         assert Path(moved.settings.fileName()) == moved_root / "PDFMaster.ini"
@@ -320,8 +326,10 @@ def test_small_laptop_window_keeps_controls_reachable_without_overlap(window, qt
     assert viewport.rect().contains(window.password.mapTo(viewport, window.password.rect().center()))
 
 
-def test_file_picker_accepts_pdf_and_both_tiff_extensions(window, tmp_path, monkeypatch):
-    paths = [tmp_path / name for name in ("чертёж.PDF", "скан.TIF", "два листа.tiff", "не поддержан.png")]
+def test_file_picker_accepts_pdf_and_images_with_mixed_case(window, tmp_path, monkeypatch):
+    paths = [tmp_path / name for name in (
+        "чертёж.PDF", "скан.TIF", "два листа.tiff", "фасад.JPG", "схема.PNG", "план.WeBp", "не поддержан.svg",
+    )]
     for path in paths:
         path.touch()
     captured = {}
@@ -334,18 +342,22 @@ def test_file_picker_accepts_pdf_and_both_tiff_extensions(window, tmp_path, monk
     window._choose_files()
     accepted = [window.file_list.item(index).data(Qt.ItemDataRole.UserRole)
                 for index in range(window.file_list.count())]
-    assert accepted == [str(path) for path in paths[:3]]
-    assert "*.tif" in captured["filters"] and "*.tiff" in captured["filters"]
-    assert "*.TIF" in captured["filters"] and "*.TIFF" in captured["filters"]
-    assert "не поддержан.png" in window.log.toPlainText()
+    assert accepted == [str(path) for path in paths[:-1]]
+    for extension in gui.INPUT_EXTENSIONS:
+        assert f"*{extension}" in captured["filters"]
+        assert f"*{extension.upper()}" in captured["filters"]
+    assert "не поддержан.svg" in window.log.toPlainText()
     assert "нет.tif" in window.log.toPlainText()
 
 
-def test_drag_and_drop_accepts_local_tiff_and_rejects_unsupported_urls(window, tmp_path):
-    scan = tmp_path / "скан.TIFF"
-    scan.touch()
+def test_drag_and_drop_accepts_local_images_and_rejects_unsupported_urls(window, tmp_path):
+    scans = [tmp_path / name for name in ("скан.TIFF", "фасад.JPG", "план.PNG", "схема.WebP")]
+    for scan in scans:
+        scan.touch()
     mime = QMimeData()
-    mime.setUrls([QUrl.fromLocalFile(str(scan)), QUrl("https://example.test/remote.tif")])
+    mime.setUrls([QUrl.fromLocalFile(str(scan)) for scan in scans] + [
+        QUrl("https://example.test/remote.jpg"), QUrl.fromLocalFile(str(tmp_path / "не поддержан.svg")),
+    ])
     enter = QDragEnterEvent(QPoint(1, 1), Qt.DropAction.CopyAction, mime,
                            Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
     window.file_list.dragEnterEvent(enter)
@@ -354,10 +366,11 @@ def test_drag_and_drop_accepts_local_tiff_and_rejects_unsupported_urls(window, t
                      Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
     window.file_list.dropEvent(drop)
     assert drop.isAccepted()
-    assert window.file_list.count() == 1
-    assert window.file_list.item(0).data(Qt.ItemDataRole.UserRole) == str(scan)
+    assert window.file_list.count() == len(scans)
+    assert [window.file_list.item(index).data(Qt.ItemDataRole.UserRole)
+            for index in range(window.file_list.count())] == [str(scan) for scan in scans]
 
-    for url in (QUrl("https://example.test/remote.tif"), QUrl.fromLocalFile(str(tmp_path / "image.png"))):
+    for url in (QUrl("https://example.test/remote.png"), QUrl.fromLocalFile(str(tmp_path / "image.svg"))):
         mime.setUrls([url])
         event = QDragEnterEvent(QPoint(1, 1), Qt.DropAction.CopyAction, mime,
                                Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
@@ -365,11 +378,12 @@ def test_drag_and_drop_accepts_local_tiff_and_rejects_unsupported_urls(window, t
         assert not event.isAccepted()
 
 
-def test_tiff_preparation_defaults_do_not_depend_on_old_pdf_vectorization_setting(window):
+def test_image_preparation_defaults_do_not_depend_on_old_pdf_vectorization_setting(window):
     window.settings.setValue("vectorize", False)
     window._load_settings()
     assert not window.vectorize.isChecked()
     assert window.vectorize_tiff.isChecked()
+    assert window.vectorize_images is window.vectorize_tiff
     assert window.scan_cleanup.isChecked()
     assert window.scan_deskew.isChecked()
     assert window.scan_dpi.value() == 0
@@ -380,8 +394,8 @@ def test_tiff_preparation_defaults_do_not_depend_on_old_pdf_vectorization_settin
     assert window.scan_dpi.value() == 0
 
 
-def test_tiff_preparation_settings_persist_and_reach_conversion_worker(window, qt_app, tmp_path, monkeypatch):
-    scan = tmp_path / "лист.TIF"
+def test_image_preparation_settings_persist_and_reach_conversion_worker(window, qt_app, tmp_path, monkeypatch):
+    scan = tmp_path / "лист.JPG"
     scan.touch()
     window._add_files([str(scan)])
     window.scan_cleanup.setChecked(False)
@@ -403,6 +417,7 @@ def test_tiff_preparation_settings_persist_and_reach_conversion_worker(window, q
     assert not request.scan_cleanup
     assert not request.scan_deskew
     assert not request.vectorize_tiff
+    assert not request.vectorize_images
     assert request.scan_dpi == 400
     assert "Обработано файлов: 1" in window.status_label.text()
     reopened = MainWindow()
@@ -414,3 +429,20 @@ def test_tiff_preparation_settings_persist_and_reach_conversion_worker(window, q
     finally:
         reopened.close()
         reopened.deleteLater()
+
+
+def test_legacy_tiff_setting_migrates_to_images_and_keeps_pdf_independent(window):
+    window.settings.remove("vectorize_images")
+    window.settings.setValue("vectorize_tiff", False)
+    window.settings.setValue("vectorize", True)
+    window._load_settings()
+    assert not window.vectorize_images.isChecked()
+    assert window.vectorize.isChecked()
+    window._save_settings()
+    assert not window.settings.value("vectorize_images", True, type=bool)
+    assert not window.settings.value("vectorize_tiff", True, type=bool)
+
+    # Once migrated, the new general image setting is authoritative.
+    window.settings.setValue("vectorize_tiff", True)
+    window._load_settings()
+    assert not window.vectorize_images.isChecked()

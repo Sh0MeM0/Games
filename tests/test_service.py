@@ -208,7 +208,7 @@ def test_tiff_controls_reach_extractor(tmp_path, monkeypatch):
         captured.update(kwargs)
         return [PdfPage(1, 72, 72, [], [], [])]
 
-    monkeypatch.setattr("pdf2office.scans.extract_tiff", extract)
+    monkeypatch.setattr("pdf2office.scans.extract_image", extract)
     result, = convert(ConversionRequest([tmp_path / "scan.tIfF"], tmp_path / "out", ("docx",),
                                         scan_cleanup=False, scan_deskew=False,
                                         scan_dpi=600, vectorize_tiff=False))
@@ -226,9 +226,9 @@ def test_invalid_scan_dpi_rejected_before_output(source, tmp_path, dpi):
 
 
 def test_unsupported_extension_does_not_stop_batch(source, tmp_path):
-    results = convert(ConversionRequest([tmp_path / "scan.png", source], tmp_path / "out",
+    results = convert(ConversionRequest([tmp_path / "scan.heic", source], tmp_path / "out",
                                         ("docx",), ocr_mode="off"))
-    assert ".tiff" in results[0].error
+    assert ".png" in results[0].error
     assert results[1].error is None
 
 
@@ -246,3 +246,88 @@ def test_cancel_during_tiff_cleanup_leaves_no_partial_document(tmp_path):
     result, = convert(request, progress=update, cancelled=lambda: stop)
     assert "остановлена" in result.error
     assert not result.outputs and not list(request.output_dir.glob("*.dxf"))
+
+
+def test_mixed_pdf_png_jpeg_batch_preserves_sources_and_image_scale(source, tmp_path):
+    image = Image.new("RGB", (500, 300), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((50, 50, 450, 250), outline="black", width=2)
+    draw.line((50, 50, 450, 250), fill="black", width=1)
+    images = [tmp_path / "Фасад.PNG", tmp_path / "Фасад.JpG"]
+    for path in images:
+        image.save(path, dpi=(200, 200))
+    originals = {path: path.read_bytes() for path in images}
+    results = convert(ConversionRequest([source, *images], tmp_path / "out", ("dxf", "docx"),
+                                        ocr_mode="off", scan_deskew=False))
+    assert len(results) == 3 and all(item.error is None for item in results)
+    assert results[1].outputs[0].stem == "Фасад"
+    assert results[2].outputs[0].stem == "Фасад (2)"
+    for item in results[1:]:
+        cad_path = next(path for path in item.outputs if path.suffix == ".dxf")
+        doc = ezdxf.readfile(cad_path)
+        assert not doc.audit().has_errors
+        assert len(doc.modelspace().query("LINE LWPOLYLINE")) >= 1
+        raster, = doc.modelspace().query("IMAGE")
+        assert tuple(raster.dxf.image_size) == (500, 300, 0)
+        assert raster.dxf.u_pixel.x == pytest.approx(25.4 / 200, rel=0.001)
+        assert doc.layers.get(raster.dxf.layer).is_off()
+        assert (cad_path.parent / doc.entitydb[raster.dxf.image_def_handle].dxf.filename).is_file()
+        report = json.loads(cad_path.with_suffix(".conversion.json").read_text())
+        assert report["image_settings"] == {"cleanup": True, "deskew": False, "dpi": 0, "vectorize": True}
+        assert originals[item.input] == item.input.read_bytes()
+        with zipfile.ZipFile(next(path for path in item.outputs if path.suffix == ".docx")) as archive:
+            assert b"v:shape" in archive.read("word/document.xml")
+    assert not list((tmp_path / "out").glob(".pdf-master-*"))
+
+
+@pytest.mark.parametrize("new,legacy,expected", [(None, False, False), (None, True, True),
+                                                (False, True, False), (True, False, True)])
+def test_image_vectorization_control_and_legacy_fallback(tmp_path, monkeypatch, new, legacy, expected):
+    from pdf2office.models import PdfPage
+    captured = {}
+
+    def extract(path, **kwargs):
+        captured.update(kwargs)
+        return [PdfPage(1, 72, 72, [], [], [])]
+
+    monkeypatch.setattr("pdf2office.scans.extract_image", extract)
+    result, = convert(ConversionRequest([tmp_path / "drawing.PNG"], tmp_path / "out", ("docx",),
+                                        vectorize_tiff=legacy, vectorize_images=new,
+                                        scan_cleanup=False, scan_deskew=False, scan_dpi=600))
+    assert result.error is None
+    assert captured["vectorize_scans"] is expected
+    assert captured["preprocess"] is False and captured["deskew"] is False and captured["dpi"] == 600
+    assert callable(captured["check_cancel"]) and callable(captured["progress"])
+    report = json.loads((tmp_path / "out/drawing.conversion.json").read_text())
+    assert report["image_settings"]["vectorize"] is expected
+    assert report["image_settings"] == report["tiff_settings"]
+
+
+def test_corrupt_image_does_not_stop_valid_image_and_has_no_partial_outputs(tmp_path):
+    bad = tmp_path / "bad.jpg"
+    bad.write_bytes(b"not a JPEG")
+    valid = tmp_path / "valid.png"
+    Image.new("RGB", (50, 30), "white").save(valid)
+    results = convert(ConversionRequest([bad, valid], tmp_path / "out", ("dxf",), ocr_mode="off"))
+    assert results[0].error and not results[0].outputs
+    assert not results[1].error and len(results[1].outputs) == 1
+    assert not (tmp_path / "out/bad.dxf").exists()
+    assert not list((tmp_path / "out").glob(".pdf-master-*"))
+
+
+def test_cancel_image_cleanup_leaves_input_and_no_result(tmp_path):
+    source = tmp_path / "large.png"
+    Image.new("RGB", (1700, 1700), "white").save(source)
+    original = source.read_bytes()
+    stop = False
+
+    def progress(message):
+        nonlocal stop
+        if message.startswith("Очистка фона"):
+            stop = True
+
+    result, = convert(ConversionRequest([source], tmp_path / "out", ("dxf",), ocr_mode="off"),
+                      progress=progress, cancelled=lambda: stop)
+    assert "остановлена" in result.error and not result.outputs
+    assert source.read_bytes() == original
+    assert not list((tmp_path / "out").glob("*.dxf"))

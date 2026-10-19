@@ -1,4 +1,4 @@
-"""Offline TIFF cleaning and OCR; all geometry uses the existing page model.
+"""Offline raster-image cleaning and OCR using the existing page model.
 
 Scans are processed at their native resolution. Cleaning and OCR use overlapping
 bounded tiles so a large engineering sheet is not silently downsampled. This is
@@ -18,11 +18,12 @@ from typing import Callable
 
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError
+from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError, features
 
 from .extract import (PdfExtractionError, _find_tesseract, _run_tesseract,
                       _tesseract_options, _trace_scan, parse_page_range)
 from .models import PdfPage, RasterImage, TextSpan
+from .input_formats import EXTENSION_FORMATS, IMAGE_FORMATS
 
 MAX_SCAN_PIXELS = 160_000_000
 CLEAN_TILE_SIZE = 1536
@@ -37,22 +38,41 @@ def _check(callback) -> None:
 
 def _resolution(source: Image.Image, override: int, messages: list[str]) -> tuple[float, float]:
     if override:
-        messages.append(f"Масштаб TIFF рассчитан по заданному разрешению {override} dpi; проверьте размеры чертежа.")
+        messages.append(f"Масштаб изображения рассчитан по заданному разрешению {override} dpi; проверьте размеры чертежа.")
         return float(override), float(override)
-    # Pillow converts centimetre TIFF resolution tags into pixels/inch for dpi.
-    value = source.info.get("dpi")
-    try:
-        x, y = float(value[0]), float(value[1])
-        if all(math.isfinite(v) and 36 <= v <= 4800 for v in (x, y)):
-            return x, y
-    except (TypeError, ValueError, IndexError, OverflowError):
-        pass
-    messages.append("В TIFF нет корректного разрешения DPI. Принято 300 dpi; задайте DPI скана вручную для правильного масштаба CAD.")
+
+    def physical_pair(value, factor=1.0):
+        try:
+            x, y = float(value[0]) * factor, float(value[1]) * factor
+            if all(math.isfinite(v) and 36 <= v <= 4800 for v in (x, y)):
+                return x, y
+        except (TypeError, ValueError, IndexError, OverflowError, ZeroDivisionError):
+            pass
+        return None
+
+    # Read both EXIF axes: Pillow's JPEG fallback copies XResolution to Y and
+    # invents 72 dpi when EXIF has orientation but no physical resolution.
+    # Unit 1 is only an aspect ratio and must not set a CAD drawing's scale.
+    exif = source.getexif()
+    unit = exif.get(296)
+    if unit in (2, 3):
+        pair = physical_pair((exif.get(282), exif.get(283)), 2.54 if unit == 3 else 1.0)
+        if pair:
+            return pair
+    if source.format == "JPEG":
+        unit = source.info.get("jfif_unit")
+        pair = physical_pair(source.info.get("jfif_density"), 2.54 if unit == 2 else 1.0) if unit in (1, 2) else None
+    else:
+        # Pillow converts TIFF centimetres, PNG pixels/metre and BMP metadata.
+        pair = physical_pair(source.info.get("dpi"))
+    if pair:
+        return pair
+    messages.append("В изображении нет корректного разрешения DPI. Принято 300 dpi; задайте DPI скана вручную для правильного масштаба CAD.")
     return 300.0, 300.0
 
 
 def _scan_grayscale(image: Image.Image) -> Image.Image:
-    """Normalize TIFF sample depth and alpha without clipping dark 16-bit ink."""
+    """Normalize sample depth and alpha without clipping dark 16-bit ink."""
     if image.mode.startswith("I;16"):
         samples = np.asarray(image)
         return Image.fromarray((samples.astype(np.uint32) // 257).astype(np.uint8))
@@ -60,7 +80,7 @@ def _scan_grayscale(image: Image.Image) -> Image.Image:
         samples = np.asarray(image, dtype=np.float64)
         finite = np.isfinite(samples)
         if not finite.any():
-            raise PdfExtractionError("TIFF содержит некорректные числовые значения пикселей.")
+            raise PdfExtractionError("Изображение содержит некорректные числовые значения пикселей.")
         lower, upper = float(samples[finite].min()), float(samples[finite].max())
         if lower >= 0 and upper <= 1 and image.mode == "F":
             scaled = samples * 255
@@ -96,6 +116,12 @@ def _clean_tile(gray: np.ndarray, dpi: float) -> tuple[np.ndarray, int]:
         normalized = cv2.divide(gray, np.maximum(background, 1), scale=255)
         binary = cv2.adaptiveThreshold(normalized, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                                        cv2.THRESH_BINARY, radius, 12)
+        # Adaptive thresholding can clip a faint hatch immediately before it
+        # meets a black frame. Restore the original supported grey stroke,
+        # without filling white gaps or importing isolated background texture.
+        from .extract import _supported_faint_strokes
+        supported = _supported_faint_strokes(normalized, (normalized < 128).astype(np.uint8))
+        binary[supported != 0] = 0
     ink = 255 - binary
     count, labels, stats, _ = cv2.connectedComponentsWithStats(ink, connectivity=8)
     if count <= 1:
@@ -196,7 +222,7 @@ def deskew_scan(image: Image.Image, *, check_cancel=None) -> tuple[Image.Image, 
     expanded_width = math.ceil(abs(image.width * math.cos(radians)) + abs(image.height * math.sin(radians))) + 2
     expanded_height = math.ceil(abs(image.height * math.cos(radians)) + abs(image.width * math.sin(radians))) + 2
     if expanded_width * expanded_height > MAX_SCAN_PIXELS:
-        raise PdfExtractionError("После выравнивания TIFF превышает предел памяти. Отключите выравнивание или разделите лист на части без уменьшения DPI.")
+        raise PdfExtractionError("После выравнивания изображение превышает предел памяти. Отключите выравнивание или разделите лист на части без уменьшения DPI.")
     result = image.rotate(angle, resample=Image.Resampling.BICUBIC, expand=True, fillcolor=255)
     _check(check_cancel)
     return result, angle
@@ -235,7 +261,7 @@ def _orient_scan(image: Image.Image, environment, dpi: tuple[float, float], *, c
     result = _run_tesseract([str(executable), "stdin", "stdout", *options, "-l", "osd", "--psm", "0",
                              "-c", "min_characters_to_try=30"], input_data=_png(preview), cwd=cwd,
                              check_cancel=check_cancel,
-                             heartbeat=lambda elapsed: progress(f"Определение ориентации TIFF: {int(elapsed)} с.") if progress else None)
+                             heartbeat=lambda elapsed: progress(f"Определение ориентации изображения: {int(elapsed)} с.") if progress else None)
     rotation = re.search(r"Rotate:\s*(0|90|180|270)\b", result.stdout)
     confidence = re.search(r"Orientation confidence:\s*([0-9.]+)", result.stdout)
     angle = int(rotation[1]) if result.returncode == 0 and rotation and confidence and float(confidence[1]) >= 8 else 0
@@ -376,7 +402,7 @@ def _ocr_tiles(image: Image.Image, dpi: tuple[float, float], environment, langua
             if tile.convert("L").getextrema()[0] >= 245:
                 continue
             if progress:
-                progress(f"Распознавание TIFF без уменьшения: участок {row * columns + column + 1} из {rows * columns}")
+                progress(f"Распознавание изображения без уменьшения: участок {row * columns + column + 1} из {rows * columns}")
             if preprocess:
                 tile, filtered = _prepare_ocr_tile(tile, math.sqrt(dpi[0] * dpi[1]))
                 message = "Для OCR подавлен плотный точечный шум в отдельной копии; мелкие знаки и десятичные разделители требуют проверки. Геометрия и подложка этим фильтром не изменены."
@@ -386,7 +412,7 @@ def _ocr_tiles(image: Image.Image, dpi: tuple[float, float], environment, langua
                                   "--dpi", str(round(math.sqrt(dpi[0] * dpi[1]))), "--psm", "11",
                                   "-c", "tessedit_create_tsv=1"], input_data=_png(tile), cwd=cwd,
                                   check_cancel=check_cancel,
-                                  heartbeat=lambda elapsed: progress(f"Распознавание TIFF продолжается: {int(elapsed)} с; ограничение времени отключено.") if progress else None)
+                                  heartbeat=lambda elapsed: progress(f"Распознавание изображения продолжается: {int(elapsed)} с; ограничение времени отключено.") if progress else None)
             if run.returncode:
                 raise PdfExtractionError("Ошибка распознавания Tesseract: " + run.stderr.strip()[-1200:])
             for record in csv.DictReader(io.StringIO(run.stdout), delimiter="\t", quoting=csv.QUOTE_NONE):
@@ -414,7 +440,7 @@ def _ocr_tiles(image: Image.Image, dpi: tuple[float, float], environment, langua
     result = _reject_ocr_geometry(image, dpi, result, messages, preprocess=preprocess, check_cancel=check_cancel)
     messages.append("OCR скана требует проверки: рукописные, повреждённые и наклонные надписи могут быть пропущены или распознаны неверно; шрифт определяется приблизительно.")
     if not result:
-        messages.append("На TIFF не удалось уверенно распознать текст; очищенная растровая подложка сохранена.")
+        messages.append("На изображении не удалось уверенно распознать текст; растровая подложка сохранена.")
     return result
 
 
@@ -423,75 +449,111 @@ def extract_tiff(path: Path, pages: str = "", password: str = "", ocr_mode: str 
                  vectorize_scans: bool = True, progress: Callable[[str], None] | None = None,
                  check_cancel: Callable[[], None] | None = None, *, preprocess: bool = True,
                  deskew: bool = True, dpi: int = 0) -> list[PdfPage]:
-    """Read every selected TIFF frame, preserving physical DPI and source file.
+    """Compatibility entry point that accepts only actual TIFF files."""
+    return _extract_image(path, pages, password, ocr_mode, ocr_language, tesseract_path,
+                          vectorize_scans, progress, check_cancel, preprocess=preprocess,
+                          deskew=deskew, dpi=dpi, tiff_only=True)
 
-    ``dpi=0`` uses frame metadata; missing metadata explicitly falls back to
-    300 dpi. A nonzero DPI is a user-supplied physical scale override. The
-    password parameter is accepted for the common PDF/TIFF service interface.
+
+def extract_image(path: Path, pages: str = "", password: str = "", ocr_mode: str = "auto",
+                  ocr_language: str = "rus+eng", tesseract_path: Path | None = None,
+                  vectorize_scans: bool = True, progress: Callable[[str], None] | None = None,
+                  check_cancel: Callable[[], None] | None = None, *, preprocess: bool = True,
+                  deskew: bool = True, dpi: int = 0) -> list[PdfPage]:
+    """Read selected raster frames at native resolution and physical scale.
+
+    TIFF pages and displayed animation frames become separate pages. APNG's
+    optional separate default image is page one. ``dpi=0`` uses physical image
+    metadata or an explicit, warned 300 dpi fallback; a nonzero DPI overrides
+    it. ``password`` is accepted for the common PDF/image service interface.
     """
+    return _extract_image(path, pages, password, ocr_mode, ocr_language, tesseract_path,
+                          vectorize_scans, progress, check_cancel, preprocess=preprocess,
+                          deskew=deskew, dpi=dpi, tiff_only=False)
+
+
+def _extract_image(path: Path, pages: str, password: str, ocr_mode: str,
+                   ocr_language: str, tesseract_path: Path | None,
+                   vectorize_scans: bool, progress: Callable[[str], None] | None,
+                   check_cancel: Callable[[], None] | None, *, preprocess: bool,
+                   deskew: bool, dpi: int, tiff_only: bool) -> list[PdfPage]:
     if ocr_mode not in {"auto", "always", "off"}:
         raise PdfExtractionError("Режим OCR должен быть auto, always или off.")
     if isinstance(dpi, bool) or not isinstance(dpi, (int, float)) or not math.isfinite(dpi) or (dpi != 0 and not 72 <= dpi <= 2400):
         raise PdfExtractionError("DPI скана должен быть 0 (из файла) или числом от 72 до 2400.")
     path = Path(path)
     if not path.is_file():
-        raise PdfExtractionError(f"TIFF не найден: {path}")
+        raise PdfExtractionError(f"Изображение не найдено: {path}")
+    expected = "TIFF" if tiff_only else EXTENSION_FORMATS.get(path.suffix.lower())
+    if expected is None:
+        raise PdfExtractionError(f"Формат изображения {path.suffix or '(без расширения)'} не поддерживается.")
+    if expected == "JPEG2000" and not features.check_codec("jpg_2000"):
+        raise PdfExtractionError("JPEG 2000 недоступен в этой сборке: отсутствует декодер OpenJPEG. Сохраните исходное изображение в PNG или TIFF без уменьшения разрешения.")
     result = []
     environment = None
-    # Our own explicit cap supports the user's 92 MP engineering scan while
-    # keeping hostile/corrupt dimensions bounded. Pillow's default warning is
-    # below that legitimate size; never disable its global protection.
+    # Our explicit cap supports 92 MP engineering scans while keeping corrupt
+    # dimensions bounded. Never disable Pillow's global protection.
+    _check(check_cancel)
     try:
         with python_warnings.catch_warnings():
             python_warnings.simplefilter("ignore", Image.DecompressionBombWarning)
             source = Image.open(path)
     except Image.DecompressionBombError as error:
-        raise PdfExtractionError(f"TIFF слишком велик: допускается до {MAX_SCAN_PIXELS // 1_000_000} Мп на страницу. Разделите лист на части без уменьшения DPI.") from error
-    except (OSError, UnidentifiedImageError, ValueError) as error:
-        raise PdfExtractionError("Не удалось открыть TIFF: файл повреждён или имеет другой формат.") from error
+        raise PdfExtractionError(f"Изображение слишком велико: допускается до {MAX_SCAN_PIXELS // 1_000_000} Мп на страницу. Разделите лист на части без уменьшения DPI.") from error
+    except (OSError, UnidentifiedImageError, ValueError, SyntaxError) as error:
+        raise PdfExtractionError("Не удалось открыть изображение: файл повреждён или имеет неподдерживаемый формат.") from error
     with source:
-        if source.format != "TIFF":
+        detected = source.format
+        if tiff_only and detected != "TIFF":
             raise PdfExtractionError("Выбранный файл не является TIFF.")
+        if detected not in IMAGE_FORMATS:
+            raise PdfExtractionError(f"Фактический формат изображения {detected or 'неизвестен'} не поддерживается.")
+        format_warning = (f"Расширение {path.suffix} не соответствует содержимому. Изображение прочитано по фактическому формату {detected}; исходный файл не изменён."
+                          if detected != expected else None)
         try:
             with python_warnings.catch_warnings():
                 python_warnings.simplefilter("ignore", Image.DecompressionBombWarning)
-                frame_count = source.n_frames
-        except (Image.DecompressionBombError, OSError, ValueError) as error:
-            raise PdfExtractionError("Не удалось прочитать страницы TIFF: файл повреждён или одна из страниц слишком велика.") from error
+                frame_count = getattr(source, "n_frames", 1)
+        except (Image.DecompressionBombError, OSError, ValueError, SyntaxError, EOFError) as error:
+            raise PdfExtractionError("Не удалось прочитать страницы изображения: файл повреждён или одна из страниц слишком велика.") from error
         indices = parse_page_range(pages, frame_count)
         for index in indices:
             _check(check_cancel)
             if progress:
-                progress(f"Чтение TIFF: страница {index + 1} из {frame_count}")
+                progress(f"Чтение {detected}: страница {index + 1} из {frame_count}")
             try:
                 with python_warnings.catch_warnings():
                     python_warnings.simplefilter("ignore", Image.DecompressionBombWarning)
                     source.seek(index)
                 if source.width * source.height > MAX_SCAN_PIXELS or max(source.size) > 40000:
-                    raise PdfExtractionError(f"Страница TIFF {index + 1} слишком велика: предел {MAX_SCAN_PIXELS // 1_000_000} Мп и 40 000 пикселей по стороне. Разделите лист на части без уменьшения DPI.")
-                messages = []
+                    raise PdfExtractionError(f"Страница изображения {index + 1} слишком велика: предел {MAX_SCAN_PIXELS // 1_000_000} Мп и 40 000 пикселей по стороне. Разделите лист на части без уменьшения DPI.")
+                messages = [format_warning] if format_warning else []
+                if frame_count > 1 and detected != "TIFF":
+                    messages.append(f"В {detected} содержится {frame_count} кадров. Выбранные кадры сохранены отдельными страницами в том виде, как они отображаются; время показа и анимация не переносятся. Для одного чертежа выберите нужную страницу.")
+                    if detected == "PNG" and source.info.get("default_image"):
+                        messages.append("APNG содержит отдельное изображение по умолчанию: это страница 1; кадры анимации начинаются со страницы 2.")
                 resolution = _resolution(source, dpi, messages)
                 orientation = source.getexif().get(274, 1)
                 # Pillow 12.3 pre-swaps raw-TIFF dimensions, but its Python raw
-                # decoder still needs the stored dimensions before transposing.
-                # libtiff performs its own correct allocation. This local fix
-                # prevents corrupt pixels/double rotation on uncompressed TIFF.
-                if orientation in (5, 6, 7, 8) and not source.use_load_libtiff:
+                # decoder still needs stored dimensions before transposing.
+                # libtiff performs its own correct allocation. Keep this fix
+                # local to TIFF; other decoders do not expose these attributes.
+                if detected == "TIFF" and orientation in (5, 6, 7, 8) and not source.use_load_libtiff:
                     source._size = source._tile_size
                 with python_warnings.catch_warnings():
                     python_warnings.simplefilter("ignore", Image.DecompressionBombWarning)
                     image = _scan_grayscale(ImageOps.exif_transpose(source))
                 if orientation in (5, 6, 7, 8):
                     resolution = resolution[::-1]
-            except (OSError, ValueError, Image.DecompressionBombError) as error:
+            except (OSError, ValueError, SyntaxError, EOFError, Image.DecompressionBombError) as error:
                 if isinstance(error, PdfExtractionError):
                     raise
-                raise PdfExtractionError(f"Не удалось прочитать страницу TIFF {index + 1}: файл повреждён или слишком велик.") from error
+                raise PdfExtractionError(f"Не удалось прочитать страницу изображения {index + 1}: файл повреждён или слишком велик.") from error
             if progress:
-                progress(f"TIFF {image.width}×{image.height}, DPI {resolution[0]:g}×{resolution[1]:g}; исходное разрешение сохранено.")
+                progress(f"{detected} {image.width}×{image.height}, DPI {resolution[0]:g}×{resolution[1]:g}; исходное разрешение сохранено.")
             if preprocess:
                 image, removed = clean_scan(image, math.sqrt(resolution[0] * resolution[1]), check_cancel=check_cancel, progress=progress)
-                messages.append(f"Фон TIFF осветлён, удалены изолированные шумовые пиксели: {removed:,}. Мелкие условные знаки и повреждённые линии требуют сверки с оригиналом.")
+                messages.append(f"Фон изображения осветлён, удалены изолированные шумовые пиксели: {removed:,}. Мелкие условные знаки и повреждённые линии требуют сверки с оригиналом.")
             if ocr_mode != "off":
                 if environment is None:
                     environment = _ocr_environment(_find_tesseract(tesseract_path), ocr_language, check_cancel)
@@ -499,17 +561,17 @@ def extract_tiff(path: Path, pages: str = "", password: str = "", ocr_mode: str 
                 if deskew:
                     image, resolution, rotation = _orient_scan(image, environment, resolution, check_cancel=check_cancel, progress=progress)
                 if rotation:
-                    messages.append(f"Ориентация TIFF исправлена по тексту: поворот на {rotation}° по часовой стрелке.")
+                    messages.append(f"Ориентация изображения исправлена по тексту: поворот на {rotation}° по часовой стрелке.")
             if deskew:
                 if progress:
-                    progress("Определение перекоса TIFF по длинным линиям")
+                    progress("Определение перекоса изображения по длинным линиям")
                 image, angle = deskew_scan(image, check_cancel=check_cancel)
                 if angle:
-                    messages.append(f"Перекос TIFF исправлен на {angle:+.2f}° без обрезки; размер листа расширен. Перспектива и деформация бумаги автоматически не исправляются.")
+                    messages.append(f"Перекос изображения исправлен на {angle:+.2f}° без обрезки; размер листа расширен. Перспектива и деформация бумаги автоматически не исправляются.")
                 elif progress:
-                    progress("Достоверный перекос TIFF не обнаружен; ориентация сохранена.")
+                    progress("Достоверный перекос изображения не обнаружен; ориентация сохранена.")
             width, height = image.width * 72 / resolution[0], image.height * 72 / resolution[1]
-            page = PdfPage(index + 1, width, height, [], [], [], warnings=messages)
+            page = PdfPage(index + 1, width, height, [], [], [], warnings=messages, raster_source=True)
             if ocr_mode != "off":
                 page.texts = _ocr_tiles(image, resolution, environment, ocr_language, messages, check_cancel=check_cancel, progress=progress, preprocess=preprocess)
                 page.ocr_used = True
@@ -517,6 +579,6 @@ def extract_tiff(path: Path, pages: str = "", password: str = "", ocr_mode: str 
                 page.drawings = _trace_scan(image, page, check_cancel=check_cancel, progress=progress)
             _check(check_cancel)
             page.images.append(RasterImage((0, 0, width, height), _png(image)))
-            messages.append("TIFF преобразован приблизительно: растровая подложка сохранена, уверенно распознанные надписи и восстановленные линии редактируются. Утраченные детали, размерные зависимости и точный шрифт автоматически не восстанавливаются.")
+            messages.append("Изображение преобразовано приблизительно: растровая подложка сохранена, уверенно распознанные надписи и восстановленные линии редактируются. Утраченные детали, размерные зависимости и точный шрифт автоматически не восстанавливаются.")
             result.append(page)
     return result

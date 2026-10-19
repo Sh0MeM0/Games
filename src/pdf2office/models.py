@@ -59,3 +59,5 @@ class PdfPage:
     images: list[RasterImage]
     ocr_used: bool = False
     warnings: list[str] = field(default_factory=list)
+    # Full-page raster inputs have a reference image, unlike photos in a PDF.
+    raster_source: bool = False

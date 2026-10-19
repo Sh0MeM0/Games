@@ -107,12 +107,30 @@ def test_wildcard_font_override_is_honored(tmp_path):
 def test_unsuccessful_ocr_keeps_only_raster_visible(tmp_path):
     png = io.BytesIO()
     Image.new("L", (20, 10), 128).save(png, "PNG")
-    scanned = PdfPage(1, 100, 50, [], [], [RasterImage((0, 0, 100, 50), png.getvalue())], ocr_used=True)
+    scanned = PdfPage(1, 100, 50, [], [], [RasterImage((0, 0, 100, 50), png.getvalue())],
+                      ocr_used=True, raster_source=True)
     output = tmp_path / "unrecognized.dxf"
     export_dxf([scanned], output)
     doc = ezdxf.readfile(output)
     raster, = doc.modelspace().query("IMAGE")
     assert not doc.layers.get(raster.dxf.layer).is_off()
+
+
+@pytest.mark.parametrize("raster_source,hidden", [(True, True), (False, False)])
+def test_vectorized_image_reference_is_hidden_but_pdf_photos_stay_visible(tmp_path, raster_source, hidden):
+    png = io.BytesIO()
+    Image.new("RGB", (20, 10), "white").save(png, "PNG")
+    p = page()
+    p.texts = []
+    p.raster_source = raster_source
+    p.images = [RasterImage((0, 0, 200, 300), png.getvalue())]
+    output = tmp_path / "facade.dxf"
+    export_dxf([p], output)
+    doc = ezdxf.readfile(output)
+    assert doc.modelspace().query("LINE LWPOLYLINE")
+    raster, = doc.modelspace().query("IMAGE")
+    assert doc.layers.get(raster.dxf.layer).is_off() is hidden
+    assert (output.parent / doc.entitydb[raster.dxf.image_def_handle].dxf.filename).is_file()
 
 
 @pytest.mark.parametrize("angle", [0, 37, 90, -90])

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+from io import BytesIO
 
 import numpy as np
 import pytest
@@ -213,3 +214,99 @@ def test_one_pixel_rule_retains_physical_stroke_width():
     drawings = _trace_scan(image, page_for(image, width=72, height=36))
     assert len(drawings) == 1
     assert drawings[0].width == pytest.approx(72 / 400)
+
+
+def make_synthetic_facade():
+    """Our own facade, with grey 1 px hatches and wall texture, not a user file."""
+    image = Image.new("RGB", (900, 420), "white")
+    draw = ImageDraw.Draw(image)
+    # A stippled wall must not become thousands of stray CAD primitives.
+    for y in range(200, 326, 5):
+        for x in range(45, 856, 7):
+            if not (150 <= x <= 270 or 345 <= x <= 465 or 568 <= x <= 622 or 698 <= x <= 752):
+                draw.point((x, y), fill=(210, 210, 210))
+    draw.rectangle((40, 195, 860, 330), outline="black", width=1)
+    draw.rectangle((30, 150, 470, 195), outline="black", width=1)
+    draw.rectangle((480, 65, 870, 195), outline="black", width=1)
+    for x in range(484, 868, 4):
+        draw.line((x, 66, x, 194), fill=(200, 200, 200), width=1)
+    for x in (150, 345):
+        draw.rectangle((x, 230, x + 120, 329), outline="black", width=1)
+        draw.line((x, 230, x + 120, 329), fill="black", width=1)
+        draw.line((x, 329, x + 120, 230), fill="black", width=1)
+    for x in (570, 700):
+        draw.rectangle((x, 235, x + 50, 290), outline=(172, 128, 94), width=1)
+        draw.rectangle((x + 5, 240, x + 45, 285), outline="black", width=1)
+        draw.line((x + 25, 240, x + 25, 285), fill="black", width=1)
+    for x in range(35, 860, 60):
+        draw.line((x, 25, x + 35, 25), fill="black", width=1)
+    return image
+
+
+@pytest.mark.parametrize("jpeg_quality", [None, 75])
+@pytest.mark.parametrize("cleanup", [False, True])
+def test_facade_retains_faint_roof_hatches_and_clean_outline(jpeg_quality, cleanup):
+    image = make_synthetic_facade()
+    if jpeg_quality:
+        data = BytesIO()
+        image.save(data, format="JPEG", quality=jpeg_quality)
+        data.seek(0)
+        image = Image.open(data).copy()
+    if cleanup:
+        from pdf2office.scans import clean_scan
+        image, _ = clean_scan(image, 300)
+    original = image.tobytes()
+    drawings = _trace_scan(image, page_for(image))
+    rendered = Image.new("L", image.size, 0)
+    paint = ImageDraw.Draw(rendered)
+    for drawing in drawings:
+        for segment in drawing.segments:
+            paint.line(segment.points, fill=255, width=1)
+    pixels = np.asarray(rendered)
+    # Check every hatch, including its original junction with the black frame.
+    # A global black/white split used to remove all 96 grey roof lines.
+    for x in range(484, 868, 4):
+        assert np.all(pixels[65:196, x])
+        hatches = [drawing for drawing in drawings for segment in drawing.segments
+                   if all(px == x for px, py in segment.points)
+                   and min(py for px, py in segment.points) <= 65
+                   and max(py for px, py in segment.points) >= 195]
+        assert len(hatches) == 1
+        assert hatches[0].width == pytest.approx(1.0)
+    assert np.all(pixels[195, 40:861])
+    # Exact centreline placement prevents thickened or doubled hatch outlines.
+    assert not np.any(pixels[70:190, 486:866:4])
+    assert not np.any(pixels[202:228, 50:140])  # Wall stipple is not geometry.
+    # Deliberate separate dashes must not be joined over their 25 px gaps.
+    for x in range(35, 860, 60):
+        assert np.all(pixels[25, x:x + 36])
+        assert not np.any(pixels[25, x + 36:min(x + 60, 900)])
+    assert image.tobytes() == original
+
+
+def test_faint_closed_curve_survives_alongside_dark_geometry():
+    image = Image.new("L", (500, 300), 255)
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((20, 20, 220, 270), outline=0, width=2)
+    draw.ellipse((290, 60, 450, 220), outline=200, width=1)
+    drawings = _trace_scan(image, page_for(image))
+    rings = [drawing for drawing in drawings if drawing.closed and
+             min(point[0] for segment in drawing.segments for point in segment.points) > 250]
+    assert len(rings) == 1
+    for segment in rings[0].segments:
+        for x, y in segment.points:
+            assert abs(math.hypot(x - 370, y - 140) - 80) < 2
+
+
+def test_faint_stroke_restoration_does_not_fill_real_white_gaps():
+    image = Image.new("L", (500, 300), 255)
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((10, 10, 480, 80), outline=0, width=5)
+    draw.line((30, 180, 220, 180), fill=200, width=1)
+    draw.line((225, 180, 450, 180), fill=200, width=1)
+    drawings = _trace_scan(image, page_for(image))
+    faint = [drawing for drawing in drawings if all(y > 100 for segment in drawing.segments for x, y in segment.points)]
+    assert len(faint) == 2
+    edges = {tuple(sorted(drawing.segments[0].points)) for drawing in faint}
+    assert edges == {((30.0, 180.0), (220.0, 180.0)), ((225.0, 180.0), (450.0, 180.0))}
+    assert all(drawing.width == pytest.approx(1.0) for drawing in faint)

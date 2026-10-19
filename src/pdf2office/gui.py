@@ -20,9 +20,22 @@ from PySide6.QtWidgets import (
     QTabWidget, QVBoxLayout, QWidget,
 )
 
+from .input_formats import IMAGE_EXTENSIONS, INPUT_EXTENSIONS
 
 APP_NAME = "PDF Мастер"
-INPUT_EXTENSIONS = {".pdf", ".tif", ".tiff"}
+
+
+def _file_patterns(extensions: frozenset[str] | set[str]) -> str:
+    """Include both cases for case-sensitive desktop file dialogs."""
+    return " ".join(pattern for extension in sorted(extensions)
+                    for pattern in (f"*{extension}", f"*{extension.upper()}"))
+
+
+INPUT_FILE_FILTER = (
+    f"PDF и изображения ({_file_patterns(INPUT_EXTENSIONS)});;"
+    "PDF (*.pdf *.PDF);;"
+    f"Изображения ({_file_patterns(IMAGE_EXTENSIONS)})"
+)
 
 STYLE = """
 QMainWindow, QDialog { background: #f3f5f9; color: #192841; }
@@ -117,7 +130,7 @@ def _create_settings() -> QSettings:
 
 
 class PdfList(QListWidget):
-    """Accept PDF and TIFF files dropped from Explorer, without moving files."""
+    """Accept PDF and raster images dropped from Explorer, without moving files."""
 
     files_dropped = Signal(list)
 
@@ -127,7 +140,7 @@ class PdfList(QListWidget):
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setMinimumHeight(48)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
-        self.setAccessibleName("Список PDF и TIFF для конвертации")
+        self.setAccessibleName("Список PDF и изображений для конвертации")
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
         if event.mimeData().hasUrls() and any(
@@ -314,7 +327,7 @@ class FontDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle(f"{APP_NAME} — PDF / TIFF → DWG / DOCX")
+        self.setWindowTitle(f"{APP_NAME} — PDF и изображения → DWG / DOCX")
         self.resize(1120, 850)
         self.setMinimumSize(900, 700)
         self.settings = _create_settings()
@@ -338,7 +351,7 @@ class MainWindow(QMainWindow):
         title = QLabel(APP_NAME)
         title.setObjectName("title")
         headings.addWidget(title)
-        subtitle = QLabel("Чертежи и документы из PDF и TIFF — для редактирования")
+        subtitle = QLabel("Чертежи и документы из PDF и изображений — для редактирования")
         subtitle.setObjectName("subtitle")
         headings.addWidget(subtitle)
         header.addLayout(headings)
@@ -370,7 +383,7 @@ class MainWindow(QMainWindow):
         self.file_count = _hint("0 файлов")
         title_row.addWidget(self.file_count)
         files.addLayout(title_row)
-        files.addWidget(_hint("Добавьте PDF или TIFF либо перетащите их в список ниже."))
+        files.addWidget(_hint("Добавьте PDF, JPG, PNG, TIFF и другие изображения или перетащите их в список."))
         self.file_list = PdfList()
         self.file_list.files_dropped.connect(self._add_files)
         files.addWidget(self.file_list, 1)
@@ -478,7 +491,7 @@ class MainWindow(QMainWindow):
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.pages = QLineEdit()
         self.pages.setPlaceholderText("Все страницы; например: 1-3, 5, 8")
-        self.pages.setToolTip("Нумерация с 1. Поддерживаются многостраничные PDF и TIFF. Укажите страницы и диапазоны через запятую.")
+        self.pages.setToolTip("Нумерация с 1. Для PDF — страницы, для изображений — кадры. Например: 1-3,5.")
         form.addRow("Страницы", self.pages)
         self.ocr_mode = QComboBox()
         self.ocr_mode.addItem("Автоматически для сканов", "auto")
@@ -499,7 +512,7 @@ class MainWindow(QMainWindow):
             combo.setMinimumContentsLength(12)
         layout.addLayout(form)
         layout.addWidget(_hint(
-            "Для сканов доступно OCR. Качество распознавания зависит от исходного изображения; "
+            "Текст на изображениях и сканах распознаётся автоматически. Качество зависит от исходного изображения; "
             "проверяйте числа, обозначения и таблицы после конвертации."
         ))
         layout.addStretch()
@@ -524,7 +537,7 @@ class MainWindow(QMainWindow):
         self.scale.setValue(1.0)
         self.scale.setSingleStep(0.5)
         self.scale.setSuffix(" ×")
-        self.scale.setToolTip("1×: размеры листа в миллиметрах. Для TIFF размер определяется по DPI. Для чертежа 1:100 задайте 100×.")
+        self.scale.setToolTip("1×: размеры листа в миллиметрах. Для изображений размер определяется по DPI. Для чертежа 1:100 задайте 100×.")
         form.addRow("Масштаб CAD", self.scale)
         layout.addLayout(form)
         layout.addWidget(_hint(
@@ -538,7 +551,7 @@ class MainWindow(QMainWindow):
             "Линии могут требовать очистки; размеры и геометрическую точность нужно проверить."
         ))
         layout.addSpacing(5)
-        scan_title = QLabel("Подготовка TIFF")
+        scan_title = QLabel("Изображения и сканы")
         scan_title.setObjectName("sectionTitle")
         layout.addWidget(scan_title)
         self.scan_deskew = QCheckBox("Выравнивать наклон скана")
@@ -547,9 +560,11 @@ class MainWindow(QMainWindow):
         self.scan_cleanup = QCheckBox("Очищать фон и мелкий шум")
         self.scan_cleanup.setChecked(True)
         layout.addWidget(self.scan_cleanup)
-        self.vectorize_tiff = QCheckBox("Восстанавливать линии TIFF")
-        self.vectorize_tiff.setChecked(True)
-        layout.addWidget(self.vectorize_tiff)
+        self.vectorize_images = QCheckBox("Восстанавливать линии изображений")
+        self.vectorize_images.setChecked(True)
+        # Retain the old widget name for automation and existing integrations.
+        self.vectorize_tiff = self.vectorize_images
+        layout.addWidget(self.vectorize_images)
         scan_form = QFormLayout()
         self.scan_dpi = QSpinBox()
         self.scan_dpi.setRange(0, 2400)
@@ -557,15 +572,15 @@ class MainWindow(QMainWindow):
         self.scan_dpi.setSpecialValueText("Авто")
         self.scan_dpi.setSuffix(" DPI")
         self.scan_dpi.setToolTip(
-            "Авто (0): разрешение из TIFF; если оно отсутствует — 300 DPI. Вручную: 72–2400 DPI. "
-            "Задайте разрешение сканера вручную, чтобы сохранить физические размеры листа."
+            "Авто (0): разрешение из изображения; если оно отсутствует — 300 DPI. Вручную: 72–2400 DPI. "
+            "Без достоверного DPI задайте масштаб по известному размеру на чертеже."
         )
-        scan_form.addRow("Разрешение TIFF", self.scan_dpi)
+        scan_form.addRow("Разрешение", self.scan_dpi)
         layout.addLayout(scan_form)
         layout.addWidget(_hint(
             "Выравнивание и очистка применяются к копии изображения. "
             "Текст распознаётся по настройкам на вкладке «Конвертация». "
-            "Проверяйте мелкие обозначения и геометрию после обработки."
+            "Тонкие линии и штриховки восстанавливаются приближённо; проверяйте размеры и обозначения."
         ))
         layout.addSpacing(5)
         font_title = QLabel("Шрифты и ГОСТ")
@@ -613,7 +628,9 @@ class MainWindow(QMainWindow):
         self.vectorize.setChecked(settings.value("vectorize", False, type=bool))
         self.scan_cleanup.setChecked(settings.value("scan_cleanup", True, type=bool))
         self.scan_deskew.setChecked(settings.value("scan_deskew", True, type=bool))
-        self.vectorize_tiff.setChecked(settings.value("vectorize_tiff", True, type=bool))
+        self.vectorize_images.setChecked(settings.value(
+            "vectorize_images", settings.value("vectorize_tiff", True, type=bool), type=bool,
+        ))
         self.scan_dpi.setValue(settings.value("scan_dpi", 0, type=int))
         # Destructive replacement must be deliberately enabled for each session.
         self.overwrite.setChecked(False)
@@ -640,7 +657,8 @@ class MainWindow(QMainWindow):
             "vectorize": self.vectorize.isChecked(),
             "scan_cleanup": self.scan_cleanup.isChecked(),
             "scan_deskew": self.scan_deskew.isChecked(),
-            "vectorize_tiff": self.vectorize_tiff.isChecked(),
+            "vectorize_images": self.vectorize_images.isChecked(),
+            "vectorize_tiff": self.vectorize_images.isChecked(),
             "scan_dpi": self.scan_dpi.value(),
             "font_dirs": json.dumps([str(path) for path in self._font_dirs]),
             "font_overrides": json.dumps(self._font_overrides, ensure_ascii=False),
@@ -652,8 +670,7 @@ class MainWindow(QMainWindow):
 
     def _choose_files(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "Добавить PDF или TIFF", "",
-            "PDF и TIFF (*.pdf *.PDF *.tif *.TIF *.tiff *.TIFF);;PDF (*.pdf *.PDF);;TIFF (*.tif *.TIF *.tiff *.TIFF)",
+            self, "Добавить PDF или изображения", "", INPUT_FILE_FILTER,
         )
         self._add_files(paths)
 
@@ -720,7 +737,7 @@ class MainWindow(QMainWindow):
         inputs = [Path(self.file_list.item(i).data(Qt.ItemDataRole.UserRole)) for i in range(self.file_list.count())]
         formats = tuple(name for name, widget in (("dwg", self.dwg), ("docx", self.docx), ("dxf", self.dxf)) if widget.isChecked())
         if not inputs:
-            QMessageBox.information(self, "Добавьте файлы", "Добавьте хотя бы один PDF или TIFF в список.")
+            QMessageBox.information(self, "Добавьте файлы", "Добавьте хотя бы один PDF или изображение в список.")
             return
         if not formats:
             QMessageBox.information(self, "Выберите формат", "Выберите хотя бы один формат результата: DWG, DXF или DOCX.")
@@ -738,7 +755,8 @@ class MainWindow(QMainWindow):
                 ocr_mode=self.ocr_mode.currentData(), ocr_language=self.ocr_language.currentData(),
                 vectorize_scans=self.vectorize.isChecked(), docx_mode=self.docx_mode.currentData(),
                 scan_cleanup=self.scan_cleanup.isChecked(), scan_deskew=self.scan_deskew.isChecked(),
-                vectorize_tiff=self.vectorize_tiff.isChecked(), scan_dpi=self.scan_dpi.value(),
+                vectorize_images=self.vectorize_images.isChecked(),
+                vectorize_tiff=self.vectorize_images.isChecked(), scan_dpi=self.scan_dpi.value(),
                 scale=self.scale.value(), font_overrides=dict(self._font_overrides),
                 font_dirs=list(self._font_dirs), overwrite=self.overwrite.isChecked(),
             )
@@ -865,7 +883,7 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self, f"О программе {APP_NAME}",
             f"<h3>{APP_NAME} {__version__}</h3>"
-            "<p>Локальная конвертация PDF и TIFF в DWG, DXF и DOCX. "
+            "<p>Локальная конвертация PDF и изображений в DWG, DXF и DOCX. "
             "Векторная геометрия, извлечение текста и OCR на русском и английском.</p>"
             "<p>PDF хранит вид страницы. Исходные зависимости чертежа, параметры объектов "
             "и точное оформление Word восстановить автоматически удаётся не всегда. "
@@ -893,7 +911,7 @@ class MainWindow(QMainWindow):
 
 
 def main() -> int:
-    """Start the desktop application; optional arguments are PDF or TIFF paths."""
+    """Start the desktop application; optional arguments are PDF or image paths."""
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("PDFMaster")

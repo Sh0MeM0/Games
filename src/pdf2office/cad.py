@@ -384,13 +384,14 @@ def _write_dxf(pages, output, scale, font_overrides, image_directory, font_catal
             )
         if page.images:
             warnings.append(f"Страница {page.number}: растровые фрагменты сохранены как IMAGE со ссылками на папку {image_directory.name}; их пиксели не являются редактируемыми CAD-объектами.")
-            if page.ocr_used and any(span.text for span in page.texts):
+            if ((page.ocr_used and any(span.text for span in page.texts))
+                    or (page.raster_source and page.drawings)):
                 doc.layers.get(layers["RASTER_REFERENCE"]).off()
-                warnings.append(f"Страница {page.number}: слой {layers['RASTER_REFERENCE']} выключен, чтобы исходные растровые буквы не перекрывали редактируемый OCR-текст. Его можно включить в CAD для сверки; часть деталей может существовать только на растре.")
+                warnings.append(f"Страница {page.number}: слой {layers['RASTER_REFERENCE']} выключен, чтобы подложка не перекрывала редактируемый текст и линии. Его можно включить в CAD для сверки; часть деталей может существовать только на растре.")
         x_offset += page.width * factor + 20 * scale
     # AC1015 predates true colour. An indexed CAD palette is necessary, not an
     # implicit promise that arbitrary PDF colours survived byte-for-byte.
-    warnings.append("DWG/DXF AutoCAD 2000: цвета приближены к палитре CAD; размеры указаны в мм. Масштаб исходного PDF/TIFF необходимо проверить по известному размеру.")
+    warnings.append("DWG/DXF AutoCAD 2000: цвета приближены к палитре CAD; размеры указаны в мм. Масштаб исходного PDF или изображения необходимо проверить по известному размеру.")
     warnings.extend(f"CAD: шрифт «{source}» заменён на «{target}». Для правильного отображения установите используемые шрифты на компьютере с CAD." for source, target in sorted(substitutions))
     doc.saveas(output)
     if for_libredwg:

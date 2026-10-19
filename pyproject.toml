@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdf-master"
-version = "0.2.0"
-description = "Offline PDF and TIFF to editable CAD and Word converter"
+version = "0.3.0"
+description = "Offline PDF and raster images to editable CAD and Word converter"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "AGPL-3.0-or-later"

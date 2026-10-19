@@ -8,6 +8,45 @@ import pymupdf as fitz
 from PIL import Image, ImageDraw, ImageFont
 
 
+def make_synthetic_facade():
+    """Our own facade, with grey 1 px hatches and wall texture, not a user file."""
+    image = Image.new("RGB", (900, 420), "white")
+    draw = ImageDraw.Draw(image)
+    # A stippled wall must not become thousands of stray CAD primitives.
+    for y in range(200, 326, 5):
+        for x in range(45, 856, 7):
+            if not (150 <= x <= 270 or 345 <= x <= 465 or 568 <= x <= 622 or 698 <= x <= 752):
+                draw.point((x, y), fill=(210, 210, 210))
+    draw.rectangle((40, 195, 860, 330), outline="black", width=1)
+    draw.rectangle((30, 150, 470, 195), outline="black", width=1)
+    draw.rectangle((480, 65, 870, 195), outline="black", width=1)
+    for x in range(484, 868, 4):
+        draw.line((x, 66, x, 194), fill=(200, 200, 200), width=1)
+    for x in (150, 345):
+        draw.rectangle((x, 230, x + 120, 329), outline="black", width=1)
+        draw.line((x, 230, x + 120, 329), fill="black", width=1)
+        draw.line((x, 329, x + 120, 230), fill="black", width=1)
+    for x in (570, 700):
+        draw.rectangle((x, 235, x + 50, 290), outline=(172, 128, 94), width=1)
+        draw.rectangle((x + 5, 240, x + 45, 285), outline="black", width=1)
+        draw.line((x + 25, 240, x + 25, 285), fill="black", width=1)
+    for x in range(35, 860, 60):
+        draw.line((x, 25, x + 35, 25), fill="black", width=1)
+    return image
+
+
+def make_facade_examples(directory: Path):
+    """Publish only our own labelled synthetic facade, in PNG and JPEG."""
+    directory.mkdir(parents=True, exist_ok=True)
+    image = make_synthetic_facade()
+    font = ImageFont.truetype(str(Path(__file__).parents[1] / "assets/fonts/DejaVuSans.ttf"), 20)
+    ImageDraw.Draw(image).text((55, 365), "ФАСАД — УЧЕБНЫЙ ПРИМЕР. 300 DPI", font=font, fill="black")
+    for extension, options in [("png", {}), ("jpg", {"quality": 75, "subsampling": 0})]:
+        destination = directory / ("Пример — фасад." + extension)
+        image.save(destination, dpi=(300, 300), **options)
+        print(destination)
+
+
 def make_examples(directory: Path):
     directory.mkdir(parents=True, exist_ok=True)
     font = Path(__file__).parents[1] / "assets/fonts/LiberationSans-Regular.ttf"
@@ -62,6 +101,7 @@ def make_examples(directory: Path):
     tiff_path = directory / "Пример — шумный скан.tif"
     tiff.save(tiff_path, dpi=(400, 400), compression="tiff_lzw")
     print(tiff_path)
+    make_facade_examples(directory)
 
 
 if __name__ == "__main__":

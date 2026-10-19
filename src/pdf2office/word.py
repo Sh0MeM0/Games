@@ -394,8 +394,8 @@ def export_docx(
         warnings.append("DOCX: положение текста с поворотом, отличным от 90°, приблизительное.")
 
     document = Document()
-    document.core_properties.title = "PDF / TIFF → Word"
-    document.core_properties.subject = "Редактируемый результат преобразования PDF / TIFF"
+    document.core_properties.title = "PDF / изображение → Word"
+    document.core_properties.subject = "Редактируемый результат преобразования PDF / изображения"
     normal = document.styles["Normal"]
     normal.paragraph_format.space_after = Pt(0)
     fonts = _Fonts(font_overrides, warnings, font_catalog)

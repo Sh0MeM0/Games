@@ -319,6 +319,33 @@ def _ocr(page: fitz.Page, native: list[TextSpan], executable: Path, language: st
     return result, image
 
 
+def _supported_faint_strokes(gray, dark_mask):
+    """Select coherent light ink without importing isolated wall/JPEG texture.
+
+    ``dark_mask`` contains 0/1 ink that is already accounted for. Test local
+    contrast on entire components rather than clipping their ends near darker
+    intersections; a local mean alone loses the final grey pixels there.
+    """
+    import cv2
+    import numpy as np
+
+    faint = (1 - dark_mask) & (gray < 235).astype(np.uint8)
+    if not faint.any():
+        return faint
+    local = cv2.adaptiveThreshold(gray, 1, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                 cv2.THRESH_BINARY_INV, 31, 12)
+    _, labels, stats, _ = cv2.connectedComponentsWithStats(faint, connectivity=8)
+    extent = np.maximum(stats[:, cv2.CC_STAT_WIDTH], stats[:, cv2.CC_STAT_HEIGHT])
+    minor = np.minimum(stats[:, cv2.CC_STAT_WIDTH], stats[:, cv2.CC_STAT_HEIGHT])
+    area = stats[:, cv2.CC_STAT_AREA]
+    coherent = ((area >= 8) & (extent >= 12)
+                & ((area <= 2 * extent) | (area <= 0.15 * extent * minor)))
+    support = np.bincount(labels[local != 0], minlength=len(stats))
+    coherent &= support >= area * 0.5
+    coherent[0] = False
+    return coherent[labels].astype(np.uint8)
+
+
 def _trace_scan(image: Image.Image, page: PdfPage,
                 check_cancel: Callable[[], None] | None = None,
                 progress: Callable[[str], None] | None = None) -> list[Drawing]:
@@ -362,8 +389,14 @@ def _trace_scan(image: Image.Image, page: PdfPage,
         page.warnings.append(f"Векторизация выполнена на копии {working.width} × {working.height} пикселей; очень мелкие детали проверьте по растровой подложке.")
     gray = np.array(working)
     sx, sy = page.width / working.width, page.height / working.height
-    _, mask = cv2.threshold(gray, 0, 1, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
-    del gray, working
+    threshold, mask = cv2.threshold(gray, 0, 1, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+    # A global split can keep black outlines but discard every grey roof hatch
+    # in an otherwise white drawing. Restore only supported thin grey strokes.
+    histogram = cv2.calcHist([gray], [0], None, [256], [0, 256]).ravel()
+    if histogram[min(235, int(threshold) + 1):235].sum():
+        checkpoint("Векторизация: сохранение светлых тонких линий")
+        mask |= _supported_faint_strokes(gray, mask)
+    del histogram, gray, working
 
     # Erase only recognized text boxes, with no generous padding into nearby
     # drawing geometry. Restore actual ink on lines that cross the whole box
