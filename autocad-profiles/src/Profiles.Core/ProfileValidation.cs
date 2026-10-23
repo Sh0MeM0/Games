@@ -9,8 +9,11 @@ namespace Profiles.Core
         internal static void Check(ProfileProject project, bool geometry = true)
         {
             if (project == null) Fail("Проект не задан.");
-            if (project.SchemaVersion != 1) Fail("Версия проекта не поддерживается: " + project.SchemaVersion + ". Требуется версия 1.");
+            if (project.SchemaVersion != 2) Fail("Версия проекта не поддерживается: " + project.SchemaVersion + ". Требуется версия 2.");
+            if (!Guid.TryParseExact(project.ProjectId, "N", out var identity) && !Guid.TryParseExact(project.ProjectId, "D", out identity)) Fail("Некорректный идентификатор проекта.");
+            Text(project.Name, "Название проекта", 200);
             if (!Enum.IsDefined(typeof(ProfileKind), project.Kind)) Fail("Неизвестный тип профиля.");
+            if (!Enum.IsDefined(typeof(ProfileTemplate), project.Template)) Fail("Неизвестный шаблон профиля.");
             if (project.Settings == null || project.Longitudinal == null || project.Sections == null) Fail("В проекте отсутствуют настройки или списки точек.");
             ProfileSettings settings = project.Settings;
             Text(settings.Title, "Название профиля", 200, geometry);
@@ -36,8 +39,12 @@ namespace Profiles.Core
                 Range(point.Station, -1000000000, 1000000000, "Пикетаж");
                 if (geometry && project.Kind == ProfileKind.Longitudinal && point.Station <= previous) Fail("Пикетаж должен строго возрастать; удалите совпадающие точки или исправьте порядок строк.");
                 previous = point.Station;
-                foreach (double? value in new[] { point.Ground, point.ExistingBottom, point.ProjectBottom, point.Water, point.LeftBank, point.RightBank })
+                foreach (double? value in new[] { point.Ground, point.ExistingBottom, point.ProjectBottom, point.Water, point.LeftBank, point.RightBank, point.ProjectGround, point.PipeInvert })
                     Elevation(value, "Отметка на пикетаже " + point.Station);
+                if (point.PeatDepth.HasValue) Range(point.PeatDepth.Value, 0, 1000000, "Глубина торфа");
+                Text(point.PipeDescription, "Характеристика трубопровода", 200, false);
+                Text(point.Foundation, "Основание трубопровода", 200, false);
+                Text(point.PointName, "Обозначение точки", 100, false);
                 Positive(point.BottomWidth, "Ширина дна");
                 Positive(point.LeftSlope, "Левое заложение откоса");
                 Positive(point.RightSlope, "Правое заложение откоса");
@@ -52,6 +59,9 @@ namespace Profiles.Core
             if (active && section.Points.Count < 2) Fail("Поперечник «" + section.Name + "»: нужно не менее двух точек.");
             if (section.Station.HasValue) Range(section.Station.Value, -1000000000, 1000000000, "Пикетаж поперечника");
             Range(section.CenterOffset, -1000000000, 1000000000, "Смещение оси");
+            Elevation(section.LeftBank, "Отметка левого берега");
+            Elevation(section.RightBank, "Отметка правого берега");
+            Elevation(section.ExistingBottom, "Отметка существующего дна");
             Elevation(section.Water, "Уровень воды");
             Elevation(section.ProjectBottom, "Проектная отметка дна");
             Positive(section.BottomWidth, "Ширина дна");

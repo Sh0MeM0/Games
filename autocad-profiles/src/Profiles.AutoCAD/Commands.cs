@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Windows.Forms;
 using Autodesk.AutoCAD.ApplicationServices;
@@ -41,16 +42,6 @@ namespace Profiles.AutoCAD
 
     public sealed class ProfileCommands
     {
-        private sealed class LastProject
-        {
-            internal ProfileProject Project;
-        }
-
-        // Session memory follows the document lifetime. Nothing is written into
-        // the drawing or to disk, and one drawing never receives another's data.
-        private static readonly ConditionalWeakTable<Document, LastProject> Projects =
-            new ConditionalWeakTable<Document, LastProject>();
-
         [CommandMethod("PROFILI", CommandFlags.Modal)]
         public void OpenProfiles() => Open(ProfileKind.Longitudinal);
 
@@ -85,38 +76,60 @@ namespace Profiles.AutoCAD
             var document = AcadApplication.DocumentManager.MdiActiveDocument;
             if (document == null) return;
             var editor = document.Editor;
+            bool built = false;
 
             try
             {
-                Projects.TryGetValue(document, out var previous);
-                using (var form = new ProfilesForm(kind, previous?.Project))
+                // Always reread DWG state so reopening after UNDO cannot revive a
+                // stale session cache or another document's project.
+                var catalog = DrawingProjectStore.Read(document.Database);
+                var previous = catalog.Projects.FirstOrDefault(project =>
+                    string.Equals(project.ProjectId, catalog.LastActiveProjectId, StringComparison.OrdinalIgnoreCase))
+                    ?? catalog.Projects.FirstOrDefault();
+                Action<ProfileProject> saveDraft = project =>
+                {
+                    // WinForms callbacks run inside AutoCAD's modal loop. Take an
+                    // explicit document lock for each short DB write; never hold
+                    // a transaction open while the user edits or picks a point.
+                    using (document.LockDocument()) DrawingProjectStore.Save(document.Database, project);
+                };
+                using (var form = new ProfilesForm(kind, previous == null ? null : ProjectFile.Clone(previous),
+                    catalog.Projects, saveDraft))
                 {
                     if (AcadApplication.ShowModalDialog(form) != DialogResult.OK)
                         return;
                     var plan = form.Plan ?? ProfileEngine.Build(form.Project);
                     if (plan.Entities.Count == 0)
                         throw new InvalidOperationException("Нет элементов для построения профиля.");
-                    // Remember accepted input before prompting: cancelling the
-                    // insertion point must not discard the user's completed form.
-                    Projects.GetValue(document, key => new LastProject()).Project = form.Project;
+                    // Keep accepted numeric input in the DWG even if insertion is
+                    // cancelled. The user still saves the DWG normally for disk.
+                    saveDraft(form.Project);
 
-                    var point = editor.GetPoint(new PromptPointOptions(
-                        "\nУкажите точку вставки профиля (Enter — отмена): ")
+                    Autodesk.AutoCAD.Geometry.Point3d? insertionPoint = null;
+                    if (!form.RebuildExisting)
                     {
-                        AllowNone = true
-                    });
-                    if (point.Status != PromptStatus.OK)
-                    {
-                        editor.WriteMessage("\nВставка отменена. Данные оставлены в памяти этого чертежа до конца сеанса. " +
-                            "Откройте " + (kind == ProfileKind.CrossSection ? "PROFILI_CROSS" : "PROFILI_LONG") + ", чтобы продолжить.");
-                        return;
+                        var point = editor.GetPoint(new PromptPointOptions(
+                            "\nУкажите новую точку вставки профиля (Enter — отмена): ") { AllowNone = true });
+                        if (point.Status != PromptStatus.OK)
+                        {
+                            editor.WriteMessage("\nВставка отменена. Данные проекта оставлены в чертеже. " +
+                                "Сохраните DWG (Ctrl+S), чтобы они сохранились после закрытия AutoCAD.");
+                            return;
+                        }
+                        insertionPoint = point.Value;
                     }
 
                     // A normal modal AutoCAD command owns one undo group. All new
-                    // drawing objects are committed by a single transaction below.
-                    var result = DrawingWriter.Insert(document.Database, editor,
-                        point.Value, plan);
-                    editor.WriteMessage("\nПрофиль построен: {0} объектов. Отменить — ОТМЕНИТЬ / UNDO.", result.EntityCount);
+                    // geometry, prior-output erasure and generation metadata are
+                    // committed by the writer's single atomic transaction.
+                    InsertResult result;
+                    using (document.LockDocument())
+                        result = DrawingWriter.Insert(document.Database, editor, insertionPoint, plan,
+                            form.Project, form.RebuildExisting);
+                    built = true;
+                    editor.WriteMessage("\nПрофиль «{0}» построен: {1} объектов; заменено прежних: {2}. " +
+                        "Отмена — ОТМЕНИТЬ / UNDO. Сохраните DWG (Ctrl+S), чтобы сохранить проекты и построение.",
+                        form.Project.Name, result.EntityCount, result.ReplacedEntityCount);
                     foreach (var warning in plan.Warnings)
                         editor.WriteMessage("\nПредупреждение: " + warning);
                     foreach (var warning in result.Warnings)
@@ -130,7 +143,7 @@ namespace Profiles.AutoCAD
             }
             catch (System.Exception exception)
             {
-                editor.WriteMessage("\nНе удалось построить профиль: " + exception.Message);
+                editor.WriteMessage((built ? "\nПрофиль построен, но последующее обновление не завершено: " : "\nНе удалось построить профиль: ") + exception.Message);
                 AcadApplication.ShowAlertDialog("Профиля\n\n" + exception.Message +
                     "\n\nПодробности — в командной строке AutoCAD.");
             }

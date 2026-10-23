@@ -4,12 +4,16 @@ using System.Collections.Generic;
 namespace Profiles.Core
 {
     public enum ProfileKind { Longitudinal, CrossSection }
+    public enum ProfileTemplate { Reconstruction, NewChannel, Nvk }
     public enum TextAlignment { Left, Center, Right }
 
     public sealed class ProfileProject
     {
-        public int SchemaVersion { get; set; } = 1;
+        public int SchemaVersion { get; set; } = 2;
+        public string ProjectId { get; set; } = Guid.NewGuid().ToString("N");
+        public string Name { get; set; } = "Проект";
         public ProfileKind Kind { get; set; }
+        public ProfileTemplate Template { get; set; } = ProfileTemplate.Reconstruction;
         public ProfileSettings Settings { get; set; } = new ProfileSettings();
         public List<LongitudinalPoint> Longitudinal { get; set; } = new List<LongitudinalPoint>();
         public List<CrossSection> Sections { get; set; } = new List<CrossSection>();
@@ -30,6 +34,12 @@ namespace Profiles.Core
     public sealed class LongitudinalPoint
     {
         public double Station { get; set; }
+        public double? ProjectGround { get; set; }
+        public double? PipeInvert { get; set; }
+        public string PipeDescription { get; set; } = "";
+        public string Foundation { get; set; } = "";
+        public string PointName { get; set; } = "";
+        public double? PeatDepth { get; set; }
         public double? Ground { get; set; }
         public double? LeftBank { get; set; }
         public double? RightBank { get; set; }
@@ -44,6 +54,10 @@ namespace Profiles.Core
     public sealed class CrossSection
     {
         public string Name { get; set; } = "1-1";
+        // Elevations imported from the longitudinal profile; surveyed offsets are supplied separately.
+        public double? LeftBank { get; set; }
+        public double? RightBank { get; set; }
+        public double? ExistingBottom { get; set; }
         public double? Station { get; set; }
         public double? Water { get; set; }
         public double? ProjectBottom { get; set; }

@@ -10,6 +10,8 @@ namespace Profiles.Core
             return new ProfileProject
             {
                 Kind = ProfileKind.Longitudinal,
+                Name = "Учебный канал — подчистка",
+                Template = ProfileTemplate.Reconstruction,
                 Settings = new ProfileSettings
                 {
                     Title = "УЧЕБНЫЙ ПРИМЕР — РЕКОНСТРУКЦИЯ КАНАЛА",
@@ -28,11 +30,62 @@ namespace Profiles.Core
             };
         }
 
+        public static ProfileProject ForTemplate(ProfileTemplate template)
+        {
+            if (template == ProfileTemplate.NewChannel) return NewChannel();
+            if (template == ProfileTemplate.Nvk) return Nvk();
+            return Longitudinal();
+        }
+
+        public static ProfileProject NewChannel()
+        {
+            return new ProfileProject
+            {
+                Kind = ProfileKind.Longitudinal, Template = ProfileTemplate.NewChannel,
+                Name = "Учебный новый канал",
+                Settings = new ProfileSettings
+                {
+                    Title = "УЧЕБНЫЙ ПРИМЕР — НОВЫЙ КАНАЛ", HorizontalScale = 1000,
+                    VerticalScale = 100, Datum = 139, ShowEmptyRows = true
+                },
+                Longitudinal = new List<LongitudinalPoint>
+                {
+                    new LongitudinalPoint { Station = 0, Ground = 143.8, ProjectBottom = 141.2, PeatDepth = .4, BottomWidth = .6, LeftSlope = 1.5, RightSlope = 1.5 },
+                    new LongitudinalPoint { Station = 25, Ground = 143.7, BottomWidth = .6, LeftSlope = 1.5, RightSlope = 1.5 },
+                    new LongitudinalPoint { Station = 60, Ground = 143.6, PeatDepth = .3, BottomWidth = .6, LeftSlope = 1.5, RightSlope = 1.5 },
+                    new LongitudinalPoint { Station = 100, Ground = 143.5, ProjectBottom = 140.8, PeatDepth = .2, BottomWidth = .6, LeftSlope = 1.5, RightSlope = 1.5 }
+                }
+            };
+        }
+
+        public static ProfileProject Nvk()
+        {
+            return new ProfileProject
+            {
+                Kind = ProfileKind.Longitudinal, Template = ProfileTemplate.Nvk,
+                Name = "Учебные сети НВК",
+                Settings = new ProfileSettings
+                {
+                    Title = "УЧЕБНЫЙ ПРИМЕР — СЕТИ НВК", HorizontalScale = 500,
+                    VerticalScale = 100, Datum = 139
+                },
+                Longitudinal = new List<LongitudinalPoint>
+                {
+                    new LongitudinalPoint { Station = 0, Ground = 143.8, ProjectGround = 144.0, PipeInvert = 141.2, PointName = "К1", PipeDescription = "ПЭ 160", Foundation = "Песок" },
+                    new LongitudinalPoint { Station = 25, Ground = 143.7, PointName = "К2" },
+                    new LongitudinalPoint { Station = 60, Ground = 143.6, PointName = "К3" },
+                    new LongitudinalPoint { Station = 100, Ground = 143.5, ProjectGround = 143.7, PipeInvert = 140.8, PointName = "К4", PipeDescription = "ПЭ 160", Foundation = "Песок" }
+                }
+            };
+        }
+
         public static ProfileProject CrossSections()
         {
             return new ProfileProject
             {
                 Kind = ProfileKind.CrossSection,
+                Name = "Учебные поперечники",
+                Longitudinal = Longitudinal().Longitudinal,
                 Settings = new ProfileSettings
                 {
                     Title = "УЧЕБНЫЕ ПОПЕРЕЧНЫЕ ПРОФИЛИ КАНАЛА",

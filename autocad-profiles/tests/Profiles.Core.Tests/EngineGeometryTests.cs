@@ -143,20 +143,42 @@ public sealed class EngineGeometryTests
     }
 
     [Fact]
-    public void MissingGroundAndDesignValuesBreakCurvesInsteadOfBridgingTheGap()
+    public void BlankLongitudinalElevationsInterpolateByStationAndRecalculateFromAnchors()
     {
-        var project = Longitudinal(10, 11, null, 13, 14);
-        for (var i = 0; i < project.Longitudinal.Count; i++)
-            project.Longitudinal[i].ProjectBottom = i == 2 ? null : 8 + i;
+        var project = Longitudinal(10, null, null, 20);
+        project.Longitudinal[1].Station = 107;
+        project.Longitudinal[2].Station = 145;
+        project.Longitudinal[3].Station = 200;
+        project.Longitudinal[0].ProjectBottom = 8;
+        project.Longitudinal[3].ProjectBottom = 10;
         var plan = ProfileEngine.Build(project);
-        foreach (var layer in new[] { "PROF_GROUND", "PROF_PROJECT" })
-        {
-            var lines = Curves(plan, layer);
-            Assert.Equal(2, lines.Count);
-            Assert.All(lines, line => Assert.Equal(2, line.Points.Count));
-            Assert.Equal(new[] { 0.0, 20.0 }, lines[0].Points.Select(p => p.X));
-            Assert.Equal(new[] { 60.0, 80.0 }, lines[1].Points.Select(p => p.X));
-        }
+        var ground = Assert.Single(Curves(plan, "PROF_GROUND"));
+        var design = Assert.Single(Curves(plan, "PROF_PROJECT"));
+        Assert.Equal(new[] { 0.0, 7.0, 45.0, 100.0 }, ground.Points.Select(p => p.X));
+        Assert.Equal(107, ground.Points[1].Y, 8);
+        Assert.Equal(145, ground.Points[2].Y, 8);
+        Assert.Equal(81.4, design.Points[1].Y, 8);
+        Assert.Equal(89, design.Points[2].Y, 8);
+        Assert.Contains(plan.Entities.OfType<DrawText>(), text => text.Text == "8.14" && text.ColorIndex == 1);
+        Assert.Null(project.Longitudinal[1].Ground);
+        Assert.Null(project.Longitudinal[2].ProjectBottom);
+        project.Longitudinal[3].Ground = 30;
+        var changed = Assert.Single(Curves(ProfileEngine.Build(project), "PROF_GROUND"));
+        Assert.Equal(114, changed.Points[1].Y, 8);
+        Assert.Equal(190, changed.Points[2].Y, 8);
+        Assert.Null(project.Longitudinal[1].Ground);
+    }
+
+    [Fact]
+    public void MissingLongitudinalEndElevationsAreNotExtrapolatedOrMarkedWithCircles()
+    {
+        var project = Longitudinal(null, 10, 12, null);
+        var plan = ProfileEngine.Build(project);
+        var line = Assert.Single(Curves(plan, "PROF_GROUND"));
+        Assert.Equal(new[] { 20.0, 40.0 }, line.Points.Select(p => p.X));
+        Assert.Empty(plan.Entities.OfType<DrawCircle>());
+        Assert.Null(project.Longitudinal[0].Ground);
+        Assert.Null(project.Longitudinal[3].Ground);
     }
 
     [Fact]
@@ -184,9 +206,10 @@ public sealed class EngineGeometryTests
         var design = Assert.Single(Curves(plan, "PROF_PROJECT"));
         Assert.Equal(1, design.ColorIndex);
         Assert.Equal(0.5, design.LineWeightMm, 8);
-        Assert.Equal(3, Assert.Single(Curves(plan, "PROF_LEFT_BANK")).ColorIndex);
+        Assert.Equal(7, Assert.Single(Curves(plan, "PROF_LEFT_BANK")).ColorIndex);
+        Assert.False(Assert.Single(Curves(plan, "PROF_LEFT_BANK")).Dashed);
         var right = Assert.Single(Curves(plan, "PROF_RIGHT_BANK"));
-        Assert.Equal(30, right.ColorIndex);
+        Assert.Equal(6, right.ColorIndex);
         Assert.True(right.Dashed);
         Assert.Equal(7, Assert.Single(Curves(plan, "PROF_GROUND")).ColorIndex);
     }

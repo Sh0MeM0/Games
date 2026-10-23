@@ -27,7 +27,7 @@ namespace Profiles.Core
                 string directory = Path.GetDirectoryName(destination);
                 if (!Directory.Exists(directory))
                     throw new ProfileValidationException("Папка для проекта не существует: выберите существующую папку.");
-                string json = JsonConvert.SerializeObject(project, Formatting.Indented, Settings());
+                string json = Serialize(project);
                 byte[] bytes = new UTF8Encoding(false, true).GetBytes(json + Environment.NewLine);
                 if (bytes.Length > MaximumFileBytes)
                     throw new ProfileValidationException("Размер проекта превышает 10 МБ; разделите его на несколько файлов.");
@@ -65,45 +65,110 @@ namespace Profiles.Core
         {
             try
             {
-                string source = FullPath(path);
-                using (var stream = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read))
+                using (var stream = new FileStream(FullPath(path), FileMode.Open, FileAccess.Read, FileShare.Read))
                 {
                     if (stream.Length > MaximumFileBytes)
                         throw new ProfileValidationException("Файл проекта превышает 10 МБ; разделите данные на несколько проектов.");
                     using (var text = new StreamReader(stream, new UTF8Encoding(false, true), true))
-                    using (var reader = new JsonTextReader(text)
-                    {
-                        DateParseHandling = DateParseHandling.None,
-                        FloatParseHandling = FloatParseHandling.Double,
-                        MaxDepth = 32,
-                        Culture = CultureInfo.InvariantCulture
-                    })
-                    {
-                        var root = JToken.Load(reader, new JsonLoadSettings
-                        {
-                            DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error,
-                            CommentHandling = CommentHandling.Load,
-                            LineInfoHandling = LineInfoHandling.Load
-                        });
-                        while (reader.Read())
-                        {
-                            if (reader.TokenType != JsonToken.None)
-                                throw new ProfileValidationException("После объекта проекта обнаружены лишние данные JSON.");
-                        }
-                        ValidateToken(root, typeof(ProfileProject), "Проект");
-                        if ((int)root["SchemaVersion"] != 1)
-                            throw new ProfileValidationException("Версия проекта не поддерживается. Поддерживается SchemaVersion = 1; обновите модуль или используйте совместимый файл.");
-                        var project = root.ToObject<ProfileProject>(JsonSerializer.Create(Settings()));
-                        ProfileValidation.Check(project, geometry: false);
-                        return project;
-                    }
+                        return Deserialize(text.ReadToEnd());
                 }
             }
             catch (ProfileValidationException) { throw; }
-            catch (Exception error) when (FileError(error) || error is JsonException || error is DecoderFallbackException || error is OverflowException)
+            catch (Exception error) when (FileError(error) || error is DecoderFallbackException)
             {
-                throw new ProfileValidationException("Не удалось открыть проект: проверьте путь и корректность JSON версии 1. " + error.Message, error);
+                throw new ProfileValidationException("Не удалось открыть проект: проверьте путь и корректность JSON. " + error.Message, error);
             }
+        }
+
+        /// <summary>Serialize raw input, including null interpolation cells, for JSON or DWG storage.</summary>
+        public static string Serialize(ProfileProject project)
+        {
+            ProfileValidation.Check(project, geometry: false);
+            string json = JsonConvert.SerializeObject(project, Formatting.Indented, Settings());
+            if (new UTF8Encoding(false, true).GetByteCount(json) > MaximumFileBytes)
+                throw new ProfileValidationException("Размер проекта превышает 10 МБ; разделите его на несколько файлов.");
+            return json;
+        }
+
+        public static ProfileProject Deserialize(string json)
+        {
+            try
+            {
+                if (json == null || json.Length > MaximumFileBytes || new UTF8Encoding(false, true).GetByteCount(json) > MaximumFileBytes)
+                    throw new ProfileValidationException("Данные проекта отсутствуют или превышают 10 МБ.");
+                using (var text = new StringReader(json))
+                using (var reader = new JsonTextReader(text)
+                {
+                    DateParseHandling = DateParseHandling.None,
+                    FloatParseHandling = FloatParseHandling.Double,
+                    MaxDepth = 32,
+                    Culture = CultureInfo.InvariantCulture
+                })
+                {
+                    var root = JToken.Load(reader, new JsonLoadSettings
+                    {
+                        DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error,
+                        CommentHandling = CommentHandling.Load,
+                        LineInfoHandling = LineInfoHandling.Load
+                    });
+                    while (reader.Read())
+                        if (reader.TokenType != JsonToken.None)
+                            throw new ProfileValidationException("После объекта проекта обнаружены лишние данные JSON.");
+                    if (!(root is JObject) || root["SchemaVersion"]?.Type != JTokenType.Integer)
+                        throw new ProfileValidationException("В проекте отсутствует целочисленная SchemaVersion.");
+                    int version = root["SchemaVersion"].Value<int>();
+                    if (version != 1 && version != 2)
+                        throw new ProfileValidationException("Версия проекта не поддерживается. Поддерживаются SchemaVersion = 1 и 2; обновите модуль или используйте совместимый файл.");
+                    if (version == 1) UpgradeLegacy((JObject)root);
+                    ValidateToken(root, typeof(ProfileProject), "Проект");
+                    var project = root.ToObject<ProfileProject>(JsonSerializer.Create(Settings()));
+                    ProfileValidation.Check(project, geometry: false);
+                    project.ProjectId = Guid.Parse(project.ProjectId).ToString("N");
+                    return project;
+                }
+            }
+            catch (ProfileValidationException) { throw; }
+            catch (Exception error) when (error is JsonException || error is DecoderFallbackException || error is EncoderFallbackException || error is OverflowException)
+            {
+                throw new ProfileValidationException("Не удалось прочитать проект: проверьте корректность JSON. " + error.Message, error);
+            }
+        }
+
+        public static ProfileProject Clone(ProfileProject project) => Deserialize(Serialize(project));
+
+        private static void UpgradeLegacy(JObject root)
+        {
+            // The old schema had no identity or pending longitudinal seed elevations.
+            // Do not fill missing old properties: strict validation still catches damaged files.
+            if (root.Property("ProjectId") != null || root.Property("Name") != null || root.Property("Template") != null)
+                Invalid("Проект", "поля версии 2 указаны в файле версии 1");
+            root["ProjectId"] = Guid.NewGuid().ToString("N");
+            root["Name"] = "Импортированный проект";
+            bool reconstruction = root["Longitudinal"] is JArray longitudinal && longitudinal.OfType<JObject>().Any(point =>
+                new[] { "ExistingBottom", "LeftBank", "RightBank", "Water" }.Any(name => point[name] != null && point[name].Type != JTokenType.Null));
+            root["Template"] = reconstruction ? "Reconstruction" : "NewChannel";
+            if (root["Longitudinal"] is JArray legacyPoints)
+                foreach (var point in legacyPoints.OfType<JObject>())
+                {
+                    foreach (string name in new[] { "ProjectGround", "PipeInvert", "PeatDepth" })
+                    {
+                        if (point.Property(name) != null) Invalid("Пикет", "поле версии 2 указано в файле версии 1");
+                        point[name] = JValue.CreateNull();
+                    }
+                    foreach (string name in new[] { "PipeDescription", "Foundation", "PointName" })
+                    {
+                        if (point.Property(name) != null) Invalid("Пикет", "поле версии 2 указано в файле версии 1");
+                        point[name] = "";
+                    }
+                }
+            if (root["Sections"] is JArray sections)
+                foreach (var item in sections.OfType<JObject>())
+                    foreach (string name in new[] { "LeftBank", "RightBank", "ExistingBottom" })
+                    {
+                        if (item.Property(name) != null) Invalid("Поперечник", "поле версии 2 указано в файле версии 1");
+                        item[name] = JValue.CreateNull();
+                    }
+            root["SchemaVersion"] = 2;
         }
 
         private static JsonSerializerSettings Settings()
@@ -179,7 +244,7 @@ namespace Profiles.Core
             {
                 JToken value;
                 if (!obj.TryGetValue(property.Name, StringComparison.Ordinal, out value))
-                    Invalid(location + "." + property.Name, "поле отсутствует; файл должен содержать полную схему версии 1");
+                    Invalid(location + "." + property.Name, "поле отсутствует; файл должен содержать полную схему проекта");
                 ValidateToken(value, property.PropertyType, location + "." + property.Name);
             }
             if (obj.Children().Any(child => child.Type == JTokenType.Comment)) Invalid(location, "комментарии не поддерживаются");

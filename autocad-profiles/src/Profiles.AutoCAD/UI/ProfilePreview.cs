@@ -162,12 +162,13 @@ namespace Profiles.AutoCAD.UI
         {
             switch (index)
             {
-                case 1: return Color.Firebrick;
+                case 1: return Color.Red;
                 case 3: return Color.ForestGreen;
-                case 5: return Color.RoyalBlue;
+                case 5: return Color.Blue;
+                case 6: return Color.Magenta;
                 case 8: return Color.FromArgb(170, 175, 180);
                 case 30: return Color.SaddleBrown;
-                default: return Color.FromArgb(30, 35, 40);
+                default: return Color.Black;
             }
         }
 
