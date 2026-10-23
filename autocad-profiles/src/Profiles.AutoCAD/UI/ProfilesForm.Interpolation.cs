@@ -222,13 +222,28 @@ namespace Profiles.AutoCAD
                     SetStatus("Поперечнику назначен " + StationCaption(station) + ". Его расстояния, отметки и проектные параметры сохранены.");
                     return;
                 }
-                var seed = ProfileInterpolation.CreateSection(ReadLongitudinal(), station);
+                // Assign the station before sampling its linked fields. This
+                // creates a raw station row even when every mark is still blank,
+                // without promoting interpolated values into manual anchors.
+                var source = SynchronizationSource(ReadLongitudinal());
+                int target = selectedSection;
+                CrossSection blank;
+                if (target >= 0 && IsEmptySection(source.Sections[target])) blank = CloneSection(source.Sections[target]);
+                else
+                {
+                    blank = NewSection(source.Sections.Count + 1);
+                    source.Sections.Add(blank);
+                    target = source.Sections.Count - 1;
+                }
+                var seed = CloneSection(blank);
+                if (seed.Points.Count == 0) seed.Points = NewSection(1).Points;
+                seed.Station = station;
                 seed.Name = StationCaption(station);
-                seed.DesignMode = ProfileInterpolation.EffectiveDesignMode(seed);
-                if (selectedSection >= 0 && IsEmptySection(sections[selectedSection])) sections[selectedSection] = seed;
-                else { sections.Add(seed); selectedSection = sections.Count - 1; }
-                SortSections(seed);
-                DisplaySection();
+                seed.ProjectAnchorIndex = seed.Points.Count >= 2 ? 1 : (int?)null;
+                seed.DesignMode = SectionDesignMode.Automatic;
+                var seeded = ProjectSynchronization.CommitSection(source, target, blank, seed);
+                seeded.Sections[target].DesignMode = ProfileInterpolation.EffectiveDesignMode(seeded.Sections[target]);
+                ApplySynchronizedProject(seeded, target);
                 SetDirty();
                 SetStatus("Создан " + StationCaption(station) + ": берега, дно и вода связаны с продольным профилем. Введите измеренные расстояния между точками.");
             }
@@ -247,8 +262,12 @@ namespace Profiles.AutoCAD
                 !section.ExistingBottom.HasValue && !section.Water.HasValue && !section.ProjectBottom.HasValue &&
                 !section.BottomWidth.HasValue && !section.LeftSlope.HasValue && !section.RightSlope.HasValue &&
                 !section.SiltThickness.HasValue && !section.SiltLeft.HasValue && !section.SiltRight.HasValue &&
-                section.CenterOffset == 0 && !section.ProjectAnchorIndex.HasValue && section.Points.Count <= 3 &&
-                section.Points.All(p => p.Offset == 0 && !p.Existing.HasValue && !p.Design.HasValue && (!p.DistanceFromPrevious.HasValue || p.DistanceFromPrevious == 0));
+                section.CenterOffset == 0 && !section.ProjectAnchorIndex.HasValue &&
+                (section.Points.Count == 0 || (section.Points.Count == 3 &&
+                    section.Points[0].Role == SectionPointRole.LeftBank && section.Points[1].Role == SectionPointRole.Bottom &&
+                    section.Points[2].Role == SectionPointRole.RightBank)) &&
+                section.Points.All(p => string.IsNullOrWhiteSpace(p.Label) && p.Offset == 0 && !p.Existing.HasValue &&
+                    !p.Design.HasValue && (!p.DistanceFromPrevious.HasValue || p.DistanceFromPrevious == 0));
         }
 
         private void RefreshStationSeed()

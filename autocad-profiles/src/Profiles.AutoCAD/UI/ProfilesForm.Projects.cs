@@ -46,7 +46,7 @@ namespace Profiles.AutoCAD
             var bar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true, Padding = new Padding(0, 0, 0, 4) };
             bar.Controls.Add(Caption("Проект в чертеже"));
             bar.Controls.Add(projectPicker);
-            bar.Controls.Add(Caption("Шаблон"));
+            bar.Controls.Add(Caption("Тип профиля"));
             bar.Controls.Add(templatePicker);
             bar.Controls.Add(Button("Новый проект", NewProject));
             bar.Controls.Add(Button("Переименовать", RenameProject));
@@ -54,6 +54,7 @@ namespace Profiles.AutoCAD
             save.Enabled = saveProjectToDrawing != null;
             bar.Controls.Add(save);
             tips.SetToolTip(projectPicker, "Независимые наборы исходных данных. Каждый проект может иметь продольный профиль и набор поперечников.");
+            tips.SetToolTip(templatePicker, "Выбор другого типа создаёт новую пустую вкладку профиля. Данные исходной вкладки сохраняются; их можно открыть снова.");
             tips.SetToolTip(save, "Данные записываются в текущий чертёж. После закрытия окна сохраните сам DWG, чтобы оставить изменения на диске.");
             tips.SetToolTip(autoSaveJson, "По умолчанию JSON не переписывается автоматически. Сначала импортируйте или экспортируйте файл, затем включите эту опцию явно.");
             return bar;
@@ -65,12 +66,7 @@ namespace Profiles.AutoCAD
             templatePicker.Items.Add(new TemplateChoice { Value = ProfileTemplate.NewChannel, Name = "Новый канал" });
             templatePicker.Items.Add(new TemplateChoice { Value = ProfileTemplate.Nvk, Name = "Сети НВК" });
             templatePicker.SelectedIndex = 0;
-            templatePicker.SelectionChangeCommitted += (s, e) =>
-            {
-                ApplyTemplateColumns();
-                SetDirty();
-                SetStatus("Выбран шаблон «" + templatePicker.Text + "». Значения скрытых столбцов сохранены в проекте.");
-            };
+            templatePicker.SelectionChangeCommitted += TemplateSelectionChanged;
             if (available != null)
                 foreach (var project in available) RegisterProject(project);
             projectPicker.SelectionChangeCommitted += ProjectSelectionChanged;
@@ -105,7 +101,7 @@ namespace Profiles.AutoCAD
             else if (SelectedTemplate == ProfileTemplate.NewChannel)
                 visible = new[] { "Station", "Ground", "ProjectBottom", "PeatDepth", "BottomWidth", "LeftSlope", "RightSlope" };
             else
-                visible = new[] { "Station", "Ground", "LeftBank", "RightBank", "ExistingBottom", "Water", "ProjectBottom", "BottomWidth", "LeftSlope", "RightSlope" };
+                visible = new[] { "Station", "LeftBank", "RightBank", "ExistingBottom", "Water", "ProjectBottom", "BottomWidth", "LeftSlope", "RightSlope" };
             foreach (DataGridViewColumn column in longGrid.Columns) column.Visible = visible.Contains(column.Name);
             for (int i = 0; i < visible.Length; i++) longGrid.Columns[visible[i]].DisplayIndex = i;
             longGrid.Columns["Ground"].HeaderText = SelectedTemplate == ProfileTemplate.Nvk ? "Натурная земля, м" : "Земля, м";
@@ -161,7 +157,7 @@ namespace Profiles.AutoCAD
             if (name == null) return;
             var project = new ProfileProject
             {
-                SchemaVersion = 4, ProjectId = Guid.NewGuid().ToString("N"), Name = name, Kind = activeKind, Template = SelectedTemplate,
+                ProjectId = Guid.NewGuid().ToString("N"), Name = name, Kind = activeKind, Template = SelectedTemplate,
                 Settings = new ProfileSettings
                 {
                     Title = "ПРОДОЛЬНЫЙ ПРОФИЛЬ",
@@ -192,7 +188,7 @@ namespace Profiles.AutoCAD
             return prefix + " " + number;
         }
 
-        private string AskProjectName(string caption, string initial)
+        private string AskProjectName(string caption, string initial, string fieldCaption = "Название проекта", int maximumLength = 100)
         {
             using (var dialog = new Form
             {
@@ -201,8 +197,8 @@ namespace Profiles.AutoCAD
                 ShowInTaskbar = false, ClientSize = new Size(440, 125), AutoScaleMode = AutoScaleMode.Dpi
             })
             {
-                var input = new TextBox { Text = initial, Left = 16, Top = 40, Width = 405, MaxLength = 100 };
-                dialog.Controls.Add(new Label { Text = "Название проекта", AutoSize = true, Left = 16, Top = 15 });
+                var input = new TextBox { Text = initial, Left = 16, Top = 40, Width = 405, MaxLength = maximumLength };
+                dialog.Controls.Add(new Label { Text = fieldCaption, AutoSize = true, Left = 16, Top = 15 });
                 dialog.Controls.Add(input);
                 var ok = new Button { Text = "Сохранить", DialogResult = DialogResult.None, Left = 225, Top = 80, Width = 95 };
                 ok.Click += (s, e) =>
@@ -230,6 +226,7 @@ namespace Profiles.AutoCAD
             }
             RegisterProject(snapshot);
             Project = snapshot;
+            profileContainer = ProjectFile.Clone(snapshot);
             bool savedJson = lastWrittenJson.TryGetValue(snapshot.ProjectId, out var written) && written == ProjectFile.Serialize(snapshot);
             dirty = saveProjectToDrawing == null && !savedJson;
             if (dirty) memoryOnlyProjects.Add(snapshot.ProjectId);

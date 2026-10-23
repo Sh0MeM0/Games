@@ -74,22 +74,41 @@ namespace Profiles.Core
             previous = ProfileInterpolation.CloneSection(previous);
             var pending = ProfileInterpolation.CloneSection(edited);
             var current = result.Sections[sectionIndex];
+            if (!Guid.TryParseExact(previous.SectionId, "N", out var previousIdentity)
+                || !Guid.TryParseExact(pending.SectionId, "N", out var editedIdentity)
+                || previousIdentity != Guid.Parse(current.SectionId) || editedIdentity != Guid.Parse(current.SectionId))
+                throw new ProfileValidationException("Редактируемый поперечник изменился. Выберите нужный поперечник заново перед сохранением.");
+            pending.SectionId = current.SectionId;
+            var assignedRoles = ChangedRoleAssignments(previous, pending);
+            if (assignedRoles.Count > 0) DrawingSurvey.CheckUniqueRoles(pending);
             var changes = new Dictionary<SharedProfileField, double?>();
             foreach (var field in Fields)
             {
                 double? value;
-                if (DetectChange(previous, pending, field, out value)) changes.Add(field, value);
+                if (assignedRoles.Contains(field))
+                {
+                    var point = pending.Points.Single(item => item.Role == Role(field).Value);
+                    if (Get(previous, field) != Get(pending, field) && Get(pending, field) != point.Existing)
+                        throw ValueConflict(pending, field);
+                    // Selecting an empty role is a request for a live link, not
+                    // an explicit clear of the station's existing measurement.
+                    Set(pending, field, point.Existing);
+                    if (point.Existing.HasValue) changes.Add(field, point.Existing);
+                }
+                else if (DetectChange(previous, pending, field, out value)) changes.Add(field, value);
             }
 
             var currentValues = ProfileInterpolation.CloneSection(current);
             if (currentValues.Station.HasValue)
                 RefreshExistingLinks(currentValues, ProfileInterpolation.SampleLongitudinal(result.Longitudinal, currentValues.Station.Value));
             foreach (var field in Fields)
-                if (!changes.ContainsKey(field)) MergeUnchanged(pending, currentValues, field);
+                if (!changes.ContainsKey(field) && !assignedRoles.Contains(field)) MergeUnchanged(pending, currentValues, field);
+            foreach (var point in pending.Points.Where(point => point.Role == SectionPointRole.Regular)) point.UseLongitudinalElevation = false;
 
             bool reassigned = pending.Station.HasValue && pending.Station != previous.Station;
             if (reassigned)
             {
+                pending.Name = "ПК " + ProfileEngine.Station(pending.Station.Value);
                 foreach (var field in Fields)
                 {
                     if (changes.ContainsKey(field)) continue;
@@ -107,7 +126,7 @@ namespace Profiles.Core
                 return result;
             }
 
-            if (changes.Count == 0 && !reassigned)
+            if (changes.Count == 0 && !reassigned && assignedRoles.Count == 0)
             {
                 ProfileValidation.Check(result, false);
                 return result;
@@ -117,6 +136,38 @@ namespace Profiles.Core
             foreach (var change in changes) Set(anchor, change.Key, change.Value);
             ProfileValidation.Check(result, false);
             Propagate(result, oldLongitudinal, changes.Keys, pending.Station.Value);
+            var stationValues = ProfileInterpolation.SampleLongitudinal(result.Longitudinal, pending.Station.Value);
+            foreach (var field in Fields)
+                if (!changes.ContainsKey(field) && (assignedRoles.Contains(field) || (reassigned && !PendingValue(pending, field).HasValue)))
+                    Apply(pending, field, Get(stationValues, field), true);
+            ProfileValidation.Check(result, false);
+            return result;
+        }
+
+        internal static void ApplyEnteredLongitudinal(ProfileProject project, IList<LongitudinalPoint> imported)
+        {
+            var rows = imported.ToDictionary(point => point.Station);
+            foreach (var section in project.Sections)
+            {
+                LongitudinalPoint row;
+                if (!section.Station.HasValue || !rows.TryGetValue(section.Station.Value, out row)) continue;
+                var sample = ProfileInterpolation.SampleLongitudinal(project.Longitudinal, section.Station.Value);
+                foreach (var field in Fields)
+                    if (Get(row, field).HasValue) Apply(section, field, Get(sample, field), true);
+            }
+        }
+
+        private static HashSet<SharedProfileField> ChangedRoleAssignments(CrossSection previous, CrossSection edited)
+        {
+            var result = new HashSet<SharedProfileField>();
+            foreach (var field in new[] { SharedProfileField.LeftBank, SharedProfileField.ExistingBottom, SharedProfileField.RightBank })
+            {
+                var role = Role(field).Value;
+                var before = previous.Points.Select((point, index) => new { point.Role, Index = index }).Where(point => point.Role == role).Select(point => point.Index).ToList();
+                var after = edited.Points.Select((point, index) => new { point.Role, Index = index }).Where(point => point.Role == role).Select(point => point.Index).ToList();
+                if (after.Count == 0) continue; // Removing a role does not erase a measured station value.
+                if (before.Count != after.Count || (previous.Points.Count == edited.Points.Count && !before.SequenceEqual(after))) result.Add(field);
+            }
             return result;
         }
 

@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
@@ -117,15 +118,23 @@ namespace Profiles.Core
                     if (!(root is JObject) || root["SchemaVersion"]?.Type != JTokenType.Integer)
                         throw new ProfileValidationException("В проекте отсутствует целочисленная SchemaVersion.");
                     int version = root["SchemaVersion"].Value<int>();
-                    if (version < 1 || version > 4)
-                        throw new ProfileValidationException("Версия проекта не поддерживается. Поддерживаются SchemaVersion = 1, 2, 3 и 4; обновите модуль или используйте совместимый файл.");
+                    if (version < 1 || version > 5)
+                        throw new ProfileValidationException("Версия проекта не поддерживается. Поддерживаются SchemaVersion = 1, 2, 3, 4 и 5; обновите модуль или используйте совместимый файл.");
                     if (version == 1) UpgradeLegacy((JObject)root);
                     if (version <= 2) UpgradeVersionTwo((JObject)root);
                     if (version <= 3) UpgradeVersionThree((JObject)root);
+                    if (version <= 4) UpgradeVersionFour((JObject)root);
                     ValidateToken(root, typeof(ProfileProject), "Проект");
                     var project = root.ToObject<ProfileProject>(JsonSerializer.Create(Settings()));
                     ProfileValidation.Check(project, geometry: false);
                     project.ProjectId = Guid.Parse(project.ProjectId).ToString("N");
+                    project.ProfileId = Guid.Parse(project.ProfileId).ToString("N");
+                    foreach (var section in project.Sections) section.SectionId = Guid.Parse(section.SectionId).ToString("N");
+                    foreach (var profile in project.AdditionalProfiles)
+                    {
+                        profile.ProfileId = Guid.Parse(profile.ProfileId).ToString("N");
+                        foreach (var section in profile.Sections) section.SectionId = Guid.Parse(section.SectionId).ToString("N");
+                    }
                     return project;
                 }
             }
@@ -212,6 +221,46 @@ namespace Profiles.Core
                 settings["CrossVerticalScale"] = settings["VerticalScale"]?.DeepClone() ?? JValue.CreateNull();
             }
             root["SchemaVersion"] = 4;
+        }
+
+        private static void UpgradeVersionFour(JObject root)
+        {
+            foreach (string field in new[] { "ProfileId", "ProfileName", "ActiveProfileIndex", "AdditionalProfiles" })
+                if (root.Property(field) != null) Invalid("Проект", "поле версии 5 указано в старой версии файла");
+            if (root["ProjectId"]?.Type != JTokenType.String) Invalid("Проект", "идентификатор старого проекта должен быть строкой");
+            Guid projectIdentity;
+            if (!Guid.TryParseExact(root["ProjectId"]?.Value<string>(), "N", out projectIdentity)
+                && !Guid.TryParseExact(root["ProjectId"]?.Value<string>(), "D", out projectIdentity))
+                Invalid("Проект", "некорректный идентификатор старого проекта");
+            string initialProfileId = projectIdentity.ToString("N");
+            root["ProfileId"] = initialProfileId;
+            root["ProfileName"] = "Профиль 1";
+            root["ActiveProfileIndex"] = 0;
+            root["AdditionalProfiles"] = new JArray();
+            int sectionIndex = 0;
+            if (root["Sections"] is JArray sections)
+                foreach (var section in sections.OfType<JObject>())
+                {
+                    if (section.Property("SectionId") != null) Invalid("Поперечник", "поле версии 5 указано в старой версии файла");
+                    // Before the first save the same old DWG may be read twice.
+                    // Deterministic migration keeps selected-output ownership
+                    // stable until the identifiers are persisted in schema 5.
+                    using (var sha = SHA256.Create())
+                    {
+                        byte[] digest = sha.ComputeHash(Encoding.UTF8.GetBytes(initialProfileId + ":section:" + sectionIndex.ToString(CultureInfo.InvariantCulture)));
+                        byte[] identifier = new byte[16];
+                        Array.Copy(digest, identifier, identifier.Length);
+                        section["SectionId"] = new Guid(identifier).ToString("N");
+                    }
+                    sectionIndex++;
+                    if (section["Points"] is JArray points)
+                        foreach (var point in points.OfType<JObject>())
+                        {
+                            if (point.Property("Label") != null) Invalid("Точка поперечника", "поле версии 5 указано в старой версии файла");
+                            point["Label"] = "";
+                        }
+                }
+            root["SchemaVersion"] = 5;
         }
 
         private static JsonSerializerSettings Settings()

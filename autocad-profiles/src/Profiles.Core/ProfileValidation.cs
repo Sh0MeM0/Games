@@ -9,9 +9,14 @@ namespace Profiles.Core
         internal static void Check(ProfileProject project, bool geometry = true)
         {
             if (project == null) Fail("Проект не задан.");
-            if (project.SchemaVersion != 4) Fail("Версия проекта не поддерживается: " + project.SchemaVersion + ". Требуется версия 4.");
+            if (project.SchemaVersion != 5) Fail("Версия проекта не поддерживается: " + project.SchemaVersion + ". Требуется версия 5.");
             if (!Guid.TryParseExact(project.ProjectId, "N", out var identity) && !Guid.TryParseExact(project.ProjectId, "D", out identity)) Fail("Некорректный идентификатор проекта.");
             Text(project.Name, "Название проекта", 200);
+            if (!Guid.TryParseExact(project.ProfileId, "N", out var profileIdentity) || profileIdentity == Guid.Empty) Fail("Некорректный идентификатор профиля: требуется непустой GUID без дефисов.");
+            Text(project.ProfileName, "Название профиля", 200);
+            if (project.AdditionalProfiles == null) Fail("Список профилей проекта отсутствует.");
+            if (project.AdditionalProfiles.Count > 99) Fail("В проекте допустимо не более 100 продольных профилей.");
+            Range(project.ActiveProfileIndex, 0, project.AdditionalProfiles.Count, "Номер активного профиля");
             if (!Enum.IsDefined(typeof(ProfileKind), project.Kind)) Fail("Неизвестный тип профиля.");
             if (!Enum.IsDefined(typeof(ProfileTemplate), project.Template)) Fail("Неизвестный шаблон профиля.");
             if (project.Settings == null || project.Longitudinal == null || project.Sections == null) Fail("В проекте отсутствуют настройки или списки точек.");
@@ -24,12 +29,14 @@ namespace Profiles.Core
             Elevation(settings.Datum, "Условная отметка");
             if (project.Sections.Count > 200 || project.Longitudinal.Count > 10000) Fail("Слишком большой проект: допустимо не более 200 поперечников и 10000 точек.");
             int count = project.Longitudinal.Count;
+            var sectionIdentities = new HashSet<Guid>();
             foreach (CrossSection section in project.Sections)
             {
                 if (section == null || section.Points == null) Fail("Поперечник или список его точек отсутствует.");
                 count += section.Points.Count;
                 if (count > 10000) Fail("В проекте допустимо не более 10000 точек суммарно.");
                 CheckSection(section, geometry && project.Kind == ProfileKind.CrossSection);
+                if (!sectionIdentities.Add(Guid.Parse(section.SectionId))) Fail("Идентификатор поперечника повторяется. Копии поперечников должны иметь разные идентификаторы.");
             }
             double previous = double.NegativeInfinity;
             foreach (LongitudinalPoint point in project.Longitudinal)
@@ -50,10 +57,41 @@ namespace Profiles.Core
             }
             if (geometry && project.Kind == ProfileKind.Longitudinal && project.Longitudinal.Count < 2) Fail("Для продольного профиля введите не менее двух точек с возрастающим пикетажем.");
             if (geometry && project.Kind == ProfileKind.CrossSection && project.Sections.Count == 0) Fail("Добавьте хотя бы один поперечник.");
+            CheckAdditionalProfiles(project, count, sectionIdentities);
+        }
+
+        private static void CheckAdditionalProfiles(ProfileProject project, int points, HashSet<Guid> sectionIdentities)
+        {
+            var identities = new HashSet<Guid> { Guid.Parse(project.ProfileId) };
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { project.ProfileName.Trim() };
+            int sections = project.Sections.Count;
+            foreach (var profile in project.AdditionalProfiles)
+            {
+                if (profile == null) Fail("В списке профилей отсутствует профиль.");
+                if (!Guid.TryParseExact(profile.ProfileId, "N", out var identity) || identity == Guid.Empty) Fail("Некорректный идентификатор профиля: требуется непустой GUID без дефисов.");
+                if (!identities.Add(identity)) Fail("Идентификаторы профилей должны быть разными.");
+                Text(profile.Name, "Название профиля", 200);
+                if (!names.Add(profile.Name.Trim())) Fail("Названия профилей в проекте должны быть разными.");
+                // An inactive dataset can be incomplete, but cannot contain
+                // invalid numeric values, broken identities, or corrupt lists.
+                Check(new ProfileProject
+                {
+                    ProfileId = profile.ProfileId, ProfileName = profile.Name,
+                    Template = profile.Template, Settings = profile.Settings,
+                    Longitudinal = profile.Longitudinal, Sections = profile.Sections
+                }, false);
+                points += profile.Longitudinal.Count + profile.Sections.Sum(section => section.Points.Count);
+                sections += profile.Sections.Count;
+                if (points > 10000 || sections > 200) Fail("В одном проекте допустимо не более 10000 точек и 200 поперечников суммарно по всем профилям.");
+                foreach (var section in profile.Sections)
+                    if (!sectionIdentities.Add(Guid.Parse(section.SectionId))) Fail("Идентификатор поперечника повторяется в разных профилях проекта.");
+            }
         }
 
         private static void CheckSection(CrossSection section, bool active)
         {
+            if (!Guid.TryParseExact(section.SectionId, "N", out var sectionIdentity) || sectionIdentity == Guid.Empty)
+                Fail("Некорректный идентификатор поперечника: требуется непустой GUID без дефисов.");
             Text(section.Name, "Обозначение поперечника", 100, active);
             if (!Enum.IsDefined(typeof(SectionDesignMode), section.DesignMode)) Fail("Неизвестный способ задания проектной линии.");
             if (section.ProjectAnchorIndex.HasValue)
@@ -90,6 +128,7 @@ namespace Profiles.Core
             foreach (SectionPoint point in section.Points)
             {
                 if (point == null) Fail("Поперечник «" + section.Name + "» содержит пустую строку вместо точки.");
+                Text(point.Label, "Подпись точки поперечника", 100, false);
                 if (!Enum.IsDefined(typeof(SectionPointRole), point.Role)) Fail("Неизвестная роль точки поперечника.");
                 Range(point.Offset, -1000000000, 1000000000, "Смещение точки поперечника");
                 if (point.DistanceFromPrevious.HasValue) Range(point.DistanceFromPrevious.Value, 0, 1000000000, "Расстояние от предыдущей точки");

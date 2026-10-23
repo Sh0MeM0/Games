@@ -178,7 +178,7 @@ namespace Profiles.Core
                 throw new ProfileValidationException("Поперечник или его точки отсутствуют.");
             return new CrossSection
             {
-                Name = source.Name, Station = source.Station, DesignMode = source.DesignMode,
+                SectionId = source.SectionId, Name = source.Name, Station = source.Station, DesignMode = source.DesignMode,
                 UsePointDistances = source.UsePointDistances, ProjectAnchorIndex = source.ProjectAnchorIndex,
                 UseLongitudinalProjectBottom = source.UseLongitudinalProjectBottom, UseLongitudinalWater = source.UseLongitudinalWater,
                 LeftBank = source.LeftBank, RightBank = source.RightBank, ExistingBottom = source.ExistingBottom,
@@ -188,7 +188,7 @@ namespace Profiles.Core
                 Points = source.Points.Select(point => new SectionPoint
                 {
                     Offset = point.Offset, Existing = point.Existing, Design = point.Design,
-                    Role = point.Role, DistanceFromPrevious = point.DistanceFromPrevious,
+                    Label = point.Label, Role = point.Role, DistanceFromPrevious = point.DistanceFromPrevious,
                     UseLongitudinalElevation = point.UseLongitudinalElevation
                 }).ToList()
             };

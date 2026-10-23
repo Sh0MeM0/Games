@@ -22,133 +22,189 @@ namespace Profiles.AutoCAD
     {
         private const string OutputRegApp = "SH0MEM0_PROFILE_OUTPUT";
 
+        private sealed class OutputWork
+        {
+            internal string ProfileId;
+            internal string ProfileName;
+            internal string SectionId;
+            internal DrawingPlan Plan;
+            internal double OffsetY;
+            internal double DashScale;
+            internal Matrix3d Transform;
+            internal ObjectId Destination;
+            internal StoredProfileOutput Output;
+        }
+
         internal static InsertResult Insert(Database database, Editor editor,
-            Point3d? insertionPoint, DrawingPlan plan, ProfileProject project, bool rebuildExisting)
+            Point3d? insertionPoint, DrawingPlan plan, ProfileProject project, bool rebuildExisting,
+            string selectedSectionId = null, bool allSections = false, bool allProfiles = false)
         {
             if (plan == null || plan.Entities.Count == 0)
                 throw new ProfileValidationException("Нет объектов для построения профиля.");
-            // The full plan and draft must be valid before opening/erasing anything.
+            // Structural validation covers the full saved draft. Only the chosen
+            // sections need complete drawing geometry.
             string serialized = ProjectFile.Serialize(project);
+            bool cross = project.Kind == ProfileKind.CrossSection;
+            var work = ProfileBuildScope.Groups(project, selectedSectionId, allSections, allProfiles).Select(group => new OutputWork
+            {
+                ProfileId = group.ProfileId, ProfileName = group.ProfileName, SectionId = group.SectionId,
+                Plan = group.Plan, OffsetY = group.OffsetY,
+                DashScale = group.Settings.TextHeightMm * group.Settings.HorizontalScale /
+                    (1000 * group.Settings.MetresPerDrawingUnit)
+            }).ToList();
             var result = new InsertResult();
-            // Fitted labels in narrow cells may be much smaller than the base
-            // text. They must not shrink all water/cleaned-profile dash lengths.
-            var effectiveSettings = ProfileScales.ForKind(project.Settings, project.Kind);
-            var dashScale = effectiveSettings.TextHeightMm * effectiveSettings.HorizontalScale /
-                (1000 * effectiveSettings.MetresPerDrawingUnit);
-            // Keep the intended local dash length without changing global LTSCALE.
             if (database.Ltscale > 0 && !double.IsNaN(database.Ltscale) && !double.IsInfinity(database.Ltscale))
-                dashScale /= database.Ltscale;
+                foreach (var item in work) item.DashScale /= database.Ltscale;
 
             using (var transaction = database.TransactionManager.StartTransaction())
             {
-                var previous = DrawingProjectStore.ReadOutput(database, transaction, project.ProjectId, project.Kind);
-                if (rebuildExisting && previous == null)
-                    throw new ProfileValidationException("Для этого проекта и типа ещё нет сохранённого построения. Используйте «Построить / переместить» и укажите точку вставки. Профили версии 0.1.x автоматически не заменяются.");
-                Matrix3d transform;
-                ObjectId destination;
-                if (rebuildExisting)
-                {
-                    transform = new Matrix3d(previous.Transform);
-                    destination = FindObject(database, previous.SpaceHandle);
-                    if (destination.IsNull || !(transaction.GetObject(destination, OpenMode.ForRead) is BlockTableRecord))
-                        throw new ProfileValidationException("Исходное пространство профиля удалено. Используйте «Построить / переместить» для новой точки вставки.");
-                }
-                else
+                var previous = DrawingProjectStore.ReadOutputs(database, transaction, project.ProjectId, project.Kind);
+                var legacy = cross ? previous.SingleOrDefault(output => output.Version == 1 && SameProfile(output, project.ProfileId)) : null;
+                var removals = previous.Where(output => OutputMetadata.InScope(output, project.ProjectId, project.ProfileId,
+                    project.Kind, selectedSectionId, allSections, allProfiles)).ToList();
+                Matrix3d newBase = Matrix3d.Identity;
+                if (!rebuildExisting)
                 {
                     if (!insertionPoint.HasValue) throw new ProfileValidationException("Не выбрана точка вставки профиля.");
                     var ucsMatrix = editor.CurrentUserCoordinateSystem;
                     var ucs = ucsMatrix.CoordinateSystem3d;
-                    // Editor.GetPoint returns UCS coordinates: Autodesk MgdDbg's
-                    // MakeEntTests.Point converts the result before storing it.
+                    // GetPoint returns UCS coordinates; the saved transform is WCS.
                     var insertionWcs = insertionPoint.Value.TransformBy(ucsMatrix);
-                    transform = Matrix3d.AlignCoordinateSystem(Point3d.Origin,
+                    newBase = Matrix3d.AlignCoordinateSystem(Point3d.Origin,
                         Vector3d.XAxis, Vector3d.YAxis, Vector3d.ZAxis,
                         insertionWcs, ucs.Xaxis, ucs.Yaxis, ucs.Zaxis);
-                    destination = database.CurrentSpaceId;
                 }
-                var output = new StoredProfileOutput
-                {
-                    ProjectId = project.ProjectId,
-                    Kind = DrawingProjectStore.KindCode(project.Kind),
-                    DrawingId = DrawingProjectStore.DrawingId(database, transaction),
-                    Fingerprint = DrawingProjectStore.Fingerprint(database),
-                    GenerationId = Guid.NewGuid().ToString("N"),
-                    Transform = transform.ToArray(),
-                    SpaceHandle = destination.Handle.ToString()
-                };
-                var space = (BlockTableRecord)transaction.GetObject(
-                    destination, OpenMode.ForWrite);
-                if (space.IsFromExternalReference)
-                    throw new ProfileValidationException("Нельзя заменить профиль во внешней ссылке. Выберите пространство текущего чертежа.");
-                var layers = (LayerTable)transaction.GetObject(database.LayerTableId, OpenMode.ForRead);
-                var layerIds = new Dictionary<string, ObjectId>(StringComparer.OrdinalIgnoreCase);
-                var dashedId = plan.Entities.Any(entity => entity.Dashed)
-                    ? DashedLinetype(database, transaction) : ObjectId.Null;
-                RegisterOutputApplication(database, transaction);
 
-                foreach (var item in plan.Entities)
+                // Resolve every placement before creating or erasing any entity.
+                // In particular, an all-rebuild cannot silently place a new,
+                // never-built section at another section's saved insertion point.
+                foreach (var item in work)
                 {
-                    if (string.IsNullOrWhiteSpace(item.Layer) || !item.Layer.StartsWith("PROF_", StringComparison.Ordinal))
-                        throw new InvalidOperationException("Некорректный слой профиля.");
-                    if (!layerIds.TryGetValue(item.Layer, out var layerId))
+                    var old = OutputMetadata.FindPrevious(previous, project.ProjectId, project.Kind, item.ProfileId, item.SectionId);
+                    if (rebuildExisting)
                     {
-                        layerId = GetLayer(item.Layer, layers, transaction, result.Warnings);
-                        layerIds.Add(item.Layer, layerId);
-                    }
-
-                    var entity = CreateEntity(item, database);
-                    if (entity == null) continue;
-                    entity.LayerId = layerId;
-                    entity.Color = Color.FromColorIndex(ColorMethod.ByAci, item.ColorIndex);
-                    entity.LineWeight = GetLineWeight(item.LineWeightMm);
-                    entity.LinetypeId = database.ContinuousLinetype;
-                    entity.LinetypeScale = 1;
-                    if (item.Dashed)
-                    {
-                        entity.LinetypeId = dashedId;
-                        entity.LinetypeScale = dashScale;
-                        if (entity is Polyline dashedPolyline) dashedPolyline.Plinegen = true;
-                    }
-                    if (entity is Hatch hatch && item is DrawHatch region)
-                    {
-                        // AutoCAD requires a database-resident hatch before its
-                        // loop/pattern are evaluated. It remains in the same
-                        // transaction as all new geometry and prior erasure.
-                        space.AppendEntity(hatch);
-                        transaction.AddNewlyCreatedDBObject(hatch, true);
-                        DrawingHatch.Complete(hatch, region, transform);
+                        if (old != null)
+                        {
+                            item.Transform = new Matrix3d(old.Transform);
+                            item.Destination = SavedSpace(database, transaction, old);
+                        }
+                        else if (cross && allSections && legacy != null)
+                        {
+                            item.Transform = new Matrix3d(legacy.Transform) * Matrix3d.Displacement(new Vector3d(0, item.OffsetY, 0));
+                            item.Destination = SavedSpace(database, transaction, legacy);
+                        }
+                        else if (cross && legacy != null)
+                            throw new ProfileValidationException("Для старого построения один раз выберите «Все поперечники» → «Перестроить на месте». Старое построение не изменено.");
+                        else
+                        {
+                            string name = cross ? item.ProfileName + ": " + project.Sections.Single(section => string.Equals(section.SectionId, item.SectionId, StringComparison.OrdinalIgnoreCase)).Name : item.ProfileName;
+                            throw new ProfileValidationException("Для «" + name + "» ещё нет сохранённого построения. Сначала используйте «Построить / переместить» для выбранного элемента или всей группы. Существующие объекты не изменены.");
+                        }
                     }
                     else
                     {
-                        entity.TransformBy(transform);
-                        space.AppendEntity(entity);
-                        transaction.AddNewlyCreatedDBObject(entity, true);
+                        item.Transform = newBase * Matrix3d.Displacement(new Vector3d(0, item.OffsetY, 0));
+                        item.Destination = database.CurrentSpaceId;
                     }
-                    // Keep the dimension as one native, editable entity. AutoCAD
-                    // creates its anonymous display block only after insertion;
-                    // it belongs to this dimension and shares the transaction.
-                    if (entity is Dimension dimension) dimension.RecomputeDimensionBlock(true);
-                    Tag(entity, output);
-                    if (entity is DBText text) text.AdjustAlignment(database);
-                    output.Handles.Add(entity.Handle.ToString());
-                    result.EntityCount++;
+                    item.Output = new StoredProfileOutput
+                    {
+                        Version = 2, ProfileId = item.ProfileId, SectionId = item.SectionId,
+                        ProjectId = project.ProjectId, Kind = DrawingProjectStore.KindCode(project.Kind),
+                        DrawingId = DrawingProjectStore.DrawingId(database, transaction),
+                        Fingerprint = DrawingProjectStore.Fingerprint(database),
+                        GenerationId = Guid.NewGuid().ToString("N"),
+                        Transform = item.Transform.ToArray(), SpaceHandle = item.Destination.Handle.ToString()
+                    };
                 }
-                // Only after every new entity was created successfully do we erase
-                // verified objects from the previous generation. Any failure rolls
-                // back both geometry and records, preserving the prior output.
-                if (previous != null) ErasePrevious(database, transaction, previous, result);
+                if (cross && !allSections && legacy != null)
+                    result.Warnings.Add("Старое общее построение сохранено целиком: его объекты нельзя безопасно отнести к отдельным поперечникам. Для перехода выберите «Все поперечники» → «Перестроить на месте».");
+
+                var layers = (LayerTable)transaction.GetObject(database.LayerTableId, OpenMode.ForRead);
+                var layerIds = new Dictionary<string, ObjectId>(StringComparer.OrdinalIgnoreCase);
+                var dashedId = work.Any(item => item.Plan.Entities.Any(entity => entity.Dashed))
+                    ? DashedLinetype(database, transaction) : ObjectId.Null;
+                RegisterOutputApplication(database, transaction);
+                foreach (var item in work)
+                    AppendPlan(database, transaction, item, layers, layerIds, dashedId, item.DashScale, result);
+
+                // One atomic transaction covers every new section, all verified
+                // old geometry, migration and per-section placement records.
+                foreach (var old in removals)
+                {
+                    ErasePrevious(database, transaction, old, result);
+                    DrawingProjectStore.RemoveOutput(database, transaction, old, project.Kind);
+                }
                 DrawingProjectStore.Save(database, transaction, project, serialized);
-                DrawingProjectStore.SaveOutput(database, transaction, output, project.Kind);
+                DrawingProjectStore.SaveOutputs(database, transaction, work.Select(item => item.Output), project.Kind);
                 transaction.Commit();
             }
             return result;
+        }
+
+        private static bool SameProfile(StoredProfileOutput output, string profileId) =>
+            string.Equals(OutputMetadata.OutputProfileId(output), profileId, StringComparison.OrdinalIgnoreCase);
+
+        private static ObjectId SavedSpace(Database database, Transaction transaction, StoredProfileOutput output)
+        {
+            ObjectId id = FindObject(database, output.SpaceHandle);
+            if (id.IsNull || !(transaction.GetObject(id, OpenMode.ForRead) is BlockTableRecord))
+                throw new ProfileValidationException("Исходное пространство профиля удалено. Используйте «Построить / переместить» для новой точки вставки.");
+            return id;
+        }
+
+        private static void AppendPlan(Database database, Transaction transaction, OutputWork work,
+            LayerTable layers, Dictionary<string, ObjectId> layerIds, ObjectId dashedId, double dashScale, InsertResult result)
+        {
+            var space = (BlockTableRecord)transaction.GetObject(work.Destination, OpenMode.ForWrite);
+            if (space.IsFromExternalReference)
+                throw new ProfileValidationException("Нельзя заменить профиль во внешней ссылке. Выберите пространство текущего чертежа.");
+            foreach (var item in work.Plan.Entities)
+            {
+                if (string.IsNullOrWhiteSpace(item.Layer) || !item.Layer.StartsWith("PROF_", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Некорректный слой профиля.");
+                if (!layerIds.TryGetValue(item.Layer, out var layerId))
+                {
+                    layerId = GetLayer(item.Layer, layers, transaction, result.Warnings);
+                    layerIds.Add(item.Layer, layerId);
+                }
+                var entity = CreateEntity(item, database);
+                if (entity == null) continue;
+                entity.LayerId = layerId;
+                entity.Color = Color.FromColorIndex(ColorMethod.ByAci, item.ColorIndex);
+                entity.LineWeight = GetLineWeight(item.LineWeightMm);
+                entity.LinetypeId = database.ContinuousLinetype;
+                entity.LinetypeScale = 1;
+                if (item.Dashed)
+                {
+                    entity.LinetypeId = dashedId;
+                    entity.LinetypeScale = dashScale;
+                    if (entity is Polyline dashedPolyline) dashedPolyline.Plinegen = true;
+                }
+                if (entity is Hatch hatch && item is DrawHatch region)
+                {
+                    space.AppendEntity(hatch);
+                    transaction.AddNewlyCreatedDBObject(hatch, true);
+                    DrawingHatch.Complete(hatch, region, work.Transform);
+                }
+                else
+                {
+                    entity.TransformBy(work.Transform);
+                    space.AppendEntity(entity);
+                    transaction.AddNewlyCreatedDBObject(entity, true);
+                }
+                if (entity is Dimension dimension) dimension.RecomputeDimensionBlock(true);
+                Tag(entity, work.Output);
+                if (entity is DBText text) text.AdjustAlignment(database);
+                work.Output.Handles.Add(entity.Handle.ToString());
+                result.EntityCount++;
+            }
         }
 
         private static ObjectId FindObject(Database database, string handle)
         {
             try
             {
-                ObjectId id = database.GetObjectId(false, new Handle(DrawingProjectStore.HandleValue(handle)), 0);
+                ObjectId id = database.GetObjectId(false, new Handle(OutputMetadata.HandleValue(handle)), 0);
                 return id.IsNull || !id.IsValid || id.IsErased || id.Database != database ? ObjectId.Null : id;
             }
             catch (Autodesk.AutoCAD.Runtime.Exception exception)
@@ -168,14 +224,22 @@ namespace Profiles.AutoCAD
 
         private static void Tag(Entity entity, StoredProfileOutput output)
         {
-            using (var values = new ResultBuffer(
+            var fields = new List<TypedValue>
+            {
                 new TypedValue((int)DxfCode.ExtendedDataRegAppName, OutputRegApp),
-                new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)1),
+                new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)output.Version),
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, output.DrawingId),
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, output.ProjectId),
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, output.Kind),
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, output.GenerationId),
-                new TypedValue((int)DxfCode.ExtendedDataAsciiString, output.Fingerprint)))
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, output.Fingerprint)
+            };
+            if (output.Version == 2)
+            {
+                fields.Add(new TypedValue((int)DxfCode.ExtendedDataAsciiString, output.ProfileId));
+                fields.Add(new TypedValue((int)DxfCode.ExtendedDataAsciiString, output.SectionId ?? ""));
+            }
+            using (var values = new ResultBuffer(fields.ToArray()))
                 entity.XData = values;
         }
 
@@ -185,11 +249,13 @@ namespace Profiles.AutoCAD
             {
                 if (data == null) return false;
                 var values = data.AsArray();
-                if (values.Length != 7 || values[0].TypeCode != (int)DxfCode.ExtendedDataRegAppName ||
+                if (values.Length != (output.Version == 1 ? 7 : 9) || values[0].TypeCode != (int)DxfCode.ExtendedDataRegAppName ||
                     !string.Equals(values[0].Value as string, OutputRegApp, StringComparison.Ordinal) ||
-                    values[1].TypeCode != (int)DxfCode.ExtendedDataInteger16 || Convert.ToInt32(values[1].Value, CultureInfo.InvariantCulture) != 1)
+                    values[1].TypeCode != (int)DxfCode.ExtendedDataInteger16 || Convert.ToInt32(values[1].Value, CultureInfo.InvariantCulture) != output.Version)
                     return false;
-                string[] expected = { output.DrawingId, output.ProjectId, output.Kind, output.GenerationId, output.Fingerprint };
+                string[] expected = output.Version == 1
+                    ? new[] { output.DrawingId, output.ProjectId, output.Kind, output.GenerationId, output.Fingerprint }
+                    : new[] { output.DrawingId, output.ProjectId, output.Kind, output.GenerationId, output.Fingerprint, output.ProfileId, output.SectionId ?? "" };
                 for (int i = 0; i < expected.Length; i++)
                     if (values[i + 2].TypeCode != (int)DxfCode.ExtendedDataAsciiString ||
                         !string.Equals(values[i + 2].Value as string, expected[i], StringComparison.Ordinal)) return false;

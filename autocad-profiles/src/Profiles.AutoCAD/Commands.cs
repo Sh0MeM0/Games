@@ -93,20 +93,86 @@ namespace Profiles.AutoCAD
                     // a transaction open while the user edits or picks a point.
                     using (document.LockDocument()) DrawingProjectStore.Save(document.Database, project);
                 };
-                using (var form = new ProfilesForm(kind, previous == null ? null : ProjectFile.Clone(previous),
-                    catalog.Projects, saveDraft))
+                ProfileProject active = previous == null ? null : ProjectFile.Clone(previous);
+                string selectedSectionId = null;
+                var captureOptions = new DrawingCaptureOptions();
+                ProfileEditorSession session = null;
+                bool captureAccepted = false, captureSaved = false;
+                while (true)
                 {
-                    if (AcadApplication.ShowModalDialog(form) != DialogResult.OK)
-                        return;
-                    var plan = form.Plan ?? ProfileEngine.Build(form.Project);
+                    DrawingCaptureRequest captureRequest;
+                    ProfileProject project;
+                    DrawingPlan plan;
+                    bool rebuildExisting, allSections, allProfiles;
+                    DialogResult dialogResult;
+                    using (var form = new ProfilesForm(kind, active, catalog.Projects, saveDraft, selectedSectionId))
+                    {
+                        form.CaptureOptions = captureOptions.Clone();
+                        if (session != null) form.RestoreEditorSession(session, selectedSectionId);
+                        if (captureAccepted) form.AcceptDrawingCapture(captureSaved);
+                        captureAccepted = false;
+                        dialogResult = AcadApplication.ShowModalDialog(form);
+                        if (dialogResult != DialogResult.OK && dialogResult != DialogResult.Retry) return;
+                        captureRequest = form.CaptureRequest;
+                        project = form.Project;
+                        plan = form.Plan;
+                        rebuildExisting = form.RebuildExisting;
+                        selectedSectionId = form.SelectedSectionId;
+                        allSections = form.AllSections;
+                        allProfiles = form.AllProfiles;
+                        session = form.CaptureEditorSession();
+                    }
+                    // No WinForms window or database transaction remains open
+                    // while AutoCAD asks for geometry, labels or confirmation.
+                    if (dialogResult == DialogResult.Retry && captureRequest != null)
+                    {
+                        active = captureRequest.Draft;
+                        selectedSectionId = captureRequest.SelectedSectionId;
+                        kind = active.Kind;
+                        try
+                        {
+                            var captured = DrawingCapture.Run(document, captureRequest);
+                            if (captured.Accepted)
+                            {
+                                active = captured.Project;
+                                selectedSectionId = captured.SelectedSectionId;
+                                captureOptions = captured.Options.Clone();
+                                captureAccepted = true;
+                                captureSaved = false;
+                                try
+                                {
+                                    saveDraft(active);
+                                    captureSaved = true;
+                                    editor.WriteMessage("\nНабранные данные сохранены в проекте чертежа. Для записи на диск сохраните DWG (Ctrl+S).");
+                                }
+                                catch (System.Exception exception)
+                                {
+                                    // Keep the accepted points in the reopened
+                                    // form even if the DWG is temporarily read-only.
+                                    editor.WriteMessage("\nДанные перенесены в окно, но пока не сохранены в DWG: " + exception.Message);
+                                }
+                            }
+                        }
+                        catch (ProfileValidationException exception)
+                        {
+                            editor.WriteMessage("\nНабор не перенесён: " + exception.Message + " Исходный проект сохранён.");
+                        }
+                        catch (System.Exception exception)
+                        {
+                            editor.WriteMessage("\nНе удалось завершить набор: " + exception.Message + " Исходный проект сохранён.");
+                        }
+                        continue;
+                    }
+                    if (dialogResult != DialogResult.OK || project == null) return;
+                    plan = plan ?? ProfileBuildScope.Build(project, selectedSectionId, allSections, allProfiles);
                     if (plan.Entities.Count == 0)
                         throw new InvalidOperationException("Нет элементов для построения профиля.");
                     // Keep accepted numeric input in the DWG even if insertion is
                     // cancelled. The user still saves the DWG normally for disk.
-                    saveDraft(form.Project);
+                    saveDraft(project);
 
                     Autodesk.AutoCAD.Geometry.Point3d? insertionPoint = null;
-                    if (!form.RebuildExisting)
+                    if (!rebuildExisting)
                     {
                         var point = editor.GetPoint(new PromptPointOptions(
                             "\nУкажите новую точку вставки профиля (Enter — отмена): ") { AllowNone = true });
@@ -125,17 +191,19 @@ namespace Profiles.AutoCAD
                     InsertResult result;
                     using (document.LockDocument())
                         result = DrawingWriter.Insert(document.Database, editor, insertionPoint, plan,
-                            form.Project, form.RebuildExisting);
+                            project, rebuildExisting, selectedSectionId, allSections, allProfiles);
                     built = true;
                     editor.WriteMessage("\nПрофиль «{0}» построен: {1} объектов; заменено прежних: {2}. " +
                         "Отмена — ОТМЕНИТЬ / UNDO. Сохраните DWG (Ctrl+S), чтобы сохранить проекты и построение.",
-                        form.Project.Name, result.EntityCount, result.ReplacedEntityCount);
+                        project.Name, result.EntityCount, result.ReplacedEntityCount);
                     foreach (var warning in plan.Warnings)
                         editor.WriteMessage("\nПредупреждение: " + warning);
                     foreach (var warning in result.Warnings)
                         editor.WriteMessage("\nПредупреждение: " + warning);
                     editor.Regen();
+                    return;
                 }
+
             }
             catch (ProfileValidationException exception)
             {

@@ -32,6 +32,9 @@ namespace Profiles.AutoCAD.UI
         private readonly List<SectionPoint> points = new List<SectionPoint>();
         private readonly Dictionary<string, string> invalid = new Dictionary<string, string>();
         private readonly ToolStripMenuItem interpolate;
+        private readonly ToolStripMenuItem renamePoint;
+        private readonly ToolStripMenuItem roleMenu;
+        private readonly Dictionary<SectionPointRole, ToolStripMenuItem> roleItems = new Dictionary<SectionPointRole, ToolStripMenuItem>();
         private bool loading;
         private bool batchingChanges;
         private bool programmaticManual;
@@ -123,16 +126,44 @@ namespace Profiles.AutoCAD.UI
             ContextMenuStrip.Items.Add("Добавить точку справа", null, (s, e) => RunAction(AddPointAfter));
             ContextMenuStrip.Items.Add("Удалить выбранную точку", null, (s, e) => RunAction(RemoveSelectedPoint));
             ContextMenuStrip.Items.Add(new ToolStripSeparator());
+            renamePoint = new ToolStripMenuItem("Название точки…", null, (s, e) => RunAction(RenameSelectedPoint));
+            ContextMenuStrip.Items.Add(renamePoint);
+            roleMenu = new ToolStripMenuItem("Назначение точки");
+            foreach (SectionPointRole role in new[] { SectionPointRole.LeftBank, SectionPointRole.Bottom, SectionPointRole.RightBank, SectionPointRole.Regular })
+            {
+                SectionPointRole assignedRole = role;
+                var menuItem = new ToolStripMenuItem(RoleCaption(role), null, (s, e) => RunAction(() => AssignSelectedRole(assignedRole)));
+                roleItems.Add(role, menuItem);
+                roleMenu.DropDownItems.Add(menuItem);
+            }
+            ContextMenuStrip.Items.Add(roleMenu);
+            ContextMenuStrip.Items.Add(new ToolStripSeparator());
             ContextMenuStrip.Items.Add("Вставить таблицу", null, (s, e) => RunAction(PasteTable));
-            ContextMenuStrip.Opening += (s, e) => interpolate.Enabled = CanInterpolate();
+            ContextMenuStrip.Opening += (s, e) =>
+            {
+                interpolate.Enabled = CanInterpolate();
+                int selected = SelectedPointIndex;
+                bool hasPoint = selected >= 0 && selected < points.Count;
+                renamePoint.Enabled = roleMenu.Enabled = hasPoint;
+                foreach (var entry in roleItems)
+                {
+                    int previous = entry.Key == SectionPointRole.Regular ? -1 : points.FindIndex(point => point.Role == entry.Key);
+                    entry.Value.Checked = hasPoint && points[selected].Role == entry.Key;
+                    entry.Value.Text = RoleCaption(entry.Key) +
+                        (hasPoint && previous >= 0 && previous != selected ? " — перенести с № " + (previous + 1) : "");
+                }
+            };
             DataError += (s, e) => { e.ThrowException = false; e.Cancel = false; };
-            FitTenPointColumns();
+            FitElevenPointColumns();
         }
 
-        /// <summary>Reserves room for ten point columns without creating points or changing an active edit.</summary>
-        public void FitTenPointColumns() => FitTenPointColumns(true);
+        /// <summary>Reserves room for eleven point columns without creating points or changing an active edit.</summary>
+        public void FitElevenPointColumns() => FitPointColumns(true);
 
-        private void FitTenPointColumns(bool force)
+        // Retained for existing form callers; the current layout fits eleven points.
+        public void FitTenPointColumns() => FitElevenPointColumns();
+
+        private void FitPointColumns(bool force)
         {
             if (fittingPointColumns || loading || IsDisposed || Columns.Count == 0 || ClientSize.Width <= 0) return;
             fittingPointColumns = true;
@@ -149,7 +180,7 @@ namespace Profiles.AutoCAD.UI
                 int available = ClientSize.Width - labelWidth - borderWidth - scrollbarWidth - (RowHeadersVisible ? RowHeadersWidth : 0);
                 int minimum = Math.Max(ScalePixels(60), TextRenderer.MeasureText("-999.99", Font,
                     Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width + DefaultCellStyle.Padding.Horizontal + ScalePixels(4));
-                int width = Math.Max(minimum, Math.Min(ScalePixels(120), Math.Max(0, available) / 10));
+                int width = Math.Max(minimum, Math.Min(ScalePixels(120), Math.Max(0, available) / 11));
                 if (!force && fittedPointWidth == width && fittedPointMinimum == minimum &&
                     fittedLabelWidth == labelWidth && fittedColumnCount == Columns.Count) return;
 
@@ -180,19 +211,19 @@ namespace Profiles.AutoCAD.UI
         protected override void OnClientSizeChanged(EventArgs e)
         {
             base.OnClientSizeChanged(e);
-            FitTenPointColumns(false);
+            FitPointColumns(false);
         }
 
         protected override void OnLayout(LayoutEventArgs e)
         {
             base.OnLayout(e);
-            FitTenPointColumns(false);
+            FitPointColumns(false);
         }
 
         protected override void OnDpiChangedAfterParent(EventArgs e)
         {
             base.OnDpiChangedAfterParent(e);
-            FitTenPointColumns(false);
+            FitPointColumns(false);
         }
 
         public void LoadPoints(IList<SectionPoint> source)
@@ -257,6 +288,94 @@ namespace Profiles.AutoCAD.UI
 
         public void AddPointBefore() => InsertPoint(SelectedPointIndex < 0 ? 0 : SelectedPointIndex);
         public void AddPointAfter() => InsertPoint(SelectedPointIndex < 0 ? points.Count : SelectedPointIndex + 1);
+
+        public void RenameSelectedPoint()
+        {
+            EndEdit();
+            int index = SelectedPointIndex;
+            if (index < 0 || index >= points.Count)
+                throw new ProfileValidationException("Выберите столбец точки, которую нужно назвать.");
+            using (var dialog = new Form
+            {
+                Text = "Название точки № " + (index + 1), StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog, MinimizeBox = false, MaximizeBox = false,
+                ShowInTaskbar = false, AutoScaleMode = AutoScaleMode.Dpi, Font = Font,
+                ClientSize = new Size(440, 180)
+            })
+            {
+                var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 1, RowCount = 4 };
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+                layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                var note = new Label
+                {
+                    Text = "До 100 символов. Пустое название возвращает подпись по назначению точки.",
+                    AutoSize = true, MaximumSize = new Size(410, 0), Margin = new Padding(0, 0, 0, 8)
+                };
+                var input = new TextBox { Text = points[index].Label ?? "", MaxLength = 100, Dock = DockStyle.Top };
+                var error = new Label { AutoSize = true, ForeColor = Color.Firebrick, MaximumSize = new Size(410, 0) };
+                var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, FlowDirection = FlowDirection.RightToLeft };
+                var cancel = new Button { Text = "Отмена", AutoSize = true, DialogResult = DialogResult.Cancel };
+                var save = new Button { Text = "Сохранить", AutoSize = true };
+                save.Click += (s, e) =>
+                {
+                    if (input.Text.Length > 100 || input.Text.Any(char.IsControl))
+                    {
+                        error.Text = "Введите не более 100 символов без переносов строк и управляющих знаков.";
+                        input.Focus();
+                        return;
+                    }
+                    dialog.DialogResult = DialogResult.OK;
+                };
+                buttons.Controls.Add(cancel);
+                buttons.Controls.Add(save);
+                layout.Controls.Add(note, 0, 0);
+                layout.Controls.Add(input, 0, 1);
+                layout.Controls.Add(error, 0, 2);
+                layout.Controls.Add(buttons, 0, 3);
+                dialog.Controls.Add(layout);
+                dialog.AcceptButton = save;
+                dialog.CancelButton = cancel;
+                dialog.Shown += (s, e) => { input.Focus(); input.SelectAll(); };
+                if (dialog.ShowDialog(FindForm()) != DialogResult.OK) return;
+                if (index >= points.Count) throw new ProfileValidationException("Выбранная точка больше не существует.");
+                string label = input.Text.Trim();
+                if (points[index].Label == label) return;
+                points[index].Label = label;
+                UpdateHeaders();
+                OnPointsChanged();
+            }
+        }
+
+        public void AssignSelectedRole(SectionPointRole role)
+        {
+            if (!Enum.IsDefined(typeof(SectionPointRole), role)) throw new ArgumentOutOfRangeException(nameof(role));
+            ReadPoints(); // Preserve invalid draft text; resolve it before changing shared roles.
+            int index = SelectedPointIndex;
+            if (index < 0 || index >= points.Count)
+                throw new ProfileValidationException("Выберите столбец, которому нужно назначить берег или дно.");
+            bool changed = points[index].Role != role || points[index].UseLongitudinalElevation != (role != SectionPointRole.Regular);
+            if (role != SectionPointRole.Regular)
+                for (int previous = 0; previous < points.Count; previous++)
+                    if (previous != index && points[previous].Role == role)
+                    {
+                        points[previous].Role = SectionPointRole.Regular;
+                        points[previous].UseLongitudinalElevation = false;
+                        changed = true;
+                    }
+            if (!changed) return;
+            points[index].Role = role;
+            points[index].UseLongitudinalElevation = role != SectionPointRole.Regular;
+            UpdateHeaders();
+            // A measured value explicitly assigned to a shared role writes through.
+            // A blank role binds to the existing longitudinal value, never clears it.
+            if (role != SectionPointRole.Regular && points[index].Existing.HasValue) NotifyElevationEdit(index, 1);
+            OnPointsChanged();
+        }
+
+        private static string RoleCaption(SectionPointRole role) => role == SectionPointRole.LeftBank ? "Левый берег" :
+            role == SectionPointRole.Bottom ? "Дно" : role == SectionPointRole.RightBank ? "Правый берег" : "Обычная точка";
 
         private void InsertPoint(int index)
         {
@@ -354,7 +473,7 @@ namespace Profiles.AutoCAD.UI
             UpdateHeaders();
             UpdateDesignMode();
             loading = false;
-            FitTenPointColumns();
+            FitElevenPointColumns();
             Invalidate();
         }
 
@@ -366,12 +485,15 @@ namespace Profiles.AutoCAD.UI
                     points[index].Role == SectionPointRole.RightBank ? "П. берег" :
                     points[index].Role == SectionPointRole.Bottom ? "Дно" : "Точка";
                 bool anchor = ProjectAnchorVisible && !ManualDesignEnabled && ProjectAnchorIndex == index;
-                Columns[index + 1].HeaderText = name + (anchor ? "\n▼ Проект" : "\n№ " + (index + 1));
-                Columns[index + 1].ToolTipText = "Точка " + (index + 1) + ": " +
+                bool named = !string.IsNullOrWhiteSpace(points[index].Label);
+                Columns[index + 1].HeaderText = named ? (anchor ? "▼ " : "") + points[index].Label :
+                    name + (anchor ? "\n▼ Проект" : "\n№ " + (index + 1));
+                Columns[index + 1].ToolTipText = (named ? points[index].Label + "\n" : "") + "Точка " + (index + 1) + ": " +
                     (points[index].Role == SectionPointRole.LeftBank ? "левый берег по направлению течения" :
                     points[index].Role == SectionPointRole.RightBank ? "правый берег по направлению течения" :
                     points[index].Role == SectionPointRole.Bottom ? "фактическое дно" : "точка поперечника") +
-                    (anchor ? ". Опорный столбец проектного дна трапеции." : ".");
+                    (anchor ? ". Опорный столбец проектного дна трапеции." : ".") +
+                    "\nДвойной щелчок — название; правой кнопкой — назначение точки.";
                 Columns[index + 1].HeaderCell.Style.ForeColor = anchor ? Color.Firebrick : Color.Black;
             }
         }
@@ -544,8 +666,17 @@ namespace Profiles.AutoCAD.UI
 
         protected override void OnCellMouseDown(DataGridViewCellMouseEventArgs e)
         {
-            if (e.ColumnIndex > 0 && e.RowIndex >= 0 && e.Button == MouseButtons.Right) CurrentCell = Rows[e.RowIndex].Cells[e.ColumnIndex];
+            if (e.ColumnIndex >= 0 && e.Button == MouseButtons.Right)
+                CurrentCell = Rows[e.RowIndex < 0 ? 1 : e.RowIndex].Cells[e.ColumnIndex];
             base.OnCellMouseDown(e);
+        }
+
+        protected override void OnColumnHeaderMouseDoubleClick(DataGridViewCellMouseEventArgs e)
+        {
+            base.OnColumnHeaderMouseDoubleClick(e);
+            if (e.Button != MouseButtons.Left || e.ColumnIndex <= 0) return;
+            CurrentCell = Rows[1].Cells[e.ColumnIndex];
+            RunAction(RenameSelectedPoint);
         }
 
         protected override void OnCellMouseClick(DataGridViewCellMouseEventArgs e)
@@ -704,6 +835,7 @@ namespace Profiles.AutoCAD.UI
         private static SectionPoint Copy(SectionPoint point) => new SectionPoint
         {
             Offset = point.Offset, DistanceFromPrevious = point.DistanceFromPrevious, Role = point.Role,
+            Label = point.Label,
             Existing = point.Existing, Design = point.Design, UseLongitudinalElevation = point.UseLongitudinalElevation
         };
 
@@ -722,7 +854,7 @@ namespace Profiles.AutoCAD.UI
             anchorFont?.Dispose();
             anchorFont = null;
             base.OnFontChanged(e);
-            FitTenPointColumns(false);
+            FitPointColumns(false);
         }
 
         protected override void OnCellToolTipTextNeeded(DataGridViewCellToolTipTextNeededEventArgs e)

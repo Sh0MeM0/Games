@@ -1,7 +1,11 @@
 {
-  "SchemaVersion": 4,
-  "ProjectId": "9ca8484c3ec7439bac3915c498d602f9",
+  "SchemaVersion": 5,
+  "ProjectId": "5f050b32b45743bd9b4d66855e0e05c0",
   "Name": "Учебные сети НВК",
+  "ProfileId": "69504d5b19fe45428c5c64326519b8f9",
+  "ProfileName": "Профиль 1",
+  "ActiveProfileIndex": 0,
+  "AdditionalProfiles": [],
   "Kind": "Longitudinal",
   "Template": "Nvk",
   "Settings": {
@@ -14,7 +18,7 @@
     "Datum": 139.0,
     "TextHeightMm": 2.5,
     "TextWidthFactor": 0.85,
-    "ShowEmptyRows": false
+    "ShowEmptyRows": true
   },
   "Longitudinal": [
     {

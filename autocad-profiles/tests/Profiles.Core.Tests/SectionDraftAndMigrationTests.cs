@@ -139,6 +139,7 @@ public sealed class SectionDraftAndMigrationTests
         };
         var document = JsonNode.Parse(ProjectFile.Serialize(project))!.AsObject();
         document["SchemaVersion"] = 2;
+        SchemaTestDocuments.RemoveVersionFiveFields(document);
         document["Settings"]!.AsObject().Remove("CrossHorizontalScale");
         document["Settings"]!.AsObject().Remove("CrossVerticalScale");
         foreach (var item in document["Sections"]!.AsArray())
@@ -149,7 +150,7 @@ public sealed class SectionDraftAndMigrationTests
                 foreach (string name in new[] { "Role", "DistanceFromPrevious", "UseLongitudinalElevation" }) point!.AsObject().Remove(name);
         }
         var migrated = ProjectFile.Deserialize(document.ToJsonString());
-        Assert.Equal(4, migrated.SchemaVersion);
+        Assert.Equal(5, migrated.SchemaVersion);
         Assert.Equal(project.ProjectId, migrated.ProjectId);
         Assert.Equal(project.Name, migrated.Name);
         Assert.False(migrated.Sections[0].UsePointDistances);

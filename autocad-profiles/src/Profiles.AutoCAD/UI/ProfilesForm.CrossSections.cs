@@ -70,6 +70,7 @@ namespace Profiles.AutoCAD
             }));
             bar.Controls.Add(Button("Вставить из Excel", () => RunPointAction(crossGrid.PasteTable)));
             bar.Controls.Add(Button("Дно под точкой", SetProjectAnchorFromLongitudinal));
+            bar.Controls.Add(Button("Взять из чертежа…", () => RequestDrawingCapture(ProfileKind.CrossSection)));
             return bar;
         }
 

@@ -20,6 +20,7 @@ public sealed class V05RegressionTests
         original.Settings.VerticalScale = 77.987654321;
         var json = JsonNode.Parse(ProjectFile.Serialize(original))!.AsObject();
         json["SchemaVersion"] = 3;
+        SchemaTestDocuments.RemoveVersionFiveFields(json);
         var settings = json["Settings"]!.AsObject();
         settings.Remove("CrossHorizontalScale");
         settings.Remove("CrossVerticalScale");
@@ -28,7 +29,7 @@ public sealed class V05RegressionTests
 
         Assert.Equal(original.ProjectId, restored.ProjectId);
         Assert.Equal(previousKind, restored.Kind);
-        Assert.Equal(4, restored.SchemaVersion);
+        Assert.Equal(5, restored.SchemaVersion);
         Assert.Equal(original.Settings.HorizontalScale, restored.Settings.CrossHorizontalScale);
         Assert.Equal(original.Settings.VerticalScale, restored.Settings.CrossVerticalScale);
         double expectedRise = 2 * 333.123456789 / 77.987654321;
@@ -98,6 +99,7 @@ public sealed class V05RegressionTests
     {
         var project = BothKinds();
         var second = ProfileInterpolation.CloneSection(project.Sections[0]);
+        second.SectionId = Guid.NewGuid().ToString("N");
         project.Sections[0].Station = 0;
         second.Station = 17.123456789;
         project.Sections.Add(second);

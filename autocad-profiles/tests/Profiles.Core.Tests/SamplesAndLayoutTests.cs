@@ -82,25 +82,31 @@ public sealed class SamplesAndLayoutTests
     }
 
     [Fact]
-    public void LongitudinalTitleIsAboveTheHighestDrawnElevation()
+    public void LongitudinalTitleStaysInTheLeftMarginNearDatumWhenSurveyElevationsRise()
     {
         var project = Longitudinal(10, 12);
+        var original = ProfileEngine.Build(project).Entities.OfType<DrawText>().Single(text => text.Text == project.Settings.Title);
         project.Longitudinal[0].RightBank = 100;
         project.Longitudinal[1].RightBank = 101;
         var plan = ProfileEngine.Build(project);
         var title = Assert.Single(plan.Entities.OfType<DrawText>(), text => text.Text == project.Settings.Title);
         var highest = Curves(plan, "PROF_RIGHT_BANK").SelectMany(line => line.Points).Max(point => point.Y);
-        Assert.True(title.Position.Y > highest);
+        Assert.Equal(original.Position, title.Position);
+        Assert.True(title.Position.Y > 0 && title.Position.Y < highest);
+        Assert.True(title.Position.X + title.MaxWidth < 0);
     }
 
     [Fact]
-    public void EmptyOptionalRowsCanBeShownWithoutAddingFalseGeometry()
+    public void LegacyEmptyRowsSettingDoesNotHideRowsOrAddFalseGeometry()
     {
         var project = Longitudinal(10, 12);
         var compact = ProfileEngine.Build(project);
         project.Settings.ShowEmptyRows = true;
         var expanded = ProfileEngine.Build(project);
-        Assert.True(expanded.Entities.OfType<DrawText>().Count() > compact.Entities.OfType<DrawText>().Count());
+        Assert.Equal(compact.Entities.OfType<DrawText>().Select(text => (text.Text, text.Position)),
+            expanded.Entities.OfType<DrawText>().Select(text => (text.Text, text.Position)));
+        Assert.Equal(compact.Entities.OfType<DrawPolyline>().SelectMany(line => line.Points),
+            expanded.Entities.OfType<DrawPolyline>().SelectMany(line => line.Points));
         Assert.Empty(Curves(expanded, "PROF_PROJECT"));
         Assert.Empty(Curves(expanded, "PROF_WATER"));
         Assert.Empty(Curves(expanded, "PROF_LEFT_BANK"));
@@ -111,6 +117,7 @@ public sealed class SamplesAndLayoutTests
     public void TableLabelsAreLeftOfSurveyOriginAndTextReflectsEnteredElevation()
     {
         var project = Longitudinal(10.25, 12.75);
+        project.Template = ProfileTemplate.NewChannel;
         var texts = ProfileEngine.Build(project).Entities.OfType<DrawText>().ToList();
         Assert.Contains(texts, text => text.Position.X < 0);
         Assert.Contains(texts, text => text.Text.Replace(',', '.').Contains("10.25"));

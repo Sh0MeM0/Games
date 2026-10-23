@@ -49,6 +49,7 @@ public sealed class V06RegressionTests
     {
         var project = UnevenSection();
         var second = ProfileInterpolation.CloneSection(project.Sections[0]);
+        second.SectionId = Guid.NewGuid().ToString("N");
         second.Station = 220;
         project.Sections.Add(second);
 

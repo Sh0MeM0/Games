@@ -28,7 +28,6 @@ namespace Profiles.AutoCAD
         private readonly TextBox metres = Input();
         private readonly TextBox textHeight = Input();
         private readonly TextBox textWidth = Input();
-        private readonly CheckBox emptyRows = new CheckBox { Text = "Сохранять пустые строки таблицы", AutoSize = true };
         private readonly TextBox sectionName = Input();
         private readonly ComboBox sectionStation = new ComboBox { Width = 135, DropDownStyle = ComboBoxStyle.DropDown, Margin = new Padding(2, 3, 5, 3) };
         private readonly TextBox sectionWater = Input();
@@ -58,7 +57,7 @@ namespace Profiles.AutoCAD
 
         public ProfilesForm(ProfileKind kind, ProfileProject initialProject) : this(kind, initialProject, null, null) { }
 
-        public ProfilesForm(ProfileKind kind, ProfileProject initialProject, IReadOnlyList<ProfileProject> availableProjects, Action<ProfileProject> saveProjectToDrawing)
+        public ProfilesForm(ProfileKind kind, ProfileProject initialProject, IReadOnlyList<ProfileProject> availableProjects, Action<ProfileProject> saveProjectToDrawing, string selectedSectionId = null)
         {
             this.saveProjectToDrawing = saveProjectToDrawing;
             Text = "Профиля — данные и построение";
@@ -121,11 +120,13 @@ namespace Profiles.AutoCAD
                     ? "Восстановлены последние данные. Для хранения между сеансами экспортируйте JSON."
                     : "Восстановлены данные проекта из DWG. После закрытия окна сохраните сам чертёж AutoCAD.");
             }
+            RestoreSectionSelection(selectedSectionId);
         }
 
         private void BuildWindow()
         {
-            var root = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 6, ColumnCount = 1, Padding = new Padding(8) };
+            var root = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 7, ColumnCount = 1, Padding = new Padding(8) };
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -161,19 +162,20 @@ namespace Profiles.AutoCAD
             tips.SetToolTip(horizontal, "Знаменатель масштаба: например, 1000 для 1:1000. Геометрия создаётся по правилам исходных LISP-шаблонов.");
 
             tabs.TabPages.AddRange(new[] { longPage, crossPage, previewPage, formatPage });
-            root.Controls.Add(tabs, 0, 3);
+            root.Controls.Add(BuildProfilesBar(), 0, 3);
+            root.Controls.Add(tabs, 0, 4);
             BuildLongPage();
             BuildCrossPage();
             BuildPreviewPage();
             BuildFormatPage();
-            root.Controls.Add(status, 0, 4);
+            root.Controls.Add(status, 0, 5);
 
-            var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, WrapContents = false };
+            var footer = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, FlowDirection = FlowDirection.RightToLeft, WrapContents = true };
             var close = Button("Закрыть", () => Close());
             close.DialogResult = DialogResult.None;
             footer.Controls.Add(close);
-            var draw = Button("Построить / переместить", () => Draw(false));
-            var rebuild = Button("Перестроить на месте", () => Draw(true));
+            var draw = buildButton = Button("Построить / переместить", () => Draw(false));
+            var rebuild = rebuildButton = Button("Перестроить на месте", () => Draw(true));
             tips.SetToolTip(draw, "Построить выбранный тип профиля текущего проекта в указанной точке. Если он уже построен, прежний результат этого проекта заменяется.");
             tips.SetToolTip(rebuild, "Заменить ранее построенный профиль этого проекта и типа, сохранив точку вставки и ориентацию.");
             draw.Font = new Font(Font, FontStyle.Bold);
@@ -181,7 +183,8 @@ namespace Profiles.AutoCAD
             footer.Controls.Add(draw);
             footer.Controls.Add(rebuild);
             footer.Controls.Add(Button("Проверить и показать", () => RefreshPreview(true)));
-            root.Controls.Add(footer, 0, 5);
+            footer.Controls.Add(BuildScopeControl());
+            root.Controls.Add(footer, 0, 6);
             CancelButton = close;
         }
 
@@ -247,14 +250,14 @@ namespace Profiles.AutoCAD
             {
                 earthworksPanel.Visible = showEarthworks.Checked;
                 crossLayout.ColumnStyles[2].Width = showEarthworks.Checked ? (float)(215 * DeviceDpi / 96.0) : 0;
-                crossGrid.FitTenPointColumns();
+                crossGrid.FitElevenPointColumns();
             };
             crossPage.Controls.Add(layout);
             tips.SetToolTip(sectionStation, "Выберите или введите пикет и нажмите Enter. 6+50 означает 650 м, число 6 означает 6 м. Пикеты сортируются численно. Расстояния поперечника вводятся по съёмке.");
             tips.SetToolTip(leftSlope, "Заложение — горизонталь / вертикаль: для откоса 1:1,5 введите 1,5.");
             tips.SetToolTip(rightSlope, "Правый откос может отличаться от левого. Требуется положительное число.");
             tips.SetToolTip(sectionWater, "Урез общий для этого пикета: изменение переносится в продольный профиль и другие поперечники на том же ПК.");
-            tips.SetToolTip(showEarthworks, "Показать параметры снятия ила и рассчитанные площади. Панель изначально скрыта, чтобы в таблице помещалось десять точек.");
+            tips.SetToolTip(showEarthworks, "Показать параметры снятия ила и рассчитанные площади. Панель изначально скрыта, чтобы в таблице помещалось одиннадцать точек.");
         }
 
         private void BuildPreviewPage()
@@ -284,7 +287,7 @@ namespace Profiles.AutoCAD
             layout.Controls.Add(textHeight, 1, 1);
             layout.Controls.Add(Caption("Коэффициент ширины текста"), 0, 2);
             layout.Controls.Add(textWidth, 1, 2);
-            layout.Controls.Add(emptyRows, 1, 3);
+            layout.Controls.Add(Note("Все строки выбранного шаблона сохраняются; неизвестные значения остаются пустыми."), 1, 3);
             var explanation = Note(
                 "Все исходные расстояния и отметки вводятся в метрах.\n" +
                 "Если одна единица чертежа равна метру — введите 1; миллиметру — 0,001.\n\n" +
@@ -394,6 +397,7 @@ namespace Profiles.AutoCAD
             bar.Controls.Add(Button("+ после", () => InsertLongitudinalRow(true)));
             bar.Controls.Add(Button("Вставить из Excel", () => Paste(grid)));
             bar.Controls.Add(Button("Удалить строки", () => DeleteRows(grid)));
+            bar.Controls.Add(Button("Взять из чертежа…", () => RequestDrawingCapture(ProfileKind.Longitudinal)));
             bar.Controls.Add(new Label { Text = "Ctrl+V — Excel · Ctrl+C — копировать", AutoSize = true, Margin = new Padding(6, 6, 0, 0) });
             var menu = new ContextMenuStrip();
             menu.Items.Add("Вставить строку до", null, (s, e) => InsertLongitudinalRow(false));
@@ -469,7 +473,7 @@ namespace Profiles.AutoCAD
 
         private void UpdateModeCaption()
         {
-            modeCaption.Text = activeKind == ProfileKind.Longitudinal ? "Построение: продольный профиль" : "Построение: все поперечники из списка";
+            UpdateScopeControls();
             title.Visible = titleCaption.Visible = activeKind == ProfileKind.Longitudinal;
         }
 
@@ -487,7 +491,7 @@ namespace Profiles.AutoCAD
                 MetresPerDrawingUnit = ReadRequiredNumber(metres, "Метров в единице чертежа"),
                 TextHeightMm = ReadRequiredNumber(textHeight, "Высота текста"),
                 TextWidthFactor = ReadRequiredNumber(textWidth, "Коэффициент ширины текста"),
-                ShowEmptyRows = emptyRows.Checked
+                ShowEmptyRows = true
             };
         }
 
@@ -547,6 +551,7 @@ namespace Profiles.AutoCAD
             var rightBankPoint = points.FirstOrDefault(p => p.Role == SectionPointRole.RightBank);
             var result = new CrossSection
             {
+                SectionId = previous?.SectionId ?? Guid.NewGuid().ToString("N"),
                 Name = station.HasValue ? StationCaption(station.Value) : sectionName.Text.Trim(),
                 Station = station,
                 LeftBank = leftBankPoint == null ? previous?.LeftBank : leftBankPoint.Existing,
@@ -626,6 +631,7 @@ namespace Profiles.AutoCAD
             RefreshLinkedSectionValues();
             RefreshEarthworks();
             sectionBeforeEditing = ReadCurrentSection();
+            UpdateModeCaption();
         }
 
         private void RefreshSectionList(int selection)
@@ -663,6 +669,7 @@ namespace Profiles.AutoCAD
                 if (selectedSection < 0) return;
                 var source = sections[selectedSection];
                 var copy = CloneSection(source);
+                copy.SectionId = Guid.NewGuid().ToString("N");
                 copy.Name = SectionCaption(source) + " — копия";
                 copy.Station = null;
                 copy.UseLongitudinalProjectBottom = false;
@@ -695,17 +702,14 @@ namespace Profiles.AutoCAD
             Validate();
             CommitStationInput();
             CommitSection();
-            var project = new ProfileProject
-            {
-                SchemaVersion = 4,
-                ProjectId = currentProjectId,
-                Name = currentProjectName,
-                Template = SelectedTemplate,
-                Kind = activeKind,
-                Settings = ReadSettings(),
-                Longitudinal = ReadLongitudinal(),
-                Sections = sections.Select(CloneSection).ToList()
-            };
+            var project = CloneProfileContainer();
+            project.ProjectId = currentProjectId;
+            project.Name = currentProjectName;
+            project.Template = SelectedTemplate;
+            project.Kind = activeKind;
+            project.Settings = ReadSettings();
+            project.Longitudinal = ReadLongitudinal();
+            project.Sections = sections.Select(CloneSection).ToList();
             return project;
         }
 
@@ -714,6 +718,7 @@ namespace Profiles.AutoCAD
             loading = true;
             try
             {
+                profileContainer = ProjectFile.Clone(project);
                 pendingSharedValues.Clear();
                 pendingLongitudinalCells.Clear();
                 sectionBeforeEditing = null;
@@ -721,6 +726,7 @@ namespace Profiles.AutoCAD
                 currentProjectId = string.IsNullOrWhiteSpace(project.ProjectId) ? Guid.NewGuid().ToString("N") : project.ProjectId;
                 currentProjectName = string.IsNullOrWhiteSpace(project.Name) ? "Проект" : project.Name;
                 activeKind = project.Kind;
+                RefreshProfileTabs();
                 SelectTemplate(project.Template);
                 var settings = project.Settings ?? new ProfileSettings();
                 title.Text = settings.Title ?? "";
@@ -729,7 +735,6 @@ namespace Profiles.AutoCAD
                 DisplayNumber(metres, settings.MetresPerDrawingUnit);
                 DisplayNumber(textHeight, settings.TextHeightMm);
                 DisplayNumber(textWidth, settings.TextWidthFactor);
-                emptyRows.Checked = settings.ShowEmptyRows;
                 longGrid.Rows.Clear();
                 foreach (var point in project.Longitudinal ?? new List<LongitudinalPoint>())
                     longGrid.Rows.Add(point.Station, point.Ground, point.LeftBank, point.RightBank,
@@ -767,7 +772,7 @@ namespace Profiles.AutoCAD
             try
             {
                 var project = ReadProject();
-                var plan = ProfileEngine.Build(project);
+                var plan = BuildScopedPlan(project);
                 Project = project;
                 Plan = plan;
                 preview.SetPlan(plan);
@@ -784,7 +789,7 @@ namespace Profiles.AutoCAD
             try
             {
                 var project = ReadProject();
-                var plan = ProfileEngine.Build(project);
+                var plan = BuildScopedPlan(project);
                 preview.SetPlan(plan);
                 previewNotes.Text = plan.Warnings.Count == 0 ? "Проверка завершена без замечаний." : string.Join(Environment.NewLine, plan.Warnings);
                 if (plan.Warnings.Count > 0 && MessageBox.Show(this,

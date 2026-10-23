@@ -117,14 +117,22 @@ public sealed class CrossPresentationTests
     }
 
     [Fact]
-    public void CutAreaKeepsEditableLeaderWithoutArrowheadWhileOtherAreaArrowsRemain()
+    public void AllAreasKeepEditableLeaderLandingsWithoutArrowheads()
     {
         var project = Cross(new() { Offset = -2, Existing = 10, Design = 8 }, new() { Offset = 2, Existing = 10, Design = 12 });
         project.Sections[0].DesignMode = SectionDesignMode.Points;
+        project.Sections[0].SiltThickness = .4;
+        project.Sections[0].SiltLeft = -2;
+        project.Sections[0].SiltRight = 2;
         var plan = ProfileEngine.Build(project);
-        Assert.Contains(Curves(plan, "PROF_LEADER"), line => line.ColorIndex == 1);
-        Assert.DoesNotContain(Curves(plan, "PROF_LEADER_ARROW"), line => line.ColorIndex == 1);
-        Assert.Contains(Curves(plan, "PROF_LEADER_ARROW"), line => line.ColorIndex == 3);
+        Assert.Empty(Curves(plan, "PROF_LEADER_ARROW"));
+        foreach (short color in new short[] { 1, 3, 30 })
+        {
+            var leader = Assert.Single(Curves(plan, "PROF_LEADER"), line => line.ColorIndex == color);
+            Assert.True(leader.Points.Count >= 3);
+            Assert.Equal(leader.Points[leader.Points.Count - 2].Y, leader.Points.Last().Y, 8);
+            Assert.NotEqual(leader.Points[leader.Points.Count - 2].X, leader.Points.Last().X);
+        }
     }
 
     [Fact]

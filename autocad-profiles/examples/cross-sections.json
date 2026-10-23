@@ -1,7 +1,11 @@
 {
-  "SchemaVersion": 4,
-  "ProjectId": "1002dd24d44046b39c877266d04e95ff",
+  "SchemaVersion": 5,
+  "ProjectId": "104816029de245e2bca510399d9b3d0e",
   "Name": "Учебные поперечники",
+  "ProfileId": "b5a9dcfa7d9f439dba712cd019c43c84",
+  "ProfileName": "Профиль 1",
+  "ActiveProfileIndex": 0,
+  "AdditionalProfiles": [],
   "Kind": "CrossSection",
   "Template": "Reconstruction",
   "Settings": {
@@ -14,7 +18,7 @@
     "Datum": 139.0,
     "TextHeightMm": 2.5,
     "TextWidthFactor": 0.85,
-    "ShowEmptyRows": false
+    "ShowEmptyRows": true
   },
   "Longitudinal": [
     {
@@ -110,6 +114,7 @@
   ],
   "Sections": [
     {
+      "SectionId": "1e630f586bfa466b8cb29c74cb9a30ae",
       "Name": "ПК 0+00.00",
       "DesignMode": "Trapezoid",
       "UsePointDistances": false,
@@ -131,6 +136,7 @@
       "CenterOffset": 0.0,
       "Points": [
         {
+          "Label": "",
           "Role": "Regular",
           "DistanceFromPrevious": null,
           "UseLongitudinalElevation": false,
@@ -139,6 +145,7 @@
           "Design": null
         },
         {
+          "Label": "",
           "Role": "Regular",
           "DistanceFromPrevious": null,
           "UseLongitudinalElevation": false,
@@ -147,6 +154,7 @@
           "Design": null
         },
         {
+          "Label": "",
           "Role": "Regular",
           "DistanceFromPrevious": null,
           "UseLongitudinalElevation": false,
@@ -155,6 +163,7 @@
           "Design": null
         },
         {
+          "Label": "",
           "Role": "Regular",
           "DistanceFromPrevious": null,
           "UseLongitudinalElevation": false,
@@ -163,6 +172,7 @@
           "Design": null
         },
         {
+          "Label": "",
           "Role": "Regular",
           "DistanceFromPrevious": null,
           "UseLongitudinalElevation": false,
@@ -171,6 +181,7 @@
           "Design": null
         },
         {
+          "Label": "",
           "Role": "Regular",
           "DistanceFromPrevious": null,
           "UseLongitudinalElevation": false,
@@ -179,6 +190,7 @@
           "Design": null
         },
         {
+          "Label": "",
           "Role": "Regular",
           "DistanceFromPrevious": null,
           "UseLongitudinalElevation": false,
@@ -189,6 +201,7 @@
       ]
     },
     {
+      "SectionId": "4b98d1bc8d564c80972a506839c7bf73",
       "Name": "ПК 1+00.00",
       "DesignMode": "Points",
       "UsePointDistances": false,
@@ -210,6 +223,7 @@
       "CenterOffset": 0.0,
       "Points": [
         {
+          "Label": "",
           "Role": "Regular",
           "DistanceFromPrevious": null,
           "UseLongitudinalElevation": false,
@@ -218,6 +232,7 @@
           "Design": 143.35
         },
         {
+          "Label": "",
           "Role": "Regular",
           "DistanceFromPrevious": null,
           "UseLongitudinalElevation": false,
@@ -226,6 +241,7 @@
           "Design": 142.7
         },
         {
+          "Label": "",
           "Role": "Regular",
           "DistanceFromPrevious": null,
           "UseLongitudinalElevation": false,
@@ -234,6 +250,7 @@
           "Design": 140.8
         },
         {
+          "Label": "",
           "Role": "Regular",
           "DistanceFromPrevious": null,
           "UseLongitudinalElevation": false,
@@ -242,6 +259,7 @@
           "Design": 140.8
         },
         {
+          "Label": "",
           "Role": "Regular",
           "DistanceFromPrevious": null,
           "UseLongitudinalElevation": false,
@@ -250,6 +268,7 @@
           "Design": 143.6
         },
         {
+          "Label": "",
           "Role": "Regular",
           "DistanceFromPrevious": null,
           "UseLongitudinalElevation": false,

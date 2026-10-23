@@ -11,10 +11,25 @@ namespace Profiles.Core
 
     public sealed class ProfileProject
     {
-        public int SchemaVersion { get; set; } = 4;
+        public int SchemaVersion { get; set; } = 5;
         public string ProjectId { get; set; } = Guid.NewGuid().ToString("N");
         public string Name { get; set; } = "Проект";
+        public string ProfileId { get; set; } = Guid.NewGuid().ToString("N");
+        public string ProfileName { get; set; } = "Профиль 1";
+        public int ActiveProfileIndex { get; set; }
+        public List<ProfileData> AdditionalProfiles { get; set; } = new List<ProfileData>();
         public ProfileKind Kind { get; set; }
+        public ProfileTemplate Template { get; set; } = ProfileTemplate.Reconstruction;
+        public ProfileSettings Settings { get; set; } = new ProfileSettings();
+        public List<LongitudinalPoint> Longitudinal { get; set; } = new List<LongitudinalPoint>();
+        public List<CrossSection> Sections { get; set; } = new List<CrossSection>();
+    }
+
+    /// <summary>An inactive profile's independent input and drawing settings within the project.</summary>
+    public sealed class ProfileData
+    {
+        public string ProfileId { get; set; } = Guid.NewGuid().ToString("N");
+        public string Name { get; set; } = "Профиль";
         public ProfileTemplate Template { get; set; } = ProfileTemplate.Reconstruction;
         public ProfileSettings Settings { get; set; } = new ProfileSettings();
         public List<LongitudinalPoint> Longitudinal { get; set; } = new List<LongitudinalPoint>();
@@ -35,7 +50,7 @@ namespace Profiles.Core
         public double? Datum { get; set; }
         public double TextHeightMm { get; set; } = 2.5;
         public double TextWidthFactor { get; set; } = 0.85;
-        public bool ShowEmptyRows { get; set; }
+        public bool ShowEmptyRows { get; set; } = true;
     }
 
     public sealed class LongitudinalPoint
@@ -60,6 +75,7 @@ namespace Profiles.Core
 
     public sealed class CrossSection
     {
+        public string SectionId { get; set; } = Guid.NewGuid().ToString("N");
         public string Name { get; set; } = "1-1";
         public SectionDesignMode DesignMode { get; set; } = SectionDesignMode.Automatic;
         public bool UsePointDistances { get; set; }
@@ -85,6 +101,7 @@ namespace Profiles.Core
 
     public sealed class SectionPoint
     {
+        public string Label { get; set; } = "";
         public SectionPointRole Role { get; set; } = SectionPointRole.Regular;
         public double? DistanceFromPrevious { get; set; }
         public bool UseLongitudinalElevation { get; set; }

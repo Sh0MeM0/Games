@@ -1,7 +1,11 @@
 {
-  "SchemaVersion": 4,
-  "ProjectId": "0afdc5356db94e6f80e64dcf828fca27",
+  "SchemaVersion": 5,
+  "ProjectId": "0517d0f5e4524bb7bceb2fe954fb4c78",
   "Name": "Учебный новый канал",
+  "ProfileId": "1bccccc0dc004c8abd2921dcd35525a2",
+  "ProfileName": "Профиль 1",
+  "ActiveProfileIndex": 0,
+  "AdditionalProfiles": [],
   "Kind": "Longitudinal",
   "Template": "NewChannel",
   "Settings": {

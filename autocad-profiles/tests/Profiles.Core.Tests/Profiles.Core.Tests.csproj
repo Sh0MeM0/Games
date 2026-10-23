@@ -7,6 +7,7 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../src/Profiles.AutoCAD/OutputMetadata.cs" Link="OutputMetadata.cs" />
     <ProjectReference Include="../../src/Profiles.Core/Profiles.Core.csproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />

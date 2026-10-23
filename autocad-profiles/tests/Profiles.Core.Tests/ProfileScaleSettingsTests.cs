@@ -38,7 +38,7 @@ public sealed class ProfileScaleSettingsTests
     public void CurrentSchemaRequiresBothCrossPropertiesButAcceptsNullLegacyPair()
     {
         var document = JsonNode.Parse(ProjectFile.Serialize(new ProfileProject()))!.AsObject();
-        Assert.Equal(4, document["SchemaVersion"]!.GetValue<int>());
+        Assert.Equal(5, document["SchemaVersion"]!.GetValue<int>());
         Assert.Null(ProjectFile.Deserialize(document.ToJsonString()).Settings.CrossHorizontalScale);
         document["Settings"]!.AsObject().Remove("CrossVerticalScale");
         Assert.Throws<ProfileValidationException>(() => ProjectFile.Deserialize(document.ToJsonString()));
@@ -62,6 +62,7 @@ public sealed class ProfileScaleSettingsTests
     {
         var document = JsonNode.Parse(ProjectFile.Serialize(new ProfileProject()))!.AsObject();
         document["SchemaVersion"] = 3;
+        SchemaTestDocuments.RemoveVersionFiveFields(document);
         Assert.Throws<ProfileValidationException>(() => ProjectFile.Deserialize(document.ToJsonString()));
         var settings = document["Settings"]!.AsObject();
         settings.Remove("CrossHorizontalScale"); settings.Remove("CrossVerticalScale");

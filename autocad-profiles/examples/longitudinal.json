@@ -1,7 +1,11 @@
 {
-  "SchemaVersion": 4,
-  "ProjectId": "5efd1553a9b04be6b33f889ee93b2f0d",
+  "SchemaVersion": 5,
+  "ProjectId": "22474fe0f62e4d48a056580c4536ba82",
   "Name": "Учебный канал — подчистка",
+  "ProfileId": "9f00f40957994bb580a2e39b948346f2",
+  "ProfileName": "Профиль 1",
+  "ActiveProfileIndex": 0,
+  "AdditionalProfiles": [],
   "Kind": "Longitudinal",
   "Template": "Reconstruction",
   "Settings": {
@@ -14,7 +18,7 @@
     "Datum": 139.0,
     "TextHeightMm": 2.5,
     "TextWidthFactor": 0.85,
-    "ShowEmptyRows": false
+    "ShowEmptyRows": true
   },
   "Longitudinal": [
     {

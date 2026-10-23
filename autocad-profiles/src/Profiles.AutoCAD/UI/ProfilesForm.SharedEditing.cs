@@ -120,12 +120,14 @@ namespace Profiles.AutoCAD
 
         private ProfileProject SynchronizationSource(List<LongitudinalPoint> longitudinal)
         {
-            return new ProfileProject
-            {
-                ProjectId = currentProjectId ?? Guid.NewGuid().ToString("N"), Name = currentProjectName ?? "Проект",
-                Kind = activeKind, Template = SelectedTemplate, Longitudinal = longitudinal,
-                Sections = sections.Select(CloneSection).ToList()
-            };
+            var source = CloneProfileContainer();
+            source.ProjectId = currentProjectId ?? Guid.NewGuid().ToString("N");
+            source.Name = currentProjectName ?? "Проект";
+            source.Kind = activeKind;
+            source.Template = SelectedTemplate;
+            source.Longitudinal = longitudinal;
+            source.Sections = sections.Select(CloneSection).ToList();
+            return source;
         }
 
         private void CommitSynchronizedSection()

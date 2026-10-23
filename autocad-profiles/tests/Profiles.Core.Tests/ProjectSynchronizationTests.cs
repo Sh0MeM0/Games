@@ -95,6 +95,7 @@ public sealed class ProjectSynchronizationTests
     {
         var source = Project();
         var second = ProfileInterpolation.CloneSection(source.Sections[0]);
+        second.SectionId = Guid.NewGuid().ToString("N");
         second.Name = "Другой промер";
         second.Points[1].DistanceFromPrevious = 12.3456789;
         second.SiltThickness = .75;

@@ -38,7 +38,7 @@ public sealed class ProjectFileTests : IDisposable
         project.Longitudinal[1].Water = 0;
         ProjectFile.Save(FilePath, project);
         var restored = ProjectFile.Load(FilePath);
-        Assert.Equal(4, restored.SchemaVersion);
+        Assert.Equal(5, restored.SchemaVersion);
         Assert.Equal(ProfileKind.Longitudinal, restored.Kind);
         Assert.Equal(project.Settings.Title, restored.Settings.Title);
         Assert.Equal(-5, restored.Settings.Datum);

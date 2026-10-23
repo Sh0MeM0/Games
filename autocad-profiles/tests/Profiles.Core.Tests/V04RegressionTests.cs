@@ -185,6 +185,7 @@ public sealed class V04RegressionTests
     {
         var source = LinkedProject();
         var other = ProfileInterpolation.CloneSection(source.Sections[0]);
+        other.SectionId = Guid.NewGuid().ToString("N");
         other.Name = "Вторая съёмка";
         other.CenterOffset = 17;
         other.SiltThickness = .123456789;

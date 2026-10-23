@@ -1,7 +1,11 @@
 {
-  "SchemaVersion": 4,
-  "ProjectId": "20da92f8329e47cf9c541868a0ae86a1",
+  "SchemaVersion": 5,
+  "ProjectId": "bb10b2b5012b41f78d647030c002e431",
   "Name": "Учебный поперечник ПК1+20.00",
+  "ProfileId": "e69b355dfe6540dd99b31dc219eb7bf3",
+  "ProfileName": "Профиль 1",
+  "ActiveProfileIndex": 0,
+  "AdditionalProfiles": [],
   "Kind": "CrossSection",
   "Template": "Reconstruction",
   "Settings": {
@@ -14,11 +18,12 @@
     "Datum": 158.0,
     "TextHeightMm": 2.5,
     "TextWidthFactor": 0.85,
-    "ShowEmptyRows": false
+    "ShowEmptyRows": true
   },
   "Longitudinal": [],
   "Sections": [
     {
+      "SectionId": "186ca75346284383b5846b9ccc3b92aa",
       "Name": "ПК1+20.00",
       "DesignMode": "Trapezoid",
       "UsePointDistances": false,
@@ -40,6 +45,7 @@
       "CenterOffset": 7.5,
       "Points": [
         {
+          "Label": "",
           "Role": "Regular",
           "DistanceFromPrevious": null,
           "UseLongitudinalElevation": false,
@@ -48,6 +54,7 @@
           "Design": null
         },
         {
+          "Label": "",
           "Role": "Regular",
           "DistanceFromPrevious": null,
           "UseLongitudinalElevation": false,
@@ -56,6 +63,7 @@
           "Design": null
         },
         {
+          "Label": "",
           "Role": "Regular",
           "DistanceFromPrevious": null,
           "UseLongitudinalElevation": false,
@@ -64,6 +72,7 @@
           "Design": null
         },
         {
+          "Label": "",
           "Role": "Regular",
           "DistanceFromPrevious": null,
           "UseLongitudinalElevation": false,
@@ -72,6 +81,7 @@
           "Design": null
         },
         {
+          "Label": "",
           "Role": "Regular",
           "DistanceFromPrevious": null,
           "UseLongitudinalElevation": false,
@@ -80,6 +90,7 @@
           "Design": null
         },
         {
+          "Label": "",
           "Role": "Regular",
           "DistanceFromPrevious": null,
           "UseLongitudinalElevation": false,

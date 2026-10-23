@@ -9,6 +9,7 @@ using Autodesk.AutoCAD.DatabaseServices;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Profiles.Core;
+using static Profiles.AutoCAD.OutputMetadata;
 
 namespace Profiles.AutoCAD
 {
@@ -16,19 +17,6 @@ namespace Profiles.AutoCAD
     {
         internal List<ProfileProject> Projects { get; } = new List<ProfileProject>();
         internal string LastActiveProjectId { get; set; }
-    }
-
-    internal sealed class StoredProfileOutput
-    {
-        [JsonProperty(Required = Required.Always)] public int Version { get; set; } = 1;
-        [JsonProperty(Required = Required.Always)] public string ProjectId { get; set; }
-        [JsonProperty(Required = Required.Always)] public string Kind { get; set; }
-        [JsonProperty(Required = Required.Always)] public string DrawingId { get; set; }
-        [JsonProperty(Required = Required.Always)] public string Fingerprint { get; set; }
-        [JsonProperty(Required = Required.Always)] public string GenerationId { get; set; }
-        [JsonProperty(Required = Required.Always)] public string SpaceHandle { get; set; }
-        [JsonProperty(Required = Required.Always)] public double[] Transform { get; set; }
-        [JsonProperty(Required = Required.Always)] public List<string> Handles { get; set; } = new List<string>();
     }
 
     /// <summary>
@@ -142,35 +130,75 @@ namespace Profiles.AutoCAD
             return Header(Root(database, transaction, true), transaction).DrawingId;
         }
 
-        internal static StoredProfileOutput ReadOutput(Database database, Transaction transaction, string projectId, ProfileKind kind)
+        internal static StoredProfileOutput ReadOutput(Database database, Transaction transaction, string projectId, ProfileKind kind, string profileId = null, string sectionId = null)
         {
             ProjectId(projectId);
             var root = Root(database, transaction, false);
             if (root == null) return null;
             var header = Header(root, transaction);
             var outputs = Child(root, OutputsName, transaction);
-            string key = OutputKey(projectId, kind);
+            string key = OutputKey(projectId, kind, profileId, sectionId);
             if (!outputs.Contains(key)) return null;
             var result = Decode<StoredProfileOutput>(ReadPayload(outputs.GetAt(key), transaction, "построение " + key));
-            ValidateOutput(result, projectId, kind);
+            ValidateOutput(result, projectId, kind, profileId, sectionId);
             if (!string.Equals(result.DrawingId, header.DrawingId, StringComparison.Ordinal) ||
                 !string.Equals(result.Fingerprint, Fingerprint(database), StringComparison.OrdinalIgnoreCase))
                 throw Invalid("сведения о построении относятся к другому DWG. Существующие объекты не изменены; для копии создайте новый проект");
             return result;
         }
 
+        internal static List<StoredProfileOutput> ReadOutputs(Database database, Transaction transaction, string projectId, ProfileKind kind)
+        {
+            ProjectId(projectId);
+            var root = Root(database, transaction, false);
+            if (root == null) return new List<StoredProfileOutput>();
+            Header(root, transaction);
+            string prefix = OutputKey(projectId, kind);
+            var result = new List<StoredProfileOutput>();
+            foreach (DBDictionaryEntry entry in Child(root, OutputsName, transaction))
+            {
+                if (!string.Equals(entry.Key, prefix, StringComparison.OrdinalIgnoreCase) &&
+                    !entry.Key.StartsWith(prefix + "_", StringComparison.OrdinalIgnoreCase)) continue;
+                ParseOutputKey(entry.Key, out string keyProject, out ProfileKind keyKind, out string profileId, out string sectionId);
+                result.Add(ReadOutput(database, transaction, keyProject, keyKind, profileId, sectionId));
+            }
+            return result;
+        }
+
         internal static void SaveOutput(Database database, Transaction transaction, StoredProfileOutput output, ProfileKind kind)
         {
-            ValidateOutput(output, output.ProjectId, kind);
+            SaveOutputs(database, transaction, new[] { output }, kind);
+        }
+
+        internal static void SaveOutputs(Database database, Transaction transaction, IEnumerable<StoredProfileOutput> values, ProfileKind kind)
+        {
             var root = Root(database, transaction, true);
             var header = Header(root, transaction);
-            if (output.DrawingId != header.DrawingId || output.Fingerprint != Fingerprint(database))
-                throw Invalid("построение не принадлежит текущему чертежу");
             var outputs = Child(root, OutputsName, transaction);
-            WritePayload(outputs, OutputKey(output.ProjectId, kind), JsonConvert.SerializeObject(output, MetadataSettings()), transaction);
+            foreach (var output in values)
+            {
+                ValidateOutput(output, output.ProjectId, kind, output.ProfileId, output.SectionId);
+                if (output.DrawingId != header.DrawingId || output.Fingerprint != Fingerprint(database))
+                    throw Invalid("построение не принадлежит текущему чертежу");
+                WritePayload(outputs, OutputKey(output.ProjectId, kind, output.ProfileId, output.SectionId), JsonConvert.SerializeObject(output, MetadataSettings()), transaction);
+            }
             var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (DBDictionaryEntry entry in Child(root, ProjectsName, transaction)) ids.Add(entry.Key);
             ValidateOutputs(root, transaction, header, ids);
+        }
+
+        internal static void RemoveOutput(Database database, Transaction transaction, StoredProfileOutput output, ProfileKind kind)
+        {
+            ValidateOutput(output, output.ProjectId, kind, output.ProfileId, output.SectionId);
+            var root = Root(database, transaction, false);
+            if (root == null) return;
+            var outputs = Child(root, OutputsName, transaction);
+            string key = OutputKey(output.ProjectId, kind, output.ProfileId, output.SectionId);
+            if (!outputs.Contains(key)) return;
+            var record = transaction.GetObject(outputs.GetAt(key), OpenMode.ForWrite);
+            if (!outputs.IsWriteEnabled) outputs.UpgradeOpen();
+            outputs.Remove(key);
+            record.Erase();
         }
 
         private static string ReadActive(DBDictionary root, Transaction transaction, HashSet<string> projectIds)
@@ -185,7 +213,9 @@ namespace Profiles.AutoCAD
         private static void ValidateOutputs(DBDictionary root, Transaction transaction, StoreHeader header, HashSet<string> projectIds)
         {
             var outputs = Child(root, OutputsName, transaction);
-            if (outputs.Count > MaximumProjects * 2) throw Invalid("слишком много записей построений");
+            // Up to 100 longitudinal profiles, 200 sections across them, and
+            // retained legacy records; the byte limit also bounds stale records.
+            if (outputs.Count > MaximumProjects * 302) throw Invalid("слишком много записей построений");
             long total = 0;
             foreach (DBDictionaryEntry entry in outputs)
             {
@@ -193,11 +223,8 @@ namespace Profiles.AutoCAD
                 total += Utf8.GetByteCount(json);
                 if (total > MaximumCatalogBytes) throw Invalid("каталог построений превышает 64 МБ");
                 var output = Decode<StoredProfileOutput>(json);
-                if (entry.Key.Length != 34 || entry.Key[32] != '_' || (entry.Key[33] != 'L' && entry.Key[33] != 'C'))
-                    throw Invalid("неизвестный ключ построения " + entry.Key);
-                string projectId = entry.Key.Substring(0, 32);
-                var kind = entry.Key[33] == 'L' ? ProfileKind.Longitudinal : ProfileKind.CrossSection;
-                ValidateOutput(output, projectId, kind);
+                ParseOutputKey(entry.Key, out string projectId, out ProfileKind kind, out string profileId, out string sectionId);
+                ValidateOutput(output, projectId, kind, profileId, sectionId);
                 if (!projectIds.Contains(projectId) || output.DrawingId != header.DrawingId)
                     throw Invalid("сведения о построении не соответствуют каталогу проектов");
                 // Fingerprint is checked only before replacing this output. A DWG
@@ -218,44 +245,6 @@ namespace Profiles.AutoCAD
             if (!Guid.TryParse(database.FingerprintGuid, out fingerprint) || fingerprint == Guid.Empty)
                 throw Invalid("у чертежа отсутствует корректный отпечаток DWG; сохраните DWG и повторите построение");
             return fingerprint.ToString("D");
-        }
-
-        private static string OutputKey(string projectId, ProfileKind kind) => projectId + "_" + KindCode(kind);
-
-        internal static long HandleValue(string value)
-        {
-            long handle;
-            if (string.IsNullOrEmpty(value) || value.Length > 16 ||
-                !long.TryParse(value, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out handle) || handle <= 0)
-                throw Invalid("некорректный идентификатор объекта чертежа");
-            return handle;
-        }
-
-        private static void ValidateOutput(StoredProfileOutput output, string projectId, ProfileKind kind)
-        {
-            if (output == null || output.Version != 1) throw Invalid("неподдерживаемая версия записи построения");
-            ProjectId(output.ProjectId);
-            ProjectId(output.DrawingId);
-            ProjectId(output.GenerationId);
-            Guid fingerprint;
-            if (!Guid.TryParseExact(output.Fingerprint, "D", out fingerprint)) throw Invalid("повреждён отпечаток DWG");
-            if (output.ProjectId != projectId || output.Kind != KindCode(kind)) throw Invalid("запись построения принадлежит другому проекту или типу");
-            HandleValue(output.SpaceHandle);
-            if (output.Transform == null || output.Transform.Length != 16 || output.Transform.Any(value => double.IsNaN(value) || double.IsInfinity(value) || Math.Abs(value) > 1e12))
-                throw Invalid("повреждено положение профиля");
-            var m = output.Transform;
-            if (Math.Abs(m[12]) > 1e-9 || Math.Abs(m[13]) > 1e-9 || Math.Abs(m[14]) > 1e-9 || Math.Abs(m[15] - 1) > 1e-9)
-                throw Invalid("неподдерживаемое преобразование профиля");
-            for (int a = 0; a < 3; a++)
-                for (int b = 0; b < 3; b++)
-                {
-                    double dot = m[a] * m[b] + m[4 + a] * m[4 + b] + m[8 + a] * m[8 + b];
-                    if (Math.Abs(dot - (a == b ? 1 : 0)) > 1e-8) throw Invalid("система координат профиля повреждена");
-                }
-            if (output.Handles == null || output.Handles.Count > 250000) throw Invalid("неверное количество объектов построения");
-            var unique = new HashSet<long>();
-            foreach (string handle in output.Handles)
-                if (!unique.Add(HandleValue(handle))) throw Invalid("повторяющийся объект в записи построения");
         }
 
         private static DBDictionary Root(Database database, Transaction transaction, bool create)
@@ -329,6 +318,7 @@ namespace Profiles.AutoCAD
                     var token = JToken.Load(reader, new JsonLoadSettings { DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error, CommentHandling = CommentHandling.Load });
                     if (!(token is JObject value) || value.DescendantsAndSelf().Any(child => child.Type == JTokenType.Comment)) throw Invalid("повреждён служебный JSON");
                     while (reader.Read()) if (reader.TokenType != JsonToken.None) throw Invalid("лишние данные в служебной записи");
+                    if (typeof(T) == typeof(StoredProfileOutput)) OutputMetadata.ValidateJson(value);
                     return token.ToObject<T>(JsonSerializer.Create(MetadataSettings()));
                 }
             }

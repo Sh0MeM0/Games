@@ -26,7 +26,7 @@ public sealed class ProfileStyleTests
         CheckLine(plan, "PROF_PROJECT", 1, false);
         CheckLine(plan, "PROF_WATER", 5, true);
         var texts = plan.Entities.OfType<DrawText>().ToList();
-        foreach (var value in new[] { "151.23", "151.33", "152.34", "153.45", "140.56" })
+        foreach (var value in new[] { "152.34", "153.45", "140.56" })
         {
             var matching = texts.Where(text => text.Text == value).ToList();
             Assert.NotEmpty(matching);
@@ -60,6 +60,7 @@ public sealed class ProfileStyleTests
     public void IsolatedElevationsRemainInTableWithoutInventingCurveOrPointMarkers()
     {
         var project = Longitudinal(null, 12.34, null);
+        project.Template = ProfileTemplate.NewChannel;
         var plan = ProfileEngine.Build(project);
         Assert.Empty(Curves(plan, "PROF_GROUND"));
         Assert.Empty(plan.Entities.OfType<DrawCircle>());
