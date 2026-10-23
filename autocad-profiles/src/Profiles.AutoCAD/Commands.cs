@@ -16,12 +16,26 @@ namespace Profiles.AutoCAD
     {
         public void Initialize()
         {
-            ProfilesRibbon.Start();
+            try { ProfilesClassicMenu.Start(); }
+            catch (System.Exception exception) { StartupError("верхнее меню", exception); }
+            try { StartRibbon(); }
+            catch (System.Exception exception) { StartupError("ленту", exception); }
         }
 
         public void Terminate()
         {
-            ProfilesRibbon.Stop();
+            try { ProfilesClassicMenu.Stop(); } catch (System.Exception) { }
+            try { ProfilesRibbon.Stop(); } catch (System.Exception) { }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void StartRibbon() => ProfilesRibbon.Start();
+
+        private static void StartupError(string component, System.Exception exception)
+        {
+            var document = AcadApplication.DocumentManager.MdiActiveDocument;
+            document?.Editor.WriteMessage("\nПрофиля: не удалось включить " + component + ": " + exception.Message +
+                ". Выполните PROFILI_MENU для восстановления меню; PROFILI_LONG и PROFILI_CROSS открывают построение.");
         }
     }
 
@@ -45,6 +59,26 @@ namespace Profiles.AutoCAD
 
         [CommandMethod("PROFILI_CROSS", CommandFlags.Modal)]
         public void OpenCrossSection() => Open(ProfileKind.CrossSection);
+
+        [CommandMethod("PROFILI_MENU", CommandFlags.Session)]
+        public void RestoreMenu()
+        {
+            try { ProfilesClassicMenu.Restore(); }
+            catch (System.Exception exception)
+            {
+                AcadApplication.ShowAlertDialog("Профиля: не удалось восстановить меню.\n\n" + exception.Message);
+            }
+            // Classic menus remain usable when the ribbon is hidden or unavailable.
+            try { RestoreRibbon(); }
+            catch (System.Exception exception)
+            {
+                var document = AcadApplication.DocumentManager.MdiActiveDocument;
+                document?.Editor.WriteMessage("\nПрофиля: лента недоступна: " + exception.Message + ". Используйте верхнее меню.");
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void RestoreRibbon() => ProfilesRibbon.Restore();
 
         private static void Open(ProfileKind kind)
         {

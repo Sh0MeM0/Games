@@ -9,11 +9,13 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import xml.etree.ElementTree as ET
 import zipfile
+from menu_package import build_classic_menu
 
 ROOT = Path(__file__).resolve().parent
-VERSION = '0.1.0'
+VERSION = '0.1.1'
 TARGETS = {'2020': ('23.1.0', 'R23.1'), '2021': ('24.0.0', 'R24.0'),
            '2022': ('24.1.51000', 'R24.1'), '2023': ('24.2.0', 'R24.2'),
            '2024': ('24.3.0', 'R24.3')}
@@ -28,18 +30,26 @@ def sha(path):
 def package_xml(bundle):
     package = ET.Element('ApplicationPackage', SchemaVersion='1.0', AutodeskProduct='AutoCAD',
         Name='Профиля', AppVersion=VERSION, Description='Продольные и поперечные профили',
-        Author='Sh0MeM0', ProductCode='{01D2C4DF-68E7-4DA6-86C6-62D2D11430EA}',
+        Author='Sh0MeM0', ProductCode='{E173097C-40B5-4E8D-8D10-7BC370492E32}',
         UpgradeCode='{25B26ECF-0C17-4968-BE99-4FC6E7F67A54}')
     ET.SubElement(package, 'CompanyDetails', Name='Sh0MeM0')
+    # Like MDSTools, register a partial CUIX directly: a closed/absent ribbon
+    # must never prevent the classic menu bar from loading our menu.
+    menu = ET.SubElement(package, 'Components', Description='Classic menu')
+    ET.SubElement(menu, 'RuntimeRequirements', OS='Win64', Platform='AutoCAD*',
+                  SeriesMin='R23.1', SeriesMax='R24.3')
+    ET.SubElement(menu, 'ComponentEntry', ComponentName='ProfilesClassicMenu',
+                  ModuleName='./Contents/Profiles.cuix', LoadOnAutoCADStartup='True')
     for year, (_, series) in TARGETS.items():
         group = ET.SubElement(package, 'Components', Description='AutoCAD ' + year)
         ET.SubElement(group, 'RuntimeRequirements', OS='Win64', Platform='AutoCAD*',
                       SeriesMin=series, SeriesMax=series)
         entry = ET.SubElement(group, 'ComponentEntry', AppName='Profiles' + year, Version=VERSION,
             ModuleName='./Contents/' + year + '/Profiles.AutoCAD.dll',
-            AppDescription='Профиля', LoadOnAutoCADStartup='True', AppType='.Net')
+            AppDescription='Профиля', LoadOnAutoCADStartup='True',
+            LoadOnCommandInvocation='True', AppType='.Net')
         commands = ET.SubElement(entry, 'Commands', GroupName='SH0MEM0_PROFILES')
-        for cmd in ('PROFILI', 'PROFILI_LONG', 'PROFILI_CROSS'):
+        for cmd in ('PROFILI', 'PROFILI_LONG', 'PROFILI_CROSS', 'PROFILI_MENU'):
             ET.SubElement(commands, 'Command', Global=cmd, Local=cmd)
     ET.indent(package)
     ET.ElementTree(package).write(bundle / 'PackageContents.xml', encoding='utf-8', xml_declaration=True)
@@ -53,6 +63,7 @@ def main():
     release = ROOT / 'releases'
     artifacts.mkdir(exist_ok=True)
     release.mkdir(exist_ok=True)
+    run(sys.executable, '-m', 'unittest', 'discover', '-s', 'tests/packaging', '-v')
     run(args.dotnet, 'test', 'tests/Profiles.Core.Tests/Profiles.Core.Tests.csproj', '-c', 'Release',
         '--logger', 'trx;LogFileName=core-tests.trx', '--results-directory', artifacts / 'test-results')
     bundle = artifacts / 'Sh0MeM0.Profiles.bundle'
@@ -71,6 +82,7 @@ def main():
             if not source.is_file():
                 raise RuntimeError('Required build output missing: ' + str(source))
             shutil.copy2(source, dest / name)
+    build_classic_menu(bundle / 'Contents' / 'Profiles.cuix')
     package_xml(bundle)
     for source, name in ((ROOT / 'README.md', 'README.md'),
                          (ROOT / 'VALIDATION.md', 'VALIDATION.md'),

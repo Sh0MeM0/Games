@@ -38,6 +38,12 @@ namespace Profiles.AutoCAD
             }
         }
 
+        internal static void Restore()
+        {
+            Start();
+            Schedule();
+        }
+
         private static void VariableChanged(object sender, SystemVariableChangedEventArgs args)
         {
             if (string.Equals(args.Name, "WSCURRENT", StringComparison.OrdinalIgnoreCase))
@@ -61,14 +67,14 @@ namespace Profiles.AutoCAD
 
         private static void OnIdle(object sender, EventArgs args)
         {
-            var ribbon = ComponentManager.Ribbon;
-            if (ribbon == null) return; // AutoCAD may not have opened its ribbon yet.
             AcadApplication.Idle -= OnIdle;
             pending = false;
-            if (ribbon.Tabs.Any(item => item.Id == TabId)) return;
-
             try
             {
+                var ribbon = ComponentManager.Ribbon;
+                // ItemInitialized and workspace changes schedule a new check if
+                // the user opens the ribbon later. Do not poll forever in Classic.
+                if (ribbon == null || ribbon.Tabs.Any(item => item.Id == TabId)) return;
                 var panelSource = new RibbonPanelSource { Title = "Построение профилей" };
                 panelSource.Items.Add(Button("Продольный\nпрофиль", "PROFILI_LONG"));
                 panelSource.Items.Add(Button("Поперечные\nпрофили", "PROFILI_CROSS"));

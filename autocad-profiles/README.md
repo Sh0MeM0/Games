@@ -1,21 +1,25 @@
 # Профиля для AutoCAD 2020–2024
 
-Модуль для обычного AutoCAD под Windows 10/11 x64: вкладка **«Профиля»**, отдельное окно ввода и редактируемые продольные и поперечные профили каналов и прудов. AutoCAD LT и Mac не поддерживаются.
+Модуль для обычного AutoCAD под Windows 10/11 x64: верхнее меню **«Профиля»** в классическом интерфейсе, вкладка ленты и отдельное окно ввода и редактируемые продольные и поперечные профили каналов и прудов. AutoCAD LT и Mac не поддерживаются.
 
-Версия **0.1.0**. В дистрибутиве отдельные сборки для каждой версии AutoCAD. Расчётное ядро проверяется автоматическими тестами; загрузка и интерфейс в настоящем AutoCAD требуют проверки на Windows. Состояние проверок перечислено в [VALIDATION.md](VALIDATION.md).
+Версия **0.1.1**. В дистрибутиве отдельные сборки для каждой версии AutoCAD. Расчётное ядро проверяется автоматическими тестами; загрузка и интерфейс в настоящем AutoCAD требуют проверки на Windows. Состояние проверок перечислено в [VALIDATION.md](VALIDATION.md).
 
 ## Скачать и установить
 
-[Скачать установщик Profiles-Setup-0.1.0.exe](https://github.com/Sh0MeM0/Games/raw/refs/heads/autocad-profiles-v0.1.0/autocad-profiles/releases/Profiles-Setup-0.1.0.exe)
+[Скачать установщик Profiles-Setup-0.1.1.exe](https://github.com/Sh0MeM0/Games/raw/refs/heads/autocad-profiles-v0.1.0/autocad-profiles/releases/Profiles-Setup-0.1.1.exe)
 
 1. Закройте AutoCAD, скачайте EXE и запустите установку. Требуются права администратора и .NET Framework 4.7.2 или новее.
 2. Установщик помещает модуль в `C:\Program Files\Autodesk\ApplicationPlugins\Sh0MeM0.Profiles.bundle`.
-3. Запустите AutoCAD. На ленте появится **«Профиля»**. Если лента скрыта, выполните `RIBBON`.
-4. Нажмите «Продольный» или «Поперечные». Команды также доступны напрямую: `PROFILI`, `PROFILI_LONG`, `PROFILI_CROSS`.
+3. Запустите AutoCAD. В классическом интерфейсе раздел **«Профиля»** добавляется в верхнюю строку меню, рядом с другими меню, как у MDSTools на присланном примере. При включённой ленте доступна и вкладка **«Профиля»**.
+4. Выберите «Продольный профиль» или «Поперечные профили». Команды также доступны напрямую: `PROFILI`, `PROFILI_LONG`, `PROFILI_CROSS`.
 
-Установщик не имеет подписи издателя Authenticode. Контрольные суммы находятся в [releases/SHA256SUMS.txt](releases/SHA256SUMS.txt); проверка в PowerShell: `Get-FileHash .\Profiles-Setup-0.1.0.exe -Algorithm SHA256`. Не отключайте защитные настройки AutoCAD; каталог Program Files используется для штатной загрузки модулей.
+**Обновление с 0.1.0:** закройте все окна AutoCAD и установите 0.1.1 поверх предыдущей версии. В 0.1.0 была только вкладка ленты; 0.1.1 добавляет отдельное классическое меню из `Contents/Profiles.cuix`. Оно регистрируется в bundle для автоматической загрузки, а модуль восстанавливает его после смены рабочего пространства.
 
-Для ручной установки доступен [архив bundle](https://github.com/Sh0MeM0/Games/raw/refs/heads/autocad-profiles-v0.1.0/autocad-profiles/releases/Profiles-Bundle-0.1.0.zip). При закрытом AutoCAD распакуйте папку `Sh0MeM0.Profiles.bundle` в `C:\Program Files\Autodesk\ApplicationPlugins`. Удаление установленной EXE версии — через «Установленные приложения» Windows. Сохранённые отдельно JSON-проекты не удаляются.
+Если строка меню скрыта или раздел не появился после смены рабочего пространства, выполните `PROFILI_MENU`: команда включает строку меню и восстанавливает раздел «Профиля». Если AutoCAD сообщает «Неизвестная команда», это означает, что сам модуль не загрузился: проверьте наличие `PackageContents.xml` в указанной папке установки и сообщения при запуске (F2). Файл меню можно подключить штатной командой `MENULOAD`, выбрав `C:\Program Files\Autodesk\ApplicationPlugins\Sh0MeM0.Profiles.bundle\Contents\Profiles.cuix`; для построения также должна загрузиться DLL модуля.
+
+Установщик не имеет подписи издателя Authenticode. Контрольные суммы находятся в [releases/SHA256SUMS.txt](releases/SHA256SUMS.txt); проверка в PowerShell: `Get-FileHash .\Profiles-Setup-0.1.1.exe -Algorithm SHA256`. Не отключайте защитные настройки AutoCAD; каталог Program Files используется для штатной загрузки модулей.
+
+Для ручной установки доступен [архив bundle](https://github.com/Sh0MeM0/Games/raw/refs/heads/autocad-profiles-v0.1.0/autocad-profiles/releases/Profiles-Bundle-0.1.1.zip). При закрытом AutoCAD распакуйте папку `Sh0MeM0.Profiles.bundle` в `C:\Program Files\Autodesk\ApplicationPlugins`. Удаление установленной EXE версии — через «Установленные приложения» Windows. Сохранённые отдельно JSON-проекты не удаляются.
 
 ## Ввод данных
 
