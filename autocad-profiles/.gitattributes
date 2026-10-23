@@ -1,0 +1,10 @@
+*.dxf binary
+*.exe binary
+*.zip binary
+*.png binary
+*.cs text eol=lf
+*.csproj text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.nsi text eol=lf

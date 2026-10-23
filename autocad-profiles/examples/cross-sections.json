@@ -1,0 +1,106 @@
+{
+  "SchemaVersion": 1,
+  "Kind": "CrossSection",
+  "Settings": {
+    "Title": "УЧЕБНЫЕ ПОПЕРЕЧНЫЕ ПРОФИЛИ КАНАЛА",
+    "HorizontalScale": 100.0,
+    "VerticalScale": 100.0,
+    "MetresPerDrawingUnit": 1.0,
+    "Datum": 139.0,
+    "TextHeightMm": 2.5,
+    "TextWidthFactor": 0.85,
+    "ShowEmptyRows": false
+  },
+  "Longitudinal": [],
+  "Sections": [
+    {
+      "Name": "1-1 — проектная трапеция",
+      "Station": 0.0,
+      "Water": 142.1,
+      "ProjectBottom": 141.2,
+      "BottomWidth": 0.6,
+      "LeftSlope": 1.5,
+      "RightSlope": 1.5,
+      "CenterOffset": 0.0,
+      "Points": [
+        {
+          "Offset": -8.0,
+          "Existing": 143.7,
+          "Design": null
+        },
+        {
+          "Offset": -4.0,
+          "Existing": 143.65,
+          "Design": null
+        },
+        {
+          "Offset": -1.0,
+          "Existing": 141.8,
+          "Design": null
+        },
+        {
+          "Offset": 0.0,
+          "Existing": 141.6,
+          "Design": null
+        },
+        {
+          "Offset": 1.0,
+          "Existing": 141.85,
+          "Design": null
+        },
+        {
+          "Offset": 4.0,
+          "Existing": 143.8,
+          "Design": null
+        },
+        {
+          "Offset": 8.0,
+          "Existing": 143.85,
+          "Design": null
+        }
+      ]
+    },
+    {
+      "Name": "2-2 — проект по отметкам",
+      "Station": 100.0,
+      "Water": 141.8,
+      "ProjectBottom": null,
+      "BottomWidth": null,
+      "LeftSlope": null,
+      "RightSlope": null,
+      "CenterOffset": 0.0,
+      "Points": [
+        {
+          "Offset": -7.0,
+          "Existing": 143.35,
+          "Design": 143.35
+        },
+        {
+          "Offset": -3.2,
+          "Existing": 143.25,
+          "Design": 142.7
+        },
+        {
+          "Offset": -0.4,
+          "Existing": 141.35,
+          "Design": 140.8
+        },
+        {
+          "Offset": 0.4,
+          "Existing": 141.3,
+          "Design": 140.8
+        },
+        {
+          "Offset": 3.2,
+          "Existing": 143.3,
+          "Design": 142.7
+        },
+        {
+          "Offset": 7.0,
+          "Existing": 143.4,
+          "Design": 143.4
+        }
+      ]
+    }
+  ]
+}
