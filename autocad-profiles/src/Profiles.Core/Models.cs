@@ -138,6 +138,22 @@ namespace Profiles.Core
         public double Radius { get; set; }
     }
 
+    /// <summary>
+    /// One editable horizontal linear dimension in the profile's local XY plane.
+    /// Coordinates and text height are drawing units; MeasurementFactor converts
+    /// the measured horizontal distance back to metres without changing geometry.
+    /// </summary>
+    public sealed class DrawDimension : DrawEntity
+    {
+        public Point2 FirstPoint { get; set; }
+        public Point2 SecondPoint { get; set; }
+        public Point2 DimensionLinePoint { get; set; }
+        public double TextHeight { get; set; }
+        public double TextWidthFactor { get; set; } = 0.85;
+        public double MeasurementFactor { get; set; } = 1;
+        public int DecimalPlaces { get; set; } = 2;
+    }
+
     /// <summary>Simple closed polygon filled with parallel lines; spacing is in drawing units.</summary>
     public sealed class DrawHatch : DrawEntity
     {

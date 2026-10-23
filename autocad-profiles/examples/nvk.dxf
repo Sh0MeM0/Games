@@ -493,7 +493,7 @@ $SKPOLY
   9
 $TDCREATE
  40
-2461337.568275463
+2461337.5881134258
   9
 $TDUCREATE
  40
@@ -501,7 +501,7 @@ $TDUCREATE
   9
 $TDUPDATE
  40
-2461337.568275463
+2461337.5881134258
   9
 $TDUUPDATE
  40
@@ -553,7 +553,7 @@ $SPLINESEGS
   9
 $HANDSEED
   5
-A1
+A5
   9
 $SURFTAB1
  70
@@ -933,11 +933,11 @@ $PSTYLEMODE
   9
 $FINGERPRINTGUID
   2
-{CD6D874F-2F5F-466B-A55E-FD6B5751D962}
+{3FC9CF47-F2AA-48DC-8039-B7CEA563C832}
   9
 $VERSIONGUID
   2
-{AD8E8EF9-EBBE-4544-9DFA-73A3F80353F8}
+{31C0E8CE-3A1B-4393-B738-357BDACC5AC8}
   9
 $EXTNAMES
 290
@@ -1327,9 +1327,9 @@ ISM
   0
 CLASS
   1
-LAYOUT
+ACDBPLACEHOLDER
   2
-AcDbLayout
+AcDbPlaceHolder
   3
 ObjectDBX Classes
  90
@@ -1343,9 +1343,9 @@ ObjectDBX Classes
   0
 CLASS
   1
-ACDBPLACEHOLDER
+LAYOUT
   2
-AcDbPlaceHolder
+AcDbLayout
   3
 ObjectDBX Classes
  90
@@ -1805,7 +1805,7 @@ Continuous
   0
 LAYER
   5
-93
+97
 330
 1
 100
@@ -1927,7 +1927,7 @@ ACAD
   0
 APPID
   5
-9E
+A2
 330
 3
 100
@@ -1941,7 +1941,7 @@ HATCHBACKGROUNDCOLOR
   0
 APPID
   5
-9F
+A3
 330
 3
 100
@@ -4989,9 +4989,69 @@ AcDbMText
   1
 {\W0.85;\pxql;ОБЪЁМ СРЕЗКИ, М³}
   0
-LWPOLYLINE
+MTEXT
   5
 8B
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+103.0
+ 20
+-48.5
+ 30
+0.0
+ 40
+1.25
+ 41
+40.0
+ 71
+4
+  1
+{\W0.85;\pxql;Итого по показанному участку}
+  0
+MTEXT
+  5
+8C
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+103.0
+ 20
+-52.0
+ 30
+0.0
+ 40
+1.25
+ 41
+40.0
+ 71
+4
+  1
+{\W0.85;\pxql;Срезка = — (неполные данные)}
+  0
+LWPOLYLINE
+  5
+8D
 330
 17
 100
@@ -5019,7 +5079,7 @@ AcDbPolyline
   0
 MTEXT
   5
-8C
+8E
 330
 17
 100
@@ -5047,9 +5107,39 @@ AcDbMText
   1
 {\W0.85;\pxql;ОБЪЁМ ДОСЫПКИ, М³}
   0
+MTEXT
+  5
+8F
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+103.0
+ 20
+-56.0
+ 30
+0.0
+ 40
+1.25
+ 41
+40.0
+ 71
+4
+  1
+{\W0.85;\pxql;Досыпка = — (неполные данные)}
+  0
 LWPOLYLINE
   5
-8D
+90
 330
 17
 100
@@ -5077,7 +5167,7 @@ AcDbPolyline
   0
 MTEXT
   5
-8E
+91
 330
 17
 100
@@ -5105,9 +5195,39 @@ AcDbMText
   1
 {\W0.85;\pxql;ОБЪЁМ ЗАИЛЕНИЯ, М³}
   0
+MTEXT
+  5
+92
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+103.0
+ 20
+-60.0
+ 30
+0.0
+ 40
+1.25
+ 41
+40.0
+ 71
+4
+  1
+{\W0.85;\pxql;Удаление ила = — (неполные данные)}
+  0
 LWPOLYLINE
   5
-8F
+93
 330
 17
 100
@@ -5135,7 +5255,7 @@ AcDbPolyline
   0
 LWPOLYLINE
   5
-90
+94
 330
 17
 100
@@ -5163,7 +5283,7 @@ AcDbPolyline
   0
 LWPOLYLINE
   5
-91
+95
 330
 17
 100
@@ -5191,7 +5311,7 @@ AcDbPolyline
   0
 MTEXT
   5
-92
+96
 330
 17
 100
@@ -5221,7 +5341,7 @@ AcDbMText
   0
 LWPOLYLINE
   5
-94
+98
 330
 17
 100
@@ -5249,7 +5369,7 @@ AcDbPolyline
   0
 MTEXT
   5
-95
+99
 330
 17
 100
@@ -5279,7 +5399,7 @@ AcDbMText
   0
 LWPOLYLINE
   5
-96
+9A
 330
 17
 100
@@ -5311,7 +5431,7 @@ AcDbPolyline
   0
 MTEXT
   5
-97
+9B
 330
 17
 100
@@ -5341,7 +5461,7 @@ AcDbMText
   0
 LWPOLYLINE
   5
-98
+9C
 330
 17
 100
@@ -5369,7 +5489,7 @@ AcDbPolyline
   0
 MTEXT
   5
-99
+9D
 330
 17
 100
@@ -5399,7 +5519,7 @@ AcDbMText
   0
 MTEXT
   5
-9A
+9E
 330
 17
 100
@@ -5429,7 +5549,7 @@ AcDbMText
   0
 MTEXT
   5
-9B
+9F
 330
 17
 100
@@ -5459,7 +5579,7 @@ AcDbMText
   0
 MTEXT
   5
-9C
+A0
 330
 17
 100
@@ -5489,7 +5609,7 @@ AcDbMText
   0
 MTEXT
   5
-9D
+A1
 330
 17
 100
@@ -6507,7 +6627,7 @@ CREATED_BY_EZDXF
   3
 WRITTEN_BY_EZDXF
 350
-A0
+A4
   0
 DICTIONARYVAR
   5
@@ -6519,11 +6639,11 @@ DictionaryVariables
 280
 0
   1
-1.4.4 @ 2026-10-23T13:38:19.090261+00:00
+1.4.4 @ 2026-10-23T14:06:53.022088+00:00
   0
 DICTIONARYVAR
   5
-A0
+A4
 330
 2D
 100
@@ -6531,7 +6651,7 @@ DictionaryVariables
 280
 0
   1
-1.4.4 @ 2026-10-23T13:38:19.096168+00:00
+1.4.4 @ 2026-10-23T14:06:53.028739+00:00
   0
 ENDSEC
   0

@@ -94,8 +94,60 @@ public sealed class CrossPresentationTests
         Assert.NotEqual(ninth.Position.Y, tenth.Position.Y);
         var shortDistances = texts.Where(text => text.Text == "0.30").ToList();
         Assert.Equal(2, shortDistances.Count);
-        Assert.NotEqual(shortDistances[0].Position.Y, shortDistances[1].Position.Y);
+        Assert.Equal(shortDistances[0].Position.Y, shortDistances[1].Position.Y);
         Assert.Contains(plan.Warnings, warning => warning.Contains("разнесены по высоте"));
+    }
+
+    [Fact]
+    public void DistanceLabelsStayCenteredAndOnlyTheirOwnShortIntervalReducesFont()
+    {
+        var project = Cross(new() { Offset = 0, Existing = 10 }, new() { Offset = 3, Existing = 10 },
+            new() { Offset = 3.5, Existing = 10 }, new() { Offset = 7.5, Existing = 10 });
+        project.Settings.CrossHorizontalScale = project.Settings.CrossVerticalScale = 100;
+        project.Settings.TextHeightMm = 10;
+        project.Sections[0].DesignMode = SectionDesignMode.None;
+        var texts = ProfileEngine.Build(project).Entities.OfType<DrawText>().ToList();
+        var row = Assert.Single(texts, text => text.Text == "РАССТОЯНИЕ, м");
+        var values = texts.Where(text => text.Position.X >= 0 && Math.Abs(text.Position.Y - row.Position.Y) < 1e-8).ToList();
+        Assert.Equal(new[] { "3.00", "0.50", "4.00" }, values.Select(text => text.Text));
+        Assert.Equal(.25, values[0].Height, 8);
+        Assert.Equal(.25, values[2].Height, 8);
+        Assert.InRange(values[1].Height, .08, .249999);
+        Assert.All(values, text => Assert.Equal(-.85, text.Position.Y, 8));
+    }
+
+    [Fact]
+    public void CutAreaKeepsEditableLeaderWithoutArrowheadWhileOtherAreaArrowsRemain()
+    {
+        var project = Cross(new() { Offset = -2, Existing = 10, Design = 8 }, new() { Offset = 2, Existing = 10, Design = 12 });
+        project.Sections[0].DesignMode = SectionDesignMode.Points;
+        var plan = ProfileEngine.Build(project);
+        Assert.Contains(Curves(plan, "PROF_LEADER"), line => line.ColorIndex == 1);
+        Assert.DoesNotContain(Curves(plan, "PROF_LEADER_ARROW"), line => line.ColorIndex == 1);
+        Assert.Contains(Curves(plan, "PROF_LEADER_ARROW"), line => line.ColorIndex == 3);
+    }
+
+    [Fact]
+    public void LargeSlopeCaptionsKeepTheirFullRotatedBoundsAboveTheCrossTable()
+    {
+        var project = Cross(new() { Offset = 0, Existing = 160.2 }, new() { Offset = 8.5, Existing = 160.2 },
+            new() { Offset = 17, Existing = 160.2 });
+        project.Settings.CrossHorizontalScale = project.Settings.CrossVerticalScale = 100;
+        project.Settings.Datum = 158;
+        project.Settings.TextHeightMm = 10;
+        var section = project.Sections[0];
+        section.DesignMode = SectionDesignMode.Trapezoid;
+        section.ProjectBottom = 159.1; section.BottomWidth = 1; section.CenterOffset = 8.5;
+        section.LeftSlope = section.RightSlope = 1.5; section.Water = 160.7;
+        var labels = ProfileEngine.Build(project).Entities.OfType<DrawText>().Where(text => text.Text == "1:1.5").ToList();
+        Assert.Equal(2, labels.Count);
+        Assert.All(labels, label =>
+        {
+            double angle = label.RotationDegrees * Math.PI / 180;
+            double width = label.Text.Length * label.Height * .75 * label.WidthFactor;
+            double halfHeight = (Math.Abs(Math.Sin(angle)) * width + Math.Abs(Math.Cos(angle)) * label.Height * 1.3) / 2;
+            Assert.True(label.Position.Y - halfHeight > 0);
+        });
     }
 
     private static bool Inside(DrawHatch region, Point2 point)

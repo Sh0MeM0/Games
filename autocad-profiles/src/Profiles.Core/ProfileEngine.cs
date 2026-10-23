@@ -111,6 +111,17 @@ namespace Profiles.Core
             if (line != null) return line.Points;
             var hatch = entity as DrawHatch;
             if (hatch != null) return hatch.Boundary;
+            var dimension = entity as DrawDimension;
+            if (dimension != null)
+            {
+                double center = (dimension.FirstPoint.X + dimension.SecondPoint.X) / 2;
+                string measurement = ((dimension.SecondPoint.X - dimension.FirstPoint.X) * dimension.MeasurementFactor)
+                    .ToString("F" + dimension.DecimalPlaces, CultureInfo.InvariantCulture);
+                double halfWidth = measurement.Length * dimension.TextHeight * .75 * dimension.TextWidthFactor / 2;
+                return new[] { dimension.FirstPoint, dimension.SecondPoint, dimension.DimensionLinePoint,
+                    new Point2(Math.Min(dimension.FirstPoint.X, center - halfWidth) - dimension.TextHeight, dimension.DimensionLinePoint.Y - dimension.TextHeight),
+                    new Point2(Math.Max(dimension.SecondPoint.X, center + halfWidth) + dimension.TextHeight, dimension.DimensionLinePoint.Y + 2 * dimension.TextHeight) };
+            }
             var text = entity as DrawText;
             if (text != null) return new[] { text.Position };
             var circle = (DrawCircle)entity;
@@ -137,6 +148,14 @@ namespace Profiles.Core
             if (line != null) { line.Points = line.Points.Select(p => new Point2(p.X, p.Y + dy)).ToList(); return; }
             var hatch = entity as DrawHatch;
             if (hatch != null) { hatch.Boundary = hatch.Boundary.Select(p => new Point2(p.X, p.Y + dy)).ToList(); return; }
+            var dimension = entity as DrawDimension;
+            if (dimension != null)
+            {
+                dimension.FirstPoint = new Point2(dimension.FirstPoint.X, dimension.FirstPoint.Y + dy);
+                dimension.SecondPoint = new Point2(dimension.SecondPoint.X, dimension.SecondPoint.Y + dy);
+                dimension.DimensionLinePoint = new Point2(dimension.DimensionLinePoint.X, dimension.DimensionLinePoint.Y + dy);
+                return;
+            }
             var text = entity as DrawText;
             if (text != null) { text.Position = new Point2(text.Position.X, text.Position.Y + dy); return; }
             var circle = (DrawCircle)entity;
@@ -149,7 +168,6 @@ namespace Profiles.Core
             internal double Height;
             internal Func<LongitudinalPoint, double?> Value;
             internal Func<LongitudinalPoint, string> TextValue;
-            internal List<Tuple<double, double?>> StationValues;
             internal short Color;
             internal Row(string label, double height, string kind = "", Func<LongitudinalPoint, double?> value = null, short color = 7)
             { Label = label; Height = height; Kind = kind; Value = value; Color = color; }
@@ -249,7 +267,6 @@ namespace Profiles.Core
                     }
                     else Text(-labels + 2 * Layout, center, row.Label, alignment: TextAlignment.Left, width: labels - 4 * Layout);
                     if (volumeRow) VolumeIntervals(earthworks, row.Kind, first, points.Last().Station, y, bottom);
-                    else if (row.Kind == "area") AreaStations(row, first, points.Last().Station, y, bottom);
                     else if (!slopeRow && row.Kind == "plan") Line(new Point2(0, center), new Point2(width, center));
                     else if (!slopeRow)
                     {
@@ -283,7 +300,7 @@ namespace Profiles.Core
                 if (template == ProfileTemplate.Reconstruction && points.Any(p => p.ExistingBottom.HasValue && p.ProjectBottom.HasValue && p.ProjectBottom > p.ExistingBottom))
                     plan.Warnings.Add("Проектное дно местами выше существующего: глубина подчистки показана как 0.00. Объёмы досыпки определяются по площадям поперечников.");
                 if (earthworks.Stations.Any(item => item.Station < first - 1e-8 || item.Station > points.Last().Station + 1e-8))
-                    plan.Warnings.Add("Есть поперечники за пределами продольного профиля: их площади и выходящие за границы интервалы объёмов не показаны в этой таблице.");
+                    plan.Warnings.Add("Есть поперечники за пределами продольного профиля: выходящие за его границы интервалы объёмов не показаны в этой таблице и не включены в итог по показанному участку.");
             }
 
             private void AddRow(List<Row> rows, List<LongitudinalPoint> points, string label, double height, Func<LongitudinalPoint, double?> value, short color = 7, string kind = "")
@@ -326,49 +343,42 @@ namespace Profiles.Core
 
             private List<Row> AddEarthworkRows(List<Row> rows, EarthworksSummary earthworks)
             {
-                if (settings.ShowEmptyRows || earthworks.Stations.Count > 0)
-                {
-                    rows.Add(AreaRow("ПЛОЩАДЬ СРЕЗКИ, М²", earthworks, result => result.CutArea));
-                    rows.Add(AreaRow("ПЛОЩАДЬ ДОСЫПКИ, М²", earthworks, result => result.FillArea));
-                    rows.Add(AreaRow("ПЛОЩАДЬ ЗАИЛЕНИЯ, М²", earthworks, result => result.SiltArea));
-                }
                 rows.Add(new Row("ОБЪЁМ СРЕЗКИ, М³", 8, "volumeCut"));
                 rows.Add(new Row("ОБЪЁМ ДОСЫПКИ, М³", 8, "volumeFill"));
                 rows.Add(new Row("ОБЪЁМ ЗАИЛЕНИЯ, М³", 8, "volumeSilt"));
                 return rows;
             }
 
-            private static Row AreaRow(string label, EarthworksSummary earthworks, Func<SectionEarthworks, double?> value)
-            {
-                return new Row(label, 8, "area")
-                {
-                    StationValues = earthworks.Stations.Select(item => Tuple.Create(item.Station, item.Result == null ? null : value(item.Result))).ToList()
-                };
-            }
-
-            private void AreaStations(Row row, double first, double last, double top, double bottom)
-            {
-                foreach (var value in row.StationValues)
-                {
-                    if (value.Item1 < first - 1e-8 || value.Item1 > last + 1e-8) continue;
-                    double x = X(value.Item1 - first);
-                    Line(new Point2(x, top), new Point2(x, bottom));
-                    if (value.Item2.HasValue) Text(x, (top + bottom) / 2, F(value.Item2.Value), 90);
-                }
-            }
-
             private void VolumeIntervals(EarthworksSummary earthworks, string kind, double first, double last, double top, double bottom)
             {
-                foreach (var interval in earthworks.Intervals)
+                // Never clip an interval: the end-area method needs the actual
+                // cross section at each displayed boundary, not a guessed area.
+                var intervals = earthworks.Intervals.Where(interval => interval.StartStation >= first && interval.EndStation <= last).ToList();
+                foreach (var interval in intervals)
                 {
-                    if (interval.StartStation < first - 1e-8 || interval.EndStation > last + 1e-8) continue;
                     double left = X(interval.StartStation - first), right = X(interval.EndStation - first);
                     Line(new Point2(left, top), new Point2(left, bottom));
                     Line(new Point2(right, top), new Point2(right, bottom));
-                    double? value = kind == "volumeCut" ? interval.CutVolume : kind == "volumeFill" ? interval.FillVolume : interval.SiltVolume;
-                    if (value.HasValue) Text((left + right) / 2, (top + bottom) / 2, F(value.Value));
+                    double? value = VolumeValue(interval, kind);
+                    if (value.HasValue) Text((left + right) / 2, (top + bottom) / 2, value.Value.ToString("F1", CultureInfo.InvariantCulture));
                 }
+                bool covered = !earthworks.HasUnassignedSections && intervals.Count > 0
+                    && intervals[0].StartStation == first && intervals[intervals.Count - 1].EndStation == last
+                    && intervals.Zip(intervals.Skip(1), (left, right) => left.EndStation == right.StartStation).All(adjacent => adjacent);
+                bool complete = covered && intervals.All(interval => VolumeValue(interval, kind).HasValue);
+                // Sum original values before formatting once; sums of rounded
+                // table cells can differ materially on a long alignment.
+                string total = complete ? intervals.Sum(interval => VolumeValue(interval, kind).Value).ToString("F1", CultureInfo.InvariantCulture) + " м³"
+                    : "— (неполные данные)";
+                string label = kind == "volumeCut" ? "Срезка" : kind == "volumeFill" ? "Досыпка" : "Удаление ила";
+                double x = X(last - first) + 6 * Layout;
+                if (kind == "volumeCut")
+                    Text(x, top + 3 * Layout, "Итого по показанному участку", alignment: TextAlignment.Left, width: 80 * Layout);
+                Text(x, (top + bottom) / 2, label + " = " + total, alignment: TextAlignment.Left, width: 80 * Layout);
             }
+
+            private static double? VolumeValue(EarthworkVolumeInterval interval, string kind) =>
+                kind == "volumeCut" ? interval.CutVolume : kind == "volumeFill" ? interval.FillVolume : interval.SiltVolume;
 
             private static string PointName(LongitudinalPoint point, int index)
             { return string.IsNullOrWhiteSpace(point.PointName) ? (index + 1).ToString(CultureInfo.InvariantCulture) : point.PointName; }
@@ -432,7 +442,6 @@ namespace Profiles.Core
                 IEnumerable<string> rotated = Enumerable.Empty<string>();
                 bool uniformText = row.Kind == "text" && row.TextValue != null && row.TextValue(points[0]) != "" && points.Select(row.TextValue).Distinct().Count() == 1;
                 if (row.Kind == "station") rotated = points.Select(p => Station(p.Station));
-                else if (row.StationValues != null) rotated = row.StationValues.Where(item => item.Item2.HasValue).Select(item => F(item.Item2.Value));
                 else if (row.Kind == "point") rotated = points.Select((point, index) => PointName(point, index));
                 else if (row.TextValue != null && !uniformText)
                     rotated = points.Select(row.TextValue);
@@ -528,7 +537,7 @@ namespace Profiles.Core
                     int laneCount = rowCells.Select(cell => cell.Lane + 1).DefaultIfEmpty(1).Max();
                     double cellHeight = SectionCellHeight(rowCells, (top - bottom) / laneCount);
                     foreach (var cell in rowCells)
-                        Text(cell.X, top - (top - bottom) * (cell.Lane + .5) / laneCount, cell.Text, cell.Rotation, cell.Color, height: cellHeight);
+                        Text(cell.X, top - (top - bottom) * (cell.Lane + .5) / laneCount, cell.Text, cell.Rotation, cell.Color, height: cell.Height ?? cellHeight);
                     top = bottom;
                 }
                 foreach (double x in new[] { -labels, 0, width }) Line(new Point2(x, 0), new Point2(x, bottomY));
@@ -548,7 +557,7 @@ namespace Profiles.Core
                 calloutBoxes.Add(Tuple.Create(-labels, 1 * Layout, labels, 23 * Layout));
                 var callouts = new List<SectionCallout>
                 {
-                    AreaCallout("F срезки = " + Quantity(earthworks.CutArea) + " м²", earthworks.CutRegions, transform, 1),
+                    AreaCallout("F срезки = " + Quantity(earthworks.CutArea) + " м²", earthworks.CutRegions, transform, 1, false),
                     AreaCallout("F досыпки = " + Quantity(earthworks.FillArea) + " м²", earthworks.FillRegions, transform, 3),
                     AreaCallout("F заиления = " + Quantity(earthworks.SiltArea) + " м²", earthworks.SiltRegions, transform, 30)
                 };
@@ -588,6 +597,8 @@ namespace Profiles.Core
                     plan.Warnings.Add("Поперечник «" + section.Name + "»: пропуски проектных отметок оставлены разрывами.");
                 if (cells.Any(row => row.Any(cell => cell.Lane > 0)))
                     plan.Warnings.Add("Поперечник «" + section.Name + "»: подписи близких точек разнесены по высоте внутри строк таблицы.");
+                if (cells.Any(row => row.Any(cell => cell.TooNarrow)))
+                    plan.Warnings.Add("Поперечник «" + section.Name + "»: отдельные интервалы слишком узкие для читаемых подписей расстояний; проверьте эти подписи после построения.");
             }
 
             private static string Quantity(double? value) { return value.HasValue ? F(value.Value) : "—"; }
@@ -595,9 +606,11 @@ namespace Profiles.Core
             private sealed class SectionCell
             {
                 internal double X, Rotation;
+                internal double? Height;
                 internal string Text;
                 internal short Color = 7;
                 internal int Lane;
+                internal bool TooNarrow;
             }
 
             private List<SectionCell> SectionCells(string kind, List<SectionPoint> display, double first)
@@ -609,12 +622,25 @@ namespace Profiles.Core
                     double x = X(point.Offset - first);
                     if (kind == "number") cells.Add(new SectionCell { X = x, Text = (index + 1).ToString(CultureInfo.InvariantCulture) });
                     else if (kind == "distance" && index > 0)
-                        cells.Add(new SectionCell { X = X((point.Offset + display[index - 1].Offset) / 2 - first), Text = F(point.Offset - display[index - 1].Offset) });
+                    {
+                        double interval = point.Offset - display[index - 1].Offset;
+                        string value = F(interval);
+                        double available = Math.Max(0, X(interval) - .8 * Paper);
+                        double fitted = available / (value.Length * .75 * settings.TextWidthFactor);
+                        cells.Add(new SectionCell
+                        {
+                            X = X((point.Offset + display[index - 1].Offset) / 2 - first), Text = value,
+                            Height = Math.Min(2.5 * Paper, Math.Max(.8 * Paper, fitted)), TooNarrow = fitted < .8 * Paper
+                        });
+                    }
                     else if (kind == "existing" && point.Existing.HasValue)
                         cells.Add(new SectionCell { X = x, Text = F(point.Existing.Value), Rotation = 90 });
                     else if (kind == "design" && point.Design.HasValue)
                         cells.Add(new SectionCell { X = x, Text = F(point.Design.Value), Rotation = 90, Color = 1 });
                 }
+                // Distances stay on the exact centerline of their fixed 5 mm row.
+                // Each interval controls only its own font size, never its neighbors'.
+                if (kind == "distance") return cells;
                 var laneEnds = new List<double>();
                 double nominalHeight = Math.Min(TextHeight, 3 * Paper);
                 foreach (var cell in cells)
@@ -640,16 +666,11 @@ namespace Profiles.Core
                     if (region.Count >= 3)
                     {
                         var boundary = region.Select(transform).ToList();
-                        var coverage = HatchPatternGeometry.Coverage(boundary, angle, 1.2 * Paper, Paper);
-                        double spacingPaper = coverage.Spacing / Paper;
-                        double lineWeight = spacingPaper / 3 >= .13 ? .13 : spacingPaper / 3 >= .09 ? .09 : .05;
-                        const string densityWarning = "Для очень узкой площади плотность штриховки ограничена; геометрия и рассчитанная площадь сохранены.";
-                        if (coverage.DensityLimited && !plan.Warnings.Contains(densityWarning)) plan.Warnings.Add(densityWarning);
                         plan.Entities.Add(new DrawHatch
                         {
-                            Layer = layer, ColorIndex = color, LineWeightMm = lineWeight,
+                            Layer = layer, ColorIndex = color, LineWeightMm = .09,
                             Boundary = boundary,
-                            PatternSpacing = coverage.Spacing, PatternAngleDegrees = angle
+                            PatternSpacing = HatchPatternGeometry.NormalSpacing(boundary, angle, 1.2 * Paper), PatternAngleDegrees = angle
                         });
                     }
             }
@@ -659,6 +680,7 @@ namespace Profiles.Core
                 internal string Text;
                 internal Point2? Target;
                 internal short Color;
+                internal bool Arrow = true;
             }
 
             private static string SectionIdentifier(CrossSection section)
@@ -668,10 +690,10 @@ namespace Profiles.Core
                 return name.StartsWith("ПК", StringComparison.OrdinalIgnoreCase) ? "ПК" + name.Substring(2).Trim() : name;
             }
 
-            private SectionCallout AreaCallout(string text, List<List<Point2>> regions, Func<Point2, Point2> transform, short color)
+            private SectionCallout AreaCallout(string text, List<List<Point2>> regions, Func<Point2, Point2> transform, short color, bool arrow = true)
             {
                 var region = regions.OrderByDescending(PolygonArea).FirstOrDefault();
-                return new SectionCallout { Text = text, Color = color, Target = region == null ? (Point2?)null : transform(InteriorPoint(region)) };
+                return new SectionCallout { Text = text, Color = color, Arrow = arrow, Target = region == null ? (Point2?)null : transform(InteriorPoint(region)) };
             }
 
             private static double PolygonArea(List<Point2> polygon)
@@ -737,7 +759,7 @@ namespace Profiles.Core
                     }
                     double x = targetX - labelWidth - 4 * Layout;
                     double y = top + (3 + (note.Target.HasValue ? 0 : missing++ * 6)) * Layout;
-                    Leader(note.Text, note.Target, x, y, labelWidth, note.Color);
+                    Leader(note.Text, note.Target, x, y, labelWidth, note.Color, note.Arrow);
                 }
             }
 
@@ -749,15 +771,27 @@ namespace Profiles.Core
                 string value = "1:" + slope.ToString("0.###", CultureInfo.InvariantCulture);
                 var center = new Point2((a.X + b.X) / 2 + dy / length * 2.5 * Layout, (a.Y + b.Y) / 2 - dx / length * 2.5 * Layout);
                 bool placed = false;
-                foreach (double offset in new[] { 2.5, 4.0, 6.0, 8.0 })
+                foreach (double offset in new[] { 2.5, 4.0, 6.0, 8.0, -2.5, -4.0, -6.0, -8.0 })
                 {
                     foreach (double fraction in new[] { .5, .35, .65 })
                     {
                         var candidate = new Point2(a.X + dx * fraction + dy / length * offset * Layout, a.Y + dy * fraction - dx / length * offset * Layout);
+                        if (InlineBounds(value, candidate, rotation).Item2 < Paper) continue;
                         if (!InlineLabelFits(value, candidate, rotation)) continue;
                         center = candidate; placed = true; break;
                     }
                     if (placed) break;
+                }
+                if (!placed)
+                {
+                    // Large configured text can leave no room beside a low
+                    // slope. Keep its full rotated bounds above the table and
+                    // existing graph/annotations instead of drawing into rows.
+                    double upper = Math.Max(Math.Max(a.Y, b.Y), calloutBoxes.Select(box => box.Item2 + box.Item4).DefaultIfEmpty(0).Max());
+                    upper = Math.Max(upper, plan.Entities.OfType<DrawPolyline>().Where(line => line.Layer != "PROF_GRID" && line.Layer != "PROF_ORD")
+                        .SelectMany(line => line.Points).Select(point => point.Y).DefaultIfEmpty(0).Max());
+                    double halfHeight = InlineBounds(value, new Point2(0, 0), rotation).Item4 / 2;
+                    center = new Point2((a.X + b.X) / 2, Math.Max(0, upper) + halfHeight + Paper);
                 }
                 InlineLabel(value, center, rotation, 1);
             }
@@ -793,13 +827,14 @@ namespace Profiles.Core
                 if (bottom == null) return;
                 var left = transform(bottom.Item1); var right = transform(bottom.Item2);
                 double y = Math.Max(2 * Layout, left.Y - 7 * Layout);
-                foreach (var point in new[] { left, right })
+                plan.Entities.Add(new DrawDimension
                 {
-                    Line(new Point2(point.X, point.Y - Layout), new Point2(point.X, y - 1.5 * Layout), "PROF_DIMENSION", 1, .18);
-                    Line(new Point2(point.X - .8 * Layout, y - .8 * Layout), new Point2(point.X + .8 * Layout, y + .8 * Layout), "PROF_DIMENSION", 1, .25);
-                }
-                Line(new Point2(left.X - 2 * Layout, y), new Point2(right.X + 2 * Layout, y), "PROF_DIMENSION", 1, .18);
-                InlineLabel(F(bottom.Item2.X - bottom.Item1.X), new Point2((left.X + right.X) / 2, y + 2 * Layout), 0, 1);
+                    Layer = "PROF_DIMENSION", ColorIndex = 1, LineWeightMm = .18,
+                    FirstPoint = left, SecondPoint = right, DimensionLinePoint = new Point2((left.X + right.X) / 2, y),
+                    TextHeight = TextHeight, TextWidthFactor = settings.TextWidthFactor,
+                    MeasurementFactor = settings.MetresPerDrawingUnit, DecimalPlaces = 2
+                });
+                calloutBoxes.Add(InlineBounds(F(bottom.Item2.X - bottom.Item1.X), new Point2((left.X + right.X) / 2, y + .7 * TextHeight), 0));
             }
 
             private double InlineWidth(string value) { return value.Length * TextHeight * .75 * settings.TextWidthFactor; }
@@ -852,7 +887,7 @@ namespace Profiles.Core
                 return simplified;
             }
 
-            private void Leader(string value, Point2? target, double x, double y, double width, short color)
+            private void Leader(string value, Point2? target, double x, double y, double width, short color, bool arrow)
             {
                 width = Math.Max(width, value.Length * TextHeight * .65 * settings.TextWidthFactor);
                 double labelHeight = TextHeight * 1.3;
@@ -894,7 +929,7 @@ namespace Profiles.Core
                     Curve(route, "PROF_LEADER", color, 0.18);
                     double dx = route[1].X - target.Value.X, dy = route[1].Y - target.Value.Y;
                     double length = Math.Sqrt(dx * dx + dy * dy);
-                    if (length > 1e-12)
+                    if (arrow && length > 1e-12)
                     {
                         dx /= length; dy /= length;
                         double size = 1.5 * Layout;

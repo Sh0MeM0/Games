@@ -148,13 +148,13 @@ public sealed class V05RegressionTests
         Assert.Equal(angle, slopes[1].RotationDegrees, 9);
         Assert.All(slopes, text => Assert.Equal(1, text.ColorIndex));
 
-        var dimensionExtensions = plan.Entities.OfType<DrawPolyline>()
-            .Where(line => line.Layer == "PROF_DIMENSION" && line.Points.Count == 2 && Near(line.Points[0].X, line.Points[1].X))
-            .OrderBy(line => line.Points[0].X).ToList();
-        Assert.Equal(2, dimensionExtensions.Count);
-        Assert.Equal(1, dimensionExtensions[1].Points[0].X - dimensionExtensions[0].Points[0].X, 10);
-        Assert.All(dimensionExtensions, line => Assert.Equal(1, line.ColorIndex));
-        Assert.Contains(texts, text => text.Text == "1.00" && text.ColorIndex == 1 && text.Position.Y > 0 && Near(text.Position.X, 8.5));
+        var dimension = Assert.Single(plan.Entities.OfType<DrawDimension>());
+        Assert.Equal("PROF_DIMENSION", dimension.Layer);
+        Assert.Equal(1, (dimension.SecondPoint.X - dimension.FirstPoint.X) * dimension.MeasurementFactor, 10);
+        Assert.Equal(1, dimension.ColorIndex);
+        Assert.Equal(8.5, dimension.DimensionLinePoint.X, 10);
+        Assert.Equal(2, dimension.DecimalPlaces);
+        Assert.DoesNotContain(plan.Entities, entity => entity.Layer == "PROF_DIMENSION" && entity is not DrawDimension);
 
         var waterLine = Assert.Single(plan.Entities.OfType<DrawPolyline>(), line => line.Layer == "PROF_WATER");
         var waterText = Assert.Single(texts, text => text.Text == "УР.ВОД.160.70");
@@ -182,30 +182,6 @@ public sealed class V05RegressionTests
         Assert.Equal(2.915, Earthworks.Calculate(section).CutArea!.Value, 10);
         Assert.Equal(1, areaText.ColorIndex);
         Assert.InRange(areaText.Position.Y - water.Points[0].Y, 0, 2.5 * areaText.Height);
-    }
-
-    [Fact]
-    public void PatternReachesSmallConvexEarAtDifferentNativeOriginPhases()
-    {
-        var boundary = new List<Point2>
-        {
-            new(-.1, 0), new(0, -.01), new(10, -.01), new(10, 10), new(0, 10), new(0, .01)
-        };
-        var coverage = HatchPatternGeometry.Coverage(boundary, 45, 1, .05);
-        Assert.False(coverage.DensityLimited);
-        Assert.True(coverage.Spacing > 0);
-        foreach (double phase in new[] { 0.0, .3, .7, .99 })
-        {
-            double xShift = -phase * coverage.Spacing / Math.Sqrt(2);
-            double yShift = phase * coverage.Spacing / Math.Sqrt(2);
-            var shifted = boundary.Select(point => new Point2(point.X + xShift, point.Y + yShift)).ToList();
-            var strokes = HatchPatternGeometry.Clip(shifted, 45, coverage.Spacing);
-            var ear = strokes.Where(stroke => Math.Min(stroke.Start.X, stroke.End.X) - xShift < -.001).ToList();
-            Assert.True(ear.Count >= 2, "The small convex ear must contain real hatch strokes at every tested pattern phase.");
-            double nearestTip = ear.SelectMany(stroke => new[] { stroke.Start, stroke.End }).Min(point =>
-                Math.Sqrt(Math.Pow(point.X - xShift + .1, 2) + Math.Pow(point.Y - yShift, 2)));
-            Assert.InRange(nearestTip, 0, .05 + 1e-10);
-        }
     }
 
     [Fact]

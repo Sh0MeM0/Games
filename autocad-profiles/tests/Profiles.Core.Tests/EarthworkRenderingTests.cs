@@ -19,8 +19,10 @@ public sealed class EarthworkRenderingTests
         foreach (var name in new[] { "ОБЪЁМ СРЕЗКИ, М³", "ОБЪЁМ ДОСЫПКИ, М³", "ОБЪЁМ ЗАИЛЕНИЯ, М³" })
         {
             var label = Assert.Single(texts, text => text.Text == name);
-            Assert.DoesNotContain(texts, text => text.Position.X >= 0 && Math.Abs(text.Position.Y - label.Position.Y) < 1e-8);
+            Assert.DoesNotContain(texts, text => text.Position.X >= 0 && text.Position.X <= 20 && Math.Abs(text.Position.Y - label.Position.Y) < 1e-8);
         }
+        Assert.Contains(texts, text => text.Text == "Срезка = — (неполные данные)");
+        Assert.DoesNotContain(texts, text => text.Text.StartsWith("ПЛОЩАДЬ", StringComparison.Ordinal));
         Assert.Contains(texts, text => text.Text == "Условные обозначения");
         foreach (var label in new[] { "Проектная отм. дна", "Существующая отм. дна", "Левый берег", "Правый берег", "Уровень воды" })
             Assert.Contains(texts, text => text.Text == label);
@@ -58,7 +60,7 @@ public sealed class EarthworkRenderingTests
     }
 
     [Fact]
-    public void LongitudinalAreasAndVolumesUseSectionStationsAcrossIntermediateLongitudinalPoints()
+    public void LongitudinalVolumesUseSectionStationsAcrossIntermediateLongitudinalPoints()
     {
         var project = Longitudinal(10, 10, 10);
         project.Longitudinal[0].Station = 0;
@@ -71,17 +73,17 @@ public sealed class EarthworkRenderingTests
         project.Sections = new List<CrossSection> { left, right };
         var plan = ProfileEngine.Build(project);
         var texts = plan.Entities.OfType<DrawText>().ToList();
-        foreach (var pair in new[] { (Name: "ОБЪЁМ СРЕЗКИ, М³", Value: "128.00"), (Name: "ОБЪЁМ ДОСЫПКИ, М³", Value: "288.00"), (Name: "ОБЪЁМ ЗАИЛЕНИЯ, М³", Value: "160.00") })
+        foreach (var pair in new[] { (Name: "ОБЪЁМ СРЕЗКИ, М³", Value: "128.0"), (Name: "ОБЪЁМ ДОСЫПКИ, М³", Value: "288.0"), (Name: "ОБЪЁМ ЗАИЛЕНИЯ, М³", Value: "160.0") })
         {
             var label = Assert.Single(texts, text => text.Text == pair.Name);
-            var value = Assert.Single(texts, text => text.Position.X >= 0 && Math.Abs(text.Position.Y - label.Position.Y) < 1e-8);
+            var value = Assert.Single(texts, text => text.Position.X >= 0 && text.Position.X <= 100 && Math.Abs(text.Position.Y - label.Position.Y) < 1e-8);
             Assert.Equal(pair.Value, value.Text);
             Assert.Equal(50, value.Position.X, 8);
         }
-        var areaRow = Assert.Single(texts, text => text.Text == "ПЛОЩАДЬ СРЕЗКИ, М²");
-        var areaValues = texts.Where(text => text.Position.X >= 0 && Math.Abs(text.Position.Y - areaRow.Position.Y) < 1e-8).ToList();
-        Assert.Equal(new[] { 0.0, 100.0 }, areaValues.Select(text => text.Position.X));
-        Assert.All(areaValues, text => Assert.Equal("1.28", text.Text));
+        Assert.DoesNotContain(texts, text => text.Text.StartsWith("ПЛОЩАДЬ", StringComparison.Ordinal));
+        Assert.Contains(texts, text => text.Text == "Срезка = 128.0 м³" && text.Position.X > 100);
+        Assert.Contains(texts, text => text.Text == "Досыпка = 288.0 м³" && text.Position.X > 100);
+        Assert.Contains(texts, text => text.Text == "Удаление ила = 160.0 м³" && text.Position.X > 100);
     }
 
     [Fact]
@@ -118,7 +120,7 @@ public sealed class EarthworkRenderingTests
     }
 
     [Fact]
-    public void LongitudinalAreaRowsIncludeCrossSectionsBetweenEnteredLongitudinalStations()
+    public void LongitudinalVolumesBetweenEnteredStationsDoNotPretendToCoverUnsurveyedEnds()
     {
         var project = Longitudinal(10, 10);
         project.Longitudinal[0].Station = 0;
@@ -129,14 +131,12 @@ public sealed class EarthworkRenderingTests
         right.Station = 80;
         project.Sections = new List<CrossSection> { left, right };
         var texts = ProfileEngine.Build(project).Entities.OfType<DrawText>().ToList();
-        var areaLabel = Assert.Single(texts, text => text.Text == "ПЛОЩАДЬ СРЕЗКИ, М²");
-        var areaValues = texts.Where(text => text.Position.X >= 0 && Math.Abs(text.Position.Y - areaLabel.Position.Y) < 1e-8).ToList();
-        Assert.Equal(new[] { 20.0, 80.0 }, areaValues.Select(text => text.Position.X));
-        Assert.All(areaValues, text => Assert.Equal("1.28", text.Text));
+        Assert.DoesNotContain(texts, text => text.Text.StartsWith("ПЛОЩАДЬ", StringComparison.Ordinal));
         var volumeLabel = Assert.Single(texts, text => text.Text == "ОБЪЁМ СРЕЗКИ, М³");
-        var volume = Assert.Single(texts, text => text.Position.X >= 0 && Math.Abs(text.Position.Y - volumeLabel.Position.Y) < 1e-8);
-        Assert.Equal("76.80", volume.Text);
+        var volume = Assert.Single(texts, text => text.Position.X >= 0 && text.Position.X <= 100 && Math.Abs(text.Position.Y - volumeLabel.Position.Y) < 1e-8);
+        Assert.Equal("76.8", volume.Text);
         Assert.Equal(50, volume.Position.X, 8);
+        Assert.Contains(texts, text => text.Text == "Срезка = — (неполные данные)");
     }
 
     private static ProfileProject CutFillProject()

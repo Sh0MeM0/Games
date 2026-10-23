@@ -124,6 +124,10 @@ namespace Profiles.AutoCAD
                         space.AppendEntity(entity);
                         transaction.AddNewlyCreatedDBObject(entity, true);
                     }
+                    // Keep the dimension as one native, editable entity. AutoCAD
+                    // creates its anonymous display block only after insertion;
+                    // it belongs to this dimension and shares the transaction.
+                    if (entity is Dimension dimension) dimension.RecomputeDimensionBlock(true);
                     Tag(entity, output);
                     if (entity is DBText text) text.AdjustAlignment(database);
                     output.Handles.Add(entity.Handle.ToString());
@@ -219,6 +223,7 @@ namespace Profiles.AutoCAD
 
         private static Entity CreateEntity(DrawEntity item, Database database)
         {
+            if (item is DrawDimension dimension) return DrawingDimension.Create(dimension, database);
             if (item is DrawHatch)
             {
                 var hatch = new Hatch();

@@ -9,7 +9,7 @@ using Profiles.Core;
 namespace Profiles.AutoCAD.UI
 {
     /// <summary>Lightweight local preview of the exact plan sent to the AutoCAD adapter.</summary>
-    internal sealed class ProfilePreview : Control
+    internal sealed partial class ProfilePreview : Control
     {
         private DrawingPlan plan;
         private Dictionary<DrawHatch, List<HatchStroke>> hatchStrokes = new Dictionary<DrawHatch, List<HatchStroke>>();
@@ -94,6 +94,7 @@ namespace Profiles.AutoCAD.UI
                 {
                     if (entity is DrawPolyline line) points.AddRange(line.Points);
                     else if (entity is DrawHatch hatch) points.AddRange(hatch.Boundary);
+                    else if (entity is DrawDimension dimension) points.AddRange(DimensionPreviewBounds(dimension));
                     else if (entity is DrawCircle circle)
                     {
                         points.Add(new Point2(circle.Center.X - circle.Radius, circle.Center.Y - circle.Radius));
@@ -131,6 +132,7 @@ namespace Profiles.AutoCAD.UI
             {
                 Color color = EntityColor(entity.ColorIndex);
                 if (entity is DrawHatch hatch) DrawRegion(e.Graphics, hatch, color);
+                else if (entity is DrawDimension dimension) DrawDimensionPreview(e.Graphics, dimension, color);
                 else if (entity is DrawPolyline line && line.Points.Count >= 2)
                 {
                     using (var pen = new Pen(color, (float)Math.Max(.65, Math.Min(2.2, entity.LineWeightMm * 3))))

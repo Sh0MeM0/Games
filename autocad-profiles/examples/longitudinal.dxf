@@ -493,7 +493,7 @@ $SKPOLY
   9
 $TDCREATE
  40
-2461337.568240741
+2461337.5880787037
   9
 $TDUCREATE
  40
@@ -501,7 +501,7 @@ $TDUCREATE
   9
 $TDUPDATE
  40
-2461337.568240741
+2461337.5880787037
   9
 $TDUUPDATE
  40
@@ -553,7 +553,7 @@ $SPLINESEGS
   9
 $HANDSEED
   5
-EF
+F3
   9
 $SURFTAB1
  70
@@ -933,11 +933,11 @@ $PSTYLEMODE
   9
 $FINGERPRINTGUID
   2
-{12982676-49C2-4FCA-870A-428569E79267}
+{D5CCA2DA-5EA4-40B1-B72D-6914BC675421}
   9
 $VERSIONGUID
   2
-{310A7CA8-BFCE-4600-85C8-4D3B26E52DA7}
+{F5D8A643-6106-4793-B98B-175F22F60C2C}
   9
 $EXTNAMES
 290
@@ -1327,9 +1327,9 @@ ISM
   0
 CLASS
   1
-LAYOUT
+ACDBPLACEHOLDER
   2
-AcDbLayout
+AcDbPlaceHolder
   3
 ObjectDBX Classes
  90
@@ -1343,9 +1343,9 @@ ObjectDBX Classes
   0
 CLASS
   1
-ACDBPLACEHOLDER
+LAYOUT
   2
-AcDbPlaceHolder
+AcDbLayout
   3
 ObjectDBX Classes
  90
@@ -1853,7 +1853,7 @@ Continuous
   0
 LAYER
   5
-DD
+E1
 330
 1
 100
@@ -1975,7 +1975,7 @@ ACAD
   0
 APPID
   5
-EC
+F0
 330
 3
 100
@@ -1989,7 +1989,7 @@ HATCHBACKGROUNDCOLOR
   0
 APPID
   5
-ED
+F1
 330
 3
 100
@@ -7535,9 +7535,69 @@ AcDbMText
   1
 {\W0.85;\pxql;ОБЪЁМ СРЕЗКИ, М³}
   0
-LWPOLYLINE
+MTEXT
   5
 D5
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+156.0
+ 20
+-146.28125
+ 30
+0.0
+ 40
+2.5
+ 41
+80.0
+ 71
+4
+  1
+{\W0.85;\pxql;Итого по показанному участку}
+  0
+MTEXT
+  5
+D6
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+156.0
+ 20
+-153.28125
+ 30
+0.0
+ 40
+2.5
+ 41
+80.0
+ 71
+4
+  1
+{\W0.85;\pxql;Срезка = — (неполные данные)}
+  0
+LWPOLYLINE
+  5
+D7
 330
 17
 100
@@ -7565,7 +7625,7 @@ AcDbPolyline
   0
 MTEXT
   5
-D6
+D8
 330
 17
 100
@@ -7593,9 +7653,39 @@ AcDbMText
   1
 {\W0.85;\pxql;ОБЪЁМ ДОСЫПКИ, М³}
   0
+MTEXT
+  5
+D9
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+156.0
+ 20
+-161.28125
+ 30
+0.0
+ 40
+2.5
+ 41
+80.0
+ 71
+4
+  1
+{\W0.85;\pxql;Досыпка = — (неполные данные)}
+  0
 LWPOLYLINE
   5
-D7
+DA
 330
 17
 100
@@ -7623,7 +7713,7 @@ AcDbPolyline
   0
 MTEXT
   5
-D8
+DB
 330
 17
 100
@@ -7651,9 +7741,39 @@ AcDbMText
   1
 {\W0.85;\pxql;ОБЪЁМ ЗАИЛЕНИЯ, М³}
   0
+MTEXT
+  5
+DC
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+156.0
+ 20
+-169.28125
+ 30
+0.0
+ 40
+2.5
+ 41
+80.0
+ 71
+4
+  1
+{\W0.85;\pxql;Удаление ила = — (неполные данные)}
+  0
 LWPOLYLINE
   5
-D9
+DD
 330
 17
 100
@@ -7681,7 +7801,7 @@ AcDbPolyline
   0
 LWPOLYLINE
   5
-DA
+DE
 330
 17
 100
@@ -7709,7 +7829,7 @@ AcDbPolyline
   0
 LWPOLYLINE
   5
-DB
+DF
 330
 17
 100
@@ -7737,7 +7857,7 @@ AcDbPolyline
   0
 MTEXT
   5
-DC
+E0
 330
 17
 100
@@ -7767,7 +7887,7 @@ AcDbMText
   0
 LWPOLYLINE
   5
-DE
+E2
 330
 17
 100
@@ -7795,7 +7915,7 @@ AcDbPolyline
   0
 MTEXT
   5
-DF
+E3
 330
 17
 100
@@ -7825,7 +7945,7 @@ AcDbMText
   0
 LWPOLYLINE
   5
-E0
+E4
 330
 17
 100
@@ -7853,7 +7973,7 @@ AcDbPolyline
   0
 MTEXT
   5
-E1
+E5
 330
 17
 100
@@ -7883,7 +8003,7 @@ AcDbMText
   0
 LWPOLYLINE
   5
-E2
+E6
 330
 17
 100
@@ -7911,7 +8031,7 @@ AcDbPolyline
   0
 MTEXT
   5
-E3
+E7
 330
 17
 100
@@ -7941,7 +8061,7 @@ AcDbMText
   0
 LWPOLYLINE
   5
-E4
+E8
 330
 17
 100
@@ -7973,7 +8093,7 @@ AcDbPolyline
   0
 MTEXT
   5
-E5
+E9
 330
 17
 100
@@ -8003,7 +8123,7 @@ AcDbMText
   0
 LWPOLYLINE
   5
-E6
+EA
 330
 17
 100
@@ -8035,7 +8155,7 @@ AcDbPolyline
   0
 MTEXT
   5
-E7
+EB
 330
 17
 100
@@ -8065,7 +8185,7 @@ AcDbMText
   0
 MTEXT
   5
-E8
+EC
 330
 17
 100
@@ -8095,7 +8215,7 @@ AcDbMText
   0
 MTEXT
   5
-E9
+ED
 330
 17
 100
@@ -8125,7 +8245,7 @@ AcDbMText
   0
 MTEXT
   5
-EA
+EE
 330
 17
 100
@@ -8155,7 +8275,7 @@ AcDbMText
   0
 MTEXT
   5
-EB
+EF
 330
 17
 100
@@ -9173,7 +9293,7 @@ CREATED_BY_EZDXF
   3
 WRITTEN_BY_EZDXF
 350
-EE
+F2
   0
 DICTIONARYVAR
   5
@@ -9185,11 +9305,11 @@ DictionaryVariables
 280
 0
   1
-1.4.4 @ 2026-10-23T13:38:16.506288+00:00
+1.4.4 @ 2026-10-23T14:06:50.465901+00:00
   0
 DICTIONARYVAR
   5
-EE
+F2
 330
 2D
 100
@@ -9197,7 +9317,7 @@ DictionaryVariables
 280
 0
   1
-1.4.4 @ 2026-10-23T13:38:16.540811+00:00
+1.4.4 @ 2026-10-23T14:06:50.501914+00:00
   0
 ENDSEC
   0

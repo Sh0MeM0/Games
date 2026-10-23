@@ -59,16 +59,37 @@ namespace Profiles.AutoCAD
                 // Set the final origin after refreshing the pattern. All regions
                 // share profile-local (0,0), identical to preview/export clipping.
                 hatch.Origin = new Point2d(planeOrigin.X, planeOrigin.Y);
-                var vertices = new Point2dCollection();
-                var bulges = new DoubleCollection();
+                var placedBoundary = new List<Point2>(boundary.Count);
                 foreach (var point in boundary)
                 {
                     var planePoint = new Point3d(point.X, point.Y, 0).TransformBy(transform).TransformBy(worldToPlane);
-                    vertices.Add(new Point2d(planePoint.X, planePoint.Y));
-                    bulges.Add(0);
+                    placedBoundary.Add(new Point2(planePoint.X, planePoint.Y));
                 }
-                hatch.AppendLoop(HatchLoopTypes.External | HatchLoopTypes.Polyline, vertices, bulges);
+                // The old raw-vertex overload left closure dependent on the
+                // native polyline convention. Supply every edge explicitly:
+                // the final surface vertex MUST connect back to the daylight
+                // vertex. Omitting it removes a large wedge, regardless of pitch.
+                var curves = new Curve2dCollection();
+                var edgeTypes = new IntegerCollection();
+                try
+                {
+                    foreach (var edge in HatchBoundaryGeometry.ClosedEdges(placedBoundary))
+                    {
+                        curves.Add(new LineSegment2d(new Point2d(edge.Start.X, edge.Start.Y), new Point2d(edge.End.X, edge.End.Y)));
+                        edgeTypes.Add(1); // ObjectARX AcDbHatch::kLine.
+                    }
+                    hatch.AppendLoop(HatchLoopTypes.External, curves, edgeTypes);
+                }
+                finally
+                {
+                    // appendLoop copies geometry into the database hatch.
+                    foreach (Curve2d curve in curves) curve.Dispose();
+                }
                 hatch.EvaluateHatch(true);
+                if (hatch.NumberOfLoops != 1)
+                    throw new ProfileValidationException("AutoCAD не сохранил замкнутую границу штриховки. Прежнее построение сохранено.");
+                // Do not read Hatch.Area during creation: some AutoCAD versions
+                // populate that cache only after transaction/command completion.
             }
             catch (Autodesk.AutoCAD.Runtime.Exception exception)
             {

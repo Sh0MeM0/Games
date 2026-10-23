@@ -41,6 +41,7 @@ namespace Profiles.Core
         public List<StationEarthworks> Stations { get; } = new List<StationEarthworks>();
         public List<EarthworkVolumeInterval> Intervals { get; } = new List<EarthworkVolumeInterval>();
         public List<string> Warnings { get; } = new List<string>();
+        public bool HasUnassignedSections { get; internal set; }
         public double? TotalCutVolume { get; internal set; }
         public double? TotalFillVolume { get; internal set; }
         public double? TotalSiltVolume { get; internal set; }
@@ -186,6 +187,7 @@ namespace Profiles.Core
                 unsited = true;
                 summary.Warnings.Add("Есть заполненный поперечник без пикета; суммарные объёмы неполны. Назначьте ему пикет.");
             }
+            summary.HasUnassignedSections = unsited;
             var located = project.Sections.Where(section => section != null && section.Station.HasValue).ToList();
             // An untouched editor template is not an unlocated measured section.
             if (located.Count == 0 && !unsited) return summary;

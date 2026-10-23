@@ -1,6 +1,6 @@
 {
   "SchemaVersion": 4,
-  "ProjectId": "d105952c65194877b6ae598573129c8c",
+  "ProjectId": "76006369018a49048542e56301bc72d9",
   "Name": "Продольный профиль с объёмами",
   "Kind": "Longitudinal",
   "Template": "Reconstruction",
@@ -88,24 +88,6 @@
       "BottomWidth": 0.6,
       "LeftSlope": 1.5,
       "RightSlope": 1.5
-    },
-    {
-      "Station": 150.0,
-      "ProjectGround": null,
-      "PipeInvert": null,
-      "PipeDescription": "",
-      "Foundation": "",
-      "PointName": "",
-      "PeatDepth": null,
-      "Ground": null,
-      "LeftBank": 143.05,
-      "RightBank": 143.2,
-      "ExistingBottom": 141.05,
-      "Water": 141.65,
-      "ProjectBottom": 140.6,
-      "BottomWidth": 0.8,
-      "LeftSlope": 1.5,
-      "RightSlope": 2.0
     }
   ],
   "Sections": [

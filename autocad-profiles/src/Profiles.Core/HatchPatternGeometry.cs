@@ -3,14 +3,6 @@ using System.Collections.Generic;
 
 namespace Profiles.Core
 {
-    public sealed class HatchCoverage
-    {
-        public double Spacing { get; internal set; }
-        public bool DensityLimited { get; internal set; }
-        /// <summary>Worst-phase distance to a stripe along nonparallel convex-corner edges.</summary>
-        public double MaximumTipGap { get; internal set; }
-    }
-
     public sealed class HatchStroke
     {
         public Point2 Start { get; internal set; }
@@ -19,68 +11,30 @@ namespace Profiles.Core
 
     /// <summary>
     /// A single parallel-line pattern anchored at the profile's local origin.
-    /// Coverage changes its pitch, never the physical polygon or measured area.
+    /// Physical polygon boundaries are always complete; corners never densify the whole pattern.
     /// </summary>
     public static class HatchPatternGeometry
     {
         public const int MaximumPatternLines = 50000;
-        private const double Epsilon = 2.2204460492503131e-16;
 
-        public static HatchCoverage Coverage(IList<Point2> boundary, double angleDegrees,
-            double preferredSpacing, double maximumTipGap)
+        /// <summary>Ordinary readable pitch; only an entire tiny island needs a smaller pitch.</summary>
+        public static double NormalSpacing(IList<Point2> boundary, double angleDegrees, double preferredSpacing)
         {
-            if (!Finite(preferredSpacing) || preferredSpacing <= 0 || !Finite(maximumTipGap) || maximumTipGap <= 0)
+            if (!Finite(preferredSpacing) || preferredSpacing <= 0)
                 throw new ProfileValidationException("Некорректный шаг штриховки площади.");
-            var points = CleanBoundary(boundary, true);
+            var points = CleanBoundary(boundary);
             Direction(angleDegrees, out double dx, out double dy);
-            double nx = -dy, ny = dx;
-            double minimum = double.PositiveInfinity, maximum = double.NegativeInfinity;
             var origin = points[0];
+            double minimum = double.PositiveInfinity, maximum = double.NegativeInfinity;
             foreach (var point in points)
             {
-                double across = (point.X - origin.X) * nx + (point.Y - origin.Y) * ny;
+                double across = -(point.X - origin.X) * dy + (point.Y - origin.Y) * dx;
                 minimum = Math.Min(minimum, across); maximum = Math.Max(maximum, across);
             }
             double span = maximum - minimum;
-            double spacing = Math.Min(preferredSpacing, span / 3);
-            double area = TwiceArea(points), smallestIncidence = double.PositiveInfinity;
-            if (area == 0 || !Finite(area) || span <= 0)
+            if (!Finite(span) || span <= 0)
                 throw new ProfileValidationException("Граница штриховки имеет нулевую площадь.");
-            for (int i = 0; i < points.Count; i++)
-            {
-                var before = points[(i + points.Count - 1) % points.Count];
-                var corner = points[i]; var after = points[(i + 1) % points.Count];
-                double ax = corner.X - before.X, ay = corner.Y - before.Y;
-                double bx = after.X - corner.X, by = after.Y - corner.Y;
-                double cross = ax * by - ay * bx;
-                double tolerance = 64 * Epsilon * (Math.Abs(ax * by) + Math.Abs(ay * bx));
-                if (Math.Sign(area) * cross <= tolerance) continue; // Concave/collinear vertices are not tips.
-                LimitEdge(ax, ay, nx, ny, maximumTipGap, ref spacing, ref smallestIncidence);
-                LimitEdge(bx, by, nx, ny, maximumTipGap, ref spacing, ref smallestIncidence);
-            }
-            // Keep the native evaluator and preview bounded for extreme, valid
-            // slivers. The caller reports when the requested tip bound is relaxed.
-            double floor = span / (MaximumPatternLines - 2);
-            bool limited = spacing < floor;
-            spacing = Math.Max(spacing, floor);
-            return new HatchCoverage
-            {
-                Spacing = spacing,
-                DensityLimited = limited,
-                MaximumTipGap = double.IsPositiveInfinity(smallestIncidence) ? spacing : spacing / smallestIncidence
-            };
-        }
-
-        private static void LimitEdge(double x, double y, double nx, double ny, double maximumTipGap,
-            ref double spacing, ref double smallestIncidence)
-        {
-            double length = Math.Sqrt(x * x + y * y);
-            double projected = Math.Abs(x * nx + y * ny), incidence = projected / length;
-            // A truly parallel boundary has no along-edge stripe crossing. Ignore
-            // only floating rotation noise; the other incident edge still counts.
-            if (incidence <= 64 * Epsilon) return;
-            smallestIncidence = Math.Min(smallestIncidence, incidence);
-            spacing = Math.Min(spacing, Math.Min(maximumTipGap * incidence, projected / 3));
+            return Math.Max(span / (MaximumPatternLines - 2), Math.Min(preferredSpacing, span / 3));
         }
 
         /// <summary>
@@ -93,7 +47,7 @@ namespace Profiles.Core
             if (!Finite(spacing) || spacing <= 0)
                 throw new ProfileValidationException("Некорректный шаг штриховки площади.");
             if (maximumStrokes < 1 || maximumStrokes > 500000) throw new ArgumentOutOfRangeException(nameof(maximumStrokes));
-            var points = CleanBoundary(boundary, false);
+            var points = CleanBoundary(boundary);
             Direction(angleDegrees, out double dx, out double dy);
             double nx = -dy, ny = dx;
             var rotated = new List<Point2>(points.Count);
@@ -161,7 +115,7 @@ namespace Profiles.Core
             internal Edge(Point2 low, Point2 high) { Low = low; High = high; }
         }
 
-        private static List<Point2> CleanBoundary(IList<Point2> boundary, bool simplify)
+        private static List<Point2> CleanBoundary(IList<Point2> boundary)
         {
             if (boundary == null || boundary.Count < 3 || boundary.Count > 250000)
                 throw new ProfileValidationException("Некорректная граница штриховки площади.");
@@ -171,30 +125,14 @@ namespace Profiles.Core
                 if (!Finite(point.X) || !Finite(point.Y) || Math.Abs(point.X) > 1e12 || Math.Abs(point.Y) > 1e12)
                     throw new ProfileValidationException("Некорректные координаты границы штриховки площади.");
                 if (result.Count > 0 && Same(result[result.Count - 1], point)) continue;
-                while (simplify && result.Count > 1 && Collinear(result[result.Count - 2], result[result.Count - 1], point))
-                    result.RemoveAt(result.Count - 1);
                 result.Add(point);
             }
             if (result.Count > 1 && Same(result[0], result[result.Count - 1])) result.RemoveAt(result.Count - 1);
-            while (simplify && result.Count > 3)
-            {
-                if (Collinear(result[result.Count - 2], result[result.Count - 1], result[0])) result.RemoveAt(result.Count - 1);
-                else if (Collinear(result[result.Count - 1], result[0], result[1])) result.RemoveAt(0);
-                else break;
-            }
-            if (simplify && (result.Count < 3 || TwiceArea(result) == 0))
-                return CleanBoundary(boundary, false); // Preserve any genuinely nonzero, very thin polygon.
             if (result.Count < 3 || TwiceArea(result) == 0)
                 throw new ProfileValidationException("Граница штриховки имеет нулевую площадь.");
             return result;
         }
 
-        private static bool Collinear(Point2 a, Point2 b, Point2 c)
-        {
-            double ax = b.X - a.X, ay = b.Y - a.Y, bx = c.X - b.X, by = c.Y - b.Y;
-            return ax * bx + ay * by >= 0 && Math.Abs(ax * by - ay * bx) <=
-                64 * Epsilon * (Math.Abs(ax * by) + Math.Abs(ay * bx));
-        }
         private static double TwiceArea(IList<Point2> points)
         {
             var origin = points[0]; double result = 0;

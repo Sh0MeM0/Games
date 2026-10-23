@@ -493,7 +493,7 @@ $SKPOLY
   9
 $TDCREATE
  40
-2461337.568263889
+2461337.5881018518
   9
 $TDUCREATE
  40
@@ -501,7 +501,7 @@ $TDUCREATE
   9
 $TDUPDATE
  40
-2461337.568263889
+2461337.5881018518
   9
 $TDUUPDATE
  40
@@ -553,7 +553,7 @@ $SPLINESEGS
   9
 $HANDSEED
   5
-9B
+99
   9
 $SURFTAB1
  70
@@ -933,11 +933,11 @@ $PSTYLEMODE
   9
 $FINGERPRINTGUID
   2
-{FB01E76A-199D-4723-B0C0-712519561667}
+{715DE94C-5808-4D81-A398-014B266FE7C1}
   9
 $VERSIONGUID
   2
-{9EE0C56D-4366-45EC-BF60-AC38A24D8971}
+{AE91C48D-587C-4180-8F38-53D3A99D1D2A}
   9
 $EXTNAMES
 290
@@ -1327,9 +1327,9 @@ ISM
   0
 CLASS
   1
-LAYOUT
+ACDBPLACEHOLDER
   2
-AcDbLayout
+AcDbPlaceHolder
   3
 ObjectDBX Classes
  90
@@ -1343,9 +1343,9 @@ ObjectDBX Classes
   0
 CLASS
   1
-ACDBPLACEHOLDER
+LAYOUT
   2
-AcDbPlaceHolder
+AcDbLayout
   3
 ObjectDBX Classes
  90
@@ -1781,7 +1781,7 @@ Continuous
   0
 LAYER
   5
-8F
+8D
 330
 1
 100
@@ -1903,7 +1903,7 @@ ACAD
   0
 APPID
   5
-98
+96
 330
 3
 100
@@ -1917,7 +1917,7 @@ HATCHBACKGROUNDCOLOR
   0
 APPID
   5
-99
+97
 330
 3
 100
@@ -4655,11 +4655,71 @@ AcDbMText
  71
 4
   1
-{\W0.85;\pxql;ПЛОЩАДЬ СРЕЗКИ, М²}
+{\W0.85;\pxql;ОБЪЁМ СРЕЗКИ, М³}
+  0
+MTEXT
+  5
+81
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+106.0
+ 20
+-90.375
+ 30
+0.0
+ 40
+2.5
+ 41
+80.0
+ 71
+4
+  1
+{\W0.85;\pxql;Итого по показанному участку}
+  0
+MTEXT
+  5
+82
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+106.0
+ 20
+-97.375
+ 30
+0.0
+ 40
+2.5
+ 41
+80.0
+ 71
+4
+  1
+{\W0.85;\pxql;Срезка = — (неполные данные)}
   0
 LWPOLYLINE
   5
-81
+83
 330
 17
 100
@@ -4687,7 +4747,7 @@ AcDbPolyline
   0
 MTEXT
   5
-82
+84
 330
 17
 100
@@ -4713,11 +4773,41 @@ AcDbMText
  71
 4
   1
-{\W0.85;\pxql;ПЛОЩАДЬ ДОСЫПКИ, М²}
+{\W0.85;\pxql;ОБЪЁМ ДОСЫПКИ, М³}
+  0
+MTEXT
+  5
+85
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+106.0
+ 20
+-105.375
+ 30
+0.0
+ 40
+2.5
+ 41
+80.0
+ 71
+4
+  1
+{\W0.85;\pxql;Досыпка = — (неполные данные)}
   0
 LWPOLYLINE
   5
-83
+86
 330
 17
 100
@@ -4745,7 +4835,7 @@ AcDbPolyline
   0
 MTEXT
   5
-84
+87
 330
 17
 100
@@ -4771,93 +4861,7 @@ AcDbMText
  71
 4
   1
-{\W0.85;\pxql;ПЛОЩАДЬ ЗАИЛЕНИЯ, М²}
-  0
-LWPOLYLINE
-  5
-85
-330
-17
-100
-AcDbEntity
-  8
-PROF_GRID
- 62
-8
-370
-18
-100
-AcDbPolyline
- 90
-2
- 70
-0
- 10
--55.0
- 20
--125.375
- 10
-100.0
- 20
--125.375
-  0
-MTEXT
-  5
-86
-330
-17
-100
-AcDbEntity
-  8
-PROF_TEXT
- 62
-7
-370
-18
-100
-AcDbMText
- 10
--53.0
- 20
--121.375
- 30
-0.0
- 40
-2.5
- 41
-51.0
- 71
-4
-  1
-{\W0.85;\pxql;ОБЪЁМ СРЕЗКИ, М³}
-  0
-LWPOLYLINE
-  5
-87
-330
-17
-100
-AcDbEntity
-  8
-PROF_GRID
- 62
-8
-370
-18
-100
-AcDbPolyline
- 90
-2
- 70
-0
- 10
--55.0
- 20
--133.375
- 10
-100.0
- 20
--133.375
+{\W0.85;\pxql;ОБЪЁМ ЗАИЛЕНИЯ, М³}
   0
 MTEXT
   5
@@ -4875,19 +4879,19 @@ PROF_TEXT
 100
 AcDbMText
  10
--53.0
+106.0
  20
--129.375
+-113.375
  30
 0.0
  40
 2.5
  41
-51.0
+80.0
  71
 4
   1
-{\W0.85;\pxql;ОБЪЁМ ДОСЫПКИ, М³}
+{\W0.85;\pxql;Удаление ила = — (неполные данные)}
   0
 LWPOLYLINE
   5
@@ -4911,13 +4915,13 @@ AcDbPolyline
  10
 -55.0
  20
--141.375
+0.0
  10
-100.0
+-55.0
  20
--141.375
+-117.375
   0
-MTEXT
+LWPOLYLINE
   5
 8A
 330
@@ -4925,27 +4929,25 @@ MTEXT
 100
 AcDbEntity
   8
-PROF_TEXT
+PROF_GRID
  62
-7
+8
 370
 18
 100
-AcDbMText
+AcDbPolyline
+ 90
+2
+ 70
+0
  10
--53.0
- 20
--137.375
- 30
 0.0
- 40
-2.5
- 41
-51.0
- 71
-4
-  1
-{\W0.85;\pxql;ОБЪЁМ ЗАИЛЕНИЯ, М³}
+ 20
+0.0
+ 10
+0.0
+ 20
+-117.375
   0
 LWPOLYLINE
   5
@@ -4967,73 +4969,17 @@ AcDbPolyline
  70
 0
  10
--55.0
- 20
-0.0
- 10
--55.0
- 20
--141.375
-  0
-LWPOLYLINE
-  5
-8C
-330
-17
-100
-AcDbEntity
-  8
-PROF_GRID
- 62
-8
-370
-18
-100
-AcDbPolyline
- 90
-2
- 70
-0
- 10
-0.0
- 20
-0.0
- 10
-0.0
- 20
--141.375
-  0
-LWPOLYLINE
-  5
-8D
-330
-17
-100
-AcDbEntity
-  8
-PROF_GRID
- 62
-8
-370
-18
-100
-AcDbPolyline
- 90
-2
- 70
-0
- 10
 100.0
  20
 0.0
  10
 100.0
  20
--141.375
+-117.375
   0
 MTEXT
   5
-8E
+8C
 330
 17
 100
@@ -5063,7 +5009,7 @@ AcDbMText
   0
 LWPOLYLINE
   5
-90
+8E
 330
 17
 100
@@ -5091,7 +5037,7 @@ AcDbPolyline
   0
 MTEXT
   5
-91
+8F
 330
 17
 100
@@ -5121,7 +5067,7 @@ AcDbMText
   0
 LWPOLYLINE
   5
-92
+90
 330
 17
 100
@@ -5149,7 +5095,7 @@ AcDbPolyline
   0
 MTEXT
   5
-93
+91
 330
 17
 100
@@ -5179,7 +5125,7 @@ AcDbMText
   0
 MTEXT
   5
-94
+92
 330
 17
 100
@@ -5209,7 +5155,7 @@ AcDbMText
   0
 MTEXT
   5
-95
+93
 330
 17
 100
@@ -5239,7 +5185,7 @@ AcDbMText
   0
 MTEXT
   5
-96
+94
 330
 17
 100
@@ -5269,7 +5215,7 @@ AcDbMText
   0
 MTEXT
   5
-97
+95
 330
 17
 100
@@ -6287,7 +6233,7 @@ CREATED_BY_EZDXF
   3
 WRITTEN_BY_EZDXF
 350
-9A
+98
   0
 DICTIONARYVAR
   5
@@ -6299,11 +6245,11 @@ DictionaryVariables
 280
 0
   1
-1.4.4 @ 2026-10-23T13:38:18.468769+00:00
+1.4.4 @ 2026-10-23T14:06:52.364573+00:00
   0
 DICTIONARYVAR
   5
-9A
+98
 330
 2D
 100
@@ -6311,7 +6257,7 @@ DictionaryVariables
 280
 0
   1
-1.4.4 @ 2026-10-23T13:38:18.474616+00:00
+1.4.4 @ 2026-10-23T14:06:52.372492+00:00
   0
 ENDSEC
   0

@@ -40,6 +40,17 @@ public sealed class SamplesAndLayoutTests
                     FinitePoint(circle.Center);
                     Assert.True(double.IsFinite(circle.Radius) && circle.Radius > 0);
                     break;
+                case DrawDimension dimension:
+                    FinitePoint(dimension.FirstPoint);
+                    FinitePoint(dimension.SecondPoint);
+                    FinitePoint(dimension.DimensionLinePoint);
+                    Assert.True(dimension.SecondPoint.X > dimension.FirstPoint.X);
+                    Assert.Equal(dimension.FirstPoint.Y, dimension.SecondPoint.Y);
+                    Assert.True(double.IsFinite(dimension.TextHeight) && dimension.TextHeight > 0);
+                    Assert.True(double.IsFinite(dimension.TextWidthFactor) && dimension.TextWidthFactor > 0);
+                    Assert.True(double.IsFinite(dimension.MeasurementFactor) && dimension.MeasurementFactor > 0);
+                    Assert.Equal(2, dimension.DecimalPlaces);
+                    break;
                 case DrawHatch hatch:
                     Assert.True(hatch.Boundary.Count >= 3);
                     Assert.All(hatch.Boundary, FinitePoint);
