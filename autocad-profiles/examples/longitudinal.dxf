@@ -493,7 +493,7 @@ $SKPOLY
   9
 $TDCREATE
  40
-2461337.4760648147
+2461337.518263889
   9
 $TDUCREATE
  40
@@ -501,7 +501,7 @@ $TDUCREATE
   9
 $TDUPDATE
  40
-2461337.4760648147
+2461337.518263889
   9
 $TDUUPDATE
  40
@@ -553,7 +553,7 @@ $SPLINESEGS
   9
 $HANDSEED
   5
-DD
+EF
   9
 $SURFTAB1
  70
@@ -933,11 +933,11 @@ $PSTYLEMODE
   9
 $FINGERPRINTGUID
   2
-{64D5A03C-E7BE-42D3-BF75-B81BD20B55AF}
+{B7156C50-C574-4610-A68F-D4DF1639136A}
   9
 $VERSIONGUID
   2
-{E60000A0-A254-4AA2-9EF2-D249595EB5C1}
+{41173DB7-04C3-4547-8498-8C58F5E41611}
   9
 $EXTNAMES
 290
@@ -1327,9 +1327,9 @@ ISM
   0
 CLASS
   1
-ACDBPLACEHOLDER
+LAYOUT
   2
-AcDbPlaceHolder
+AcDbLayout
   3
 ObjectDBX Classes
  90
@@ -1343,9 +1343,9 @@ ObjectDBX Classes
   0
 CLASS
   1
-LAYOUT
+ACDBPLACEHOLDER
   2
-AcDbLayout
+AcDbPlaceHolder
   3
 ObjectDBX Classes
  90
@@ -1583,7 +1583,7 @@ LAYER
 100
 AcDbSymbolTable
  70
-11
+12
   0
 LAYER
   5
@@ -1851,6 +1851,30 @@ Continuous
 347
 21
   0
+LAYER
+  5
+DD
+330
+1
+100
+AcDbSymbolTableRecord
+100
+AcDbLayerTableRecord
+  2
+PROF_LEGEND
+ 70
+0
+ 62
+7
+  6
+Continuous
+370
+-3
+390
+13
+347
+21
+  0
 ENDTAB
   0
 TABLE
@@ -1951,7 +1975,7 @@ ACAD
   0
 APPID
   5
-DA
+EC
 330
 3
 100
@@ -1965,7 +1989,7 @@ HATCHBACKGROUNDCOLOR
   0
 APPID
   5
-DB
+ED
 330
 3
 100
@@ -7475,13 +7499,13 @@ AcDbPolyline
  10
 -55.0
  20
-0.0
+-157.28125
  10
--55.0
+150.0
  20
--149.28125
+-157.28125
   0
-LWPOLYLINE
+MTEXT
   5
 D4
 330
@@ -7489,25 +7513,27 @@ D4
 100
 AcDbEntity
   8
-PROF_GRID
+PROF_TEXT
  62
-8
+7
 370
 18
 100
-AcDbPolyline
- 90
-2
- 70
-0
+AcDbMText
  10
-0.0
+-53.0
  20
+-153.28125
+ 30
 0.0
- 10
-0.0
- 20
--149.28125
+ 40
+2.5
+ 41
+51.0
+ 71
+4
+  1
+{\W0.85;\pxql;ОБЪЁМ СРЕЗКИ, М³}
   0
 LWPOLYLINE
   5
@@ -7529,13 +7555,13 @@ AcDbPolyline
  70
 0
  10
-150.0
+-55.0
  20
-0.0
+-165.28125
  10
 150.0
  20
--149.28125
+-165.28125
   0
 MTEXT
   5
@@ -7553,21 +7579,21 @@ PROF_TEXT
 100
 AcDbMText
  10
--55.0
+-53.0
  20
-71.25000000000011
+-161.28125
  30
 0.0
  40
 2.5
  41
-205.0
+51.0
  71
 4
   1
-{\W0.85;\pxql;УЧЕБНЫЙ ПРИМЕР — РЕКОНСТРУКЦИЯ КАНАЛА}
+{\W0.85;\pxql;ОБЪЁМ ДОСЫПКИ, М³}
   0
-MTEXT
+LWPOLYLINE
   5
 D7
 330
@@ -7575,27 +7601,25 @@ D7
 100
 AcDbEntity
   8
-PROF_TEXT
+PROF_GRID
  62
-7
+8
 370
 18
 100
-AcDbMText
+AcDbPolyline
+ 90
+2
+ 70
+0
  10
 -55.0
  20
-64.00000000000011
- 30
-0.0
- 40
-2.5
- 41
-55.0
- 71
-4
-  1
-{\W0.85;\pxql;ГОР. 1:1000}
+-173.28125
+ 10
+150.0
+ 20
+-173.28125
   0
 MTEXT
   5
@@ -7613,9 +7637,511 @@ PROF_TEXT
 100
 AcDbMText
  10
+-53.0
+ 20
+-169.28125
+ 30
+0.0
+ 40
+2.5
+ 41
+51.0
+ 71
+4
+  1
+{\W0.85;\pxql;ОБЪЁМ ЗАИЛЕНИЯ, М³}
+  0
+LWPOLYLINE
+  5
+D9
+330
+17
+100
+AcDbEntity
+  8
+PROF_GRID
+ 62
+8
+370
+18
+100
+AcDbPolyline
+ 90
+2
+ 70
+0
+ 10
 -55.0
  20
-60.00000000000011
+0.0
+ 10
+-55.0
+ 20
+-173.28125
+  0
+LWPOLYLINE
+  5
+DA
+330
+17
+100
+AcDbEntity
+  8
+PROF_GRID
+ 62
+8
+370
+18
+100
+AcDbPolyline
+ 90
+2
+ 70
+0
+ 10
+0.0
+ 20
+0.0
+ 10
+0.0
+ 20
+-173.28125
+  0
+LWPOLYLINE
+  5
+DB
+330
+17
+100
+AcDbEntity
+  8
+PROF_GRID
+ 62
+8
+370
+18
+100
+AcDbPolyline
+ 90
+2
+ 70
+0
+ 10
+150.0
+ 20
+0.0
+ 10
+150.0
+ 20
+-173.28125
+  0
+MTEXT
+  5
+DC
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+-55.0
+ 20
+75.00000000000011
+ 30
+0.0
+ 40
+2.5
+ 41
+70.0
+ 71
+4
+  1
+{\W0.85;\pxql;Условные обозначения}
+  0
+LWPOLYLINE
+  5
+DE
+330
+17
+100
+AcDbEntity
+  8
+PROF_LEGEND
+ 62
+1
+370
+50
+100
+AcDbPolyline
+ 90
+2
+ 70
+0
+ 10
+-55.0
+ 20
+69.00000000000011
+ 10
+-43.0
+ 20
+69.00000000000011
+  0
+MTEXT
+  5
+DF
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+-40.0
+ 20
+69.00000000000011
+ 30
+0.0
+ 40
+2.5
+ 41
+65.0
+ 71
+4
+  1
+{\W0.85;\pxql;Проектная отм. дна}
+  0
+LWPOLYLINE
+  5
+E0
+330
+17
+100
+AcDbEntity
+  8
+PROF_LEGEND
+ 62
+7
+370
+30
+100
+AcDbPolyline
+ 90
+2
+ 70
+0
+ 10
+-55.0
+ 20
+65.00000000000011
+ 10
+-43.0
+ 20
+65.00000000000011
+  0
+MTEXT
+  5
+E1
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+-40.0
+ 20
+65.00000000000011
+ 30
+0.0
+ 40
+2.5
+ 41
+65.0
+ 71
+4
+  1
+{\W0.85;\pxql;Существующая отм. дна}
+  0
+LWPOLYLINE
+  5
+E2
+330
+17
+100
+AcDbEntity
+  8
+PROF_LEGEND
+ 62
+7
+370
+30
+100
+AcDbPolyline
+ 90
+2
+ 70
+0
+ 10
+-55.0
+ 20
+61.00000000000011
+ 10
+-43.0
+ 20
+61.00000000000011
+  0
+MTEXT
+  5
+E3
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+-40.0
+ 20
+61.00000000000011
+ 30
+0.0
+ 40
+2.5
+ 41
+65.0
+ 71
+4
+  1
+{\W0.85;\pxql;Левый берег}
+  0
+LWPOLYLINE
+  5
+E4
+330
+17
+100
+AcDbEntity
+  8
+PROF_LEGEND
+  6
+PROF_DASH
+ 62
+6
+370
+30
+ 48
+2.5
+100
+AcDbPolyline
+ 90
+2
+ 70
+0
+ 10
+-55.0
+ 20
+57.00000000000011
+ 10
+-43.0
+ 20
+57.00000000000011
+  0
+MTEXT
+  5
+E5
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+-40.0
+ 20
+57.00000000000011
+ 30
+0.0
+ 40
+2.5
+ 41
+65.0
+ 71
+4
+  1
+{\W0.85;\pxql;Правый берег}
+  0
+LWPOLYLINE
+  5
+E6
+330
+17
+100
+AcDbEntity
+  8
+PROF_LEGEND
+  6
+PROF_DASH
+ 62
+5
+370
+30
+ 48
+2.5
+100
+AcDbPolyline
+ 90
+2
+ 70
+0
+ 10
+-55.0
+ 20
+53.00000000000011
+ 10
+-43.0
+ 20
+53.00000000000011
+  0
+MTEXT
+  5
+E7
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+-40.0
+ 20
+53.00000000000011
+ 30
+0.0
+ 40
+2.5
+ 41
+65.0
+ 71
+4
+  1
+{\W0.85;\pxql;Уровень воды}
+  0
+MTEXT
+  5
+E8
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+-55.0
+ 20
+101.25000000000011
+ 30
+0.0
+ 40
+2.5
+ 41
+205.0
+ 71
+4
+  1
+{\W0.85;\pxql;УЧЕБНЫЙ ПРИМЕР — РЕКОНСТРУКЦИЯ КАНАЛА}
+  0
+MTEXT
+  5
+E9
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+-55.0
+ 20
+94.00000000000011
+ 30
+0.0
+ 40
+2.5
+ 41
+55.0
+ 71
+4
+  1
+{\W0.85;\pxql;ГОР. 1:1000}
+  0
+MTEXT
+  5
+EA
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+-55.0
+ 20
+90.00000000000011
  30
 0.0
  40
@@ -7629,7 +8155,7 @@ AcDbMText
   0
 MTEXT
   5
-D9
+EB
 330
 17
 100
@@ -8647,7 +9173,7 @@ CREATED_BY_EZDXF
   3
 WRITTEN_BY_EZDXF
 350
-DC
+EE
   0
 DICTIONARYVAR
   5
@@ -8659,11 +9185,11 @@ DictionaryVariables
 280
 0
   1
-1.4.4 @ 2026-10-23T11:25:32.012713+00:00
+1.4.4 @ 2026-10-23T12:26:18.063906+00:00
   0
 DICTIONARYVAR
   5
-DC
+EE
 330
 2D
 100
@@ -8671,7 +9197,7 @@ DictionaryVariables
 280
 0
   1
-1.4.4 @ 2026-10-23T11:25:32.045726+00:00
+1.4.4 @ 2026-10-23T12:26:18.102841+00:00
   0
 ENDSEC
   0

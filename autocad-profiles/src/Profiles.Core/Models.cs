@@ -5,11 +5,13 @@ namespace Profiles.Core
 {
     public enum ProfileKind { Longitudinal, CrossSection }
     public enum ProfileTemplate { Reconstruction, NewChannel, Nvk }
+    public enum SectionPointRole { Regular, LeftBank, Bottom, RightBank }
+    public enum SectionDesignMode { Automatic, None, Trapezoid, Points }
     public enum TextAlignment { Left, Center, Right }
 
     public sealed class ProfileProject
     {
-        public int SchemaVersion { get; set; } = 2;
+        public int SchemaVersion { get; set; } = 3;
         public string ProjectId { get; set; } = Guid.NewGuid().ToString("N");
         public string Name { get; set; } = "Проект";
         public ProfileKind Kind { get; set; }
@@ -54,6 +56,14 @@ namespace Profiles.Core
     public sealed class CrossSection
     {
         public string Name { get; set; } = "1-1";
+        public SectionDesignMode DesignMode { get; set; } = SectionDesignMode.Automatic;
+        public bool UsePointDistances { get; set; }
+        public int? ProjectAnchorIndex { get; set; }
+        public bool UseLongitudinalProjectBottom { get; set; }
+        public bool UseLongitudinalWater { get; set; }
+        public double? SiltThickness { get; set; }
+        public double? SiltLeft { get; set; }
+        public double? SiltRight { get; set; }
         // Elevations imported from the longitudinal profile; surveyed offsets are supplied separately.
         public double? LeftBank { get; set; }
         public double? RightBank { get; set; }
@@ -70,6 +80,9 @@ namespace Profiles.Core
 
     public sealed class SectionPoint
     {
+        public SectionPointRole Role { get; set; } = SectionPointRole.Regular;
+        public double? DistanceFromPrevious { get; set; }
+        public bool UseLongitudinalElevation { get; set; }
         public double Offset { get; set; }
         public double? Existing { get; set; }
         public double? Design { get; set; }
@@ -118,6 +131,14 @@ namespace Profiles.Core
     {
         public Point2 Center { get; set; }
         public double Radius { get; set; }
+    }
+
+    /// <summary>Simple closed polygon filled with parallel lines; spacing is in drawing units.</summary>
+    public sealed class DrawHatch : DrawEntity
+    {
+        public List<Point2> Boundary { get; set; } = new List<Point2>();
+        public double PatternSpacing { get; set; } = 1;
+        public double PatternAngleDegrees { get; set; } = 45;
     }
 
     public sealed class ProfileValidationException : Exception

@@ -117,9 +117,10 @@ namespace Profiles.Core
                     if (!(root is JObject) || root["SchemaVersion"]?.Type != JTokenType.Integer)
                         throw new ProfileValidationException("В проекте отсутствует целочисленная SchemaVersion.");
                     int version = root["SchemaVersion"].Value<int>();
-                    if (version != 1 && version != 2)
-                        throw new ProfileValidationException("Версия проекта не поддерживается. Поддерживаются SchemaVersion = 1 и 2; обновите модуль или используйте совместимый файл.");
+                    if (version != 1 && version != 2 && version != 3)
+                        throw new ProfileValidationException("Версия проекта не поддерживается. Поддерживаются SchemaVersion = 1, 2 и 3; обновите модуль или используйте совместимый файл.");
                     if (version == 1) UpgradeLegacy((JObject)root);
+                    if (version <= 2) UpgradeVersionTwo((JObject)root);
                     ValidateToken(root, typeof(ProfileProject), "Проект");
                     var project = root.ToObject<ProfileProject>(JsonSerializer.Create(Settings()));
                     ProfileValidation.Check(project, geometry: false);
@@ -169,6 +170,33 @@ namespace Profiles.Core
                         item[name] = JValue.CreateNull();
                     }
             root["SchemaVersion"] = 2;
+        }
+
+        private static void UpgradeVersionTwo(JObject root)
+        {
+            if (root["Sections"] is JArray sections)
+                foreach (var section in sections.OfType<JObject>())
+                {
+                    string[] nullable = { "ProjectAnchorIndex", "SiltThickness", "SiltLeft", "SiltRight" };
+                    string[] booleans = { "UsePointDistances", "UseLongitudinalProjectBottom", "UseLongitudinalWater" };
+                    foreach (string name in nullable.Concat(booleans).Concat(new[] { "DesignMode" }))
+                        if (section.Property(name) != null) Invalid("Поперечник", "поле версии 3 указано в старой версии файла");
+                    foreach (string name in nullable) section[name] = JValue.CreateNull();
+                    foreach (string name in booleans) section[name] = false;
+                    bool trapezoid = new[] { "ProjectBottom", "BottomWidth", "LeftSlope", "RightSlope" }.Any(name => section[name] != null && section[name].Type != JTokenType.Null);
+                    bool points = section["Points"] is JArray oldPoints && oldPoints.OfType<JObject>().Any(point => point["Design"] != null && point["Design"].Type != JTokenType.Null);
+                    section["DesignMode"] = trapezoid && points ? "Automatic" : trapezoid ? "Trapezoid" : points ? "Points" : "None";
+                    if (section["Points"] is JArray pointArray)
+                        foreach (var point in pointArray.OfType<JObject>())
+                        {
+                            foreach (string name in new[] { "Role", "DistanceFromPrevious", "UseLongitudinalElevation" })
+                                if (point.Property(name) != null) Invalid("Точка поперечника", "поле версии 3 указано в старой версии файла");
+                            point["Role"] = "Regular";
+                            point["DistanceFromPrevious"] = JValue.CreateNull();
+                            point["UseLongitudinalElevation"] = false;
+                        }
+                }
+            root["SchemaVersion"] = 3;
         }
 
         private static JsonSerializerSettings Settings()

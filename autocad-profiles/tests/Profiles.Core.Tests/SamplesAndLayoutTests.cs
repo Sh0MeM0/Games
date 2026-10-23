@@ -40,6 +40,11 @@ public sealed class SamplesAndLayoutTests
                     FinitePoint(circle.Center);
                     Assert.True(double.IsFinite(circle.Radius) && circle.Radius > 0);
                     break;
+                case DrawHatch hatch:
+                    Assert.True(hatch.Boundary.Count >= 3);
+                    Assert.All(hatch.Boundary, FinitePoint);
+                    Assert.True(double.IsFinite(hatch.PatternSpacing) && hatch.PatternSpacing > 0);
+                    break;
                 default:
                     Assert.Fail("Unexpected entity type: " + entity.GetType().Name);
                     break;

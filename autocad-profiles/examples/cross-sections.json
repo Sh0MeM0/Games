@@ -1,6 +1,6 @@
 {
-  "SchemaVersion": 2,
-  "ProjectId": "e2330463003544d0a84e7e1dbb772f30",
+  "SchemaVersion": 3,
+  "ProjectId": "71a60c45ee7f41b7b5ea6fd15440d9e5",
   "Name": "Учебные поперечники",
   "Kind": "CrossSection",
   "Template": "Reconstruction",
@@ -108,7 +108,15 @@
   ],
   "Sections": [
     {
-      "Name": "1-1 — проектная трапеция",
+      "Name": "ПК 0+00.00",
+      "DesignMode": "Trapezoid",
+      "UsePointDistances": false,
+      "ProjectAnchorIndex": null,
+      "UseLongitudinalProjectBottom": false,
+      "UseLongitudinalWater": false,
+      "SiltThickness": 0.2,
+      "SiltLeft": -1.0,
+      "SiltRight": 1.0,
       "LeftBank": null,
       "RightBank": null,
       "ExistingBottom": null,
@@ -121,36 +129,57 @@
       "CenterOffset": 0.0,
       "Points": [
         {
+          "Role": "Regular",
+          "DistanceFromPrevious": null,
+          "UseLongitudinalElevation": false,
           "Offset": -8.0,
           "Existing": 143.7,
           "Design": null
         },
         {
+          "Role": "Regular",
+          "DistanceFromPrevious": null,
+          "UseLongitudinalElevation": false,
           "Offset": -4.0,
           "Existing": 143.65,
           "Design": null
         },
         {
+          "Role": "Regular",
+          "DistanceFromPrevious": null,
+          "UseLongitudinalElevation": false,
           "Offset": -1.0,
           "Existing": 141.8,
           "Design": null
         },
         {
+          "Role": "Regular",
+          "DistanceFromPrevious": null,
+          "UseLongitudinalElevation": false,
           "Offset": 0.0,
           "Existing": 141.6,
           "Design": null
         },
         {
+          "Role": "Regular",
+          "DistanceFromPrevious": null,
+          "UseLongitudinalElevation": false,
           "Offset": 1.0,
           "Existing": 141.85,
           "Design": null
         },
         {
+          "Role": "Regular",
+          "DistanceFromPrevious": null,
+          "UseLongitudinalElevation": false,
           "Offset": 4.0,
           "Existing": 143.8,
           "Design": null
         },
         {
+          "Role": "Regular",
+          "DistanceFromPrevious": null,
+          "UseLongitudinalElevation": false,
           "Offset": 8.0,
           "Existing": 143.85,
           "Design": null
@@ -158,7 +187,15 @@
       ]
     },
     {
-      "Name": "2-2 — проект по отметкам",
+      "Name": "ПК 1+00.00",
+      "DesignMode": "Points",
+      "UsePointDistances": false,
+      "ProjectAnchorIndex": null,
+      "UseLongitudinalProjectBottom": false,
+      "UseLongitudinalWater": false,
+      "SiltThickness": 0.15,
+      "SiltLeft": -0.4,
+      "SiltRight": 0.4,
       "LeftBank": null,
       "RightBank": null,
       "ExistingBottom": null,
@@ -171,34 +208,52 @@
       "CenterOffset": 0.0,
       "Points": [
         {
+          "Role": "Regular",
+          "DistanceFromPrevious": null,
+          "UseLongitudinalElevation": false,
           "Offset": -7.0,
           "Existing": 143.35,
           "Design": 143.35
         },
         {
+          "Role": "Regular",
+          "DistanceFromPrevious": null,
+          "UseLongitudinalElevation": false,
           "Offset": -3.2,
           "Existing": 143.25,
           "Design": 142.7
         },
         {
+          "Role": "Regular",
+          "DistanceFromPrevious": null,
+          "UseLongitudinalElevation": false,
           "Offset": -0.4,
           "Existing": 141.35,
           "Design": 140.8
         },
         {
+          "Role": "Regular",
+          "DistanceFromPrevious": null,
+          "UseLongitudinalElevation": false,
           "Offset": 0.4,
           "Existing": 141.3,
           "Design": 140.8
         },
         {
+          "Role": "Regular",
+          "DistanceFromPrevious": null,
+          "UseLongitudinalElevation": false,
           "Offset": 3.2,
           "Existing": 143.3,
-          "Design": 142.7
+          "Design": 143.6
         },
         {
+          "Role": "Regular",
+          "DistanceFromPrevious": null,
+          "UseLongitudinalElevation": false,
           "Offset": 7.0,
           "Existing": 143.4,
-          "Design": 143.4
+          "Design": 143.7
         }
       ]
     }

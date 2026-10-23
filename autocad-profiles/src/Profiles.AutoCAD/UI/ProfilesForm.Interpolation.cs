@@ -10,14 +10,19 @@ namespace Profiles.AutoCAD
 {
     public sealed partial class ProfilesForm
     {
-        private readonly TextBox seedLeft = Input();
-        private readonly TextBox seedBottom = Input();
-        private readonly TextBox seedRight = Input();
         private readonly Timer interpolationTimer = new Timer { Interval = 180 };
         private readonly Dictionary<string, double> derivedValues = new Dictionary<string, double>();
-        private Font interpolationFont;
-        private string stationBeforeSelection;
         private readonly string[] elevationColumns = { "Ground", "LeftBank", "RightBank", "ExistingBottom", "Water", "ProjectBottom", "ProjectGround", "PipeInvert" };
+        private Font interpolationFont;
+        private double? currentSectionStation;
+        private bool stationInputEdited;
+        private bool stationChangeActive;
+
+        private sealed class StationChoice
+        {
+            internal double Value;
+            public override string ToString() => StationCaption(Value);
+        }
 
         private void InitializeInterpolation()
         {
@@ -25,7 +30,9 @@ namespace Profiles.AutoCAD
             interpolationTimer.Tick += (s, e) =>
             {
                 interpolationTimer.Stop();
-                if (!loading && !longGrid.IsCurrentCellInEditMode) RecalculateDerivedValues();
+                if (loading || longGrid.IsCurrentCellInEditMode || crossGrid.IsCurrentCellInEditMode || stationInputEdited) return;
+                RecalculateDerivedValues();
+                RefreshEarthworks();
             };
             longGrid.CellFormatting += (s, e) =>
             {
@@ -33,13 +40,23 @@ namespace Profiles.AutoCAD
                 e.CellStyle.Font = longGrid.Font;
                 e.CellStyle.BackColor = e.RowIndex % 2 == 0 ? Color.White : longGrid.AlternatingRowsDefaultCellStyle.BackColor;
                 string name = longGrid.Columns[e.ColumnIndex].Name;
-                if (derivedValues.TryGetValue(e.RowIndex + ":" + name, out var value) &&
-                    string.IsNullOrWhiteSpace(Convert.ToString(longGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value, CultureInfo.InvariantCulture)))
+                if (name == "PipeDescription" || name == "Foundation" || name == "PointName") return;
+                var raw = longGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value;
+                if (string.IsNullOrWhiteSpace(Convert.ToString(raw, CultureInfo.InvariantCulture)) && derivedValues.TryGetValue(e.RowIndex + ":" + name, out var calculated))
                 {
-                    e.Value = value.ToString("F2", CultureInfo.InvariantCulture);
+                    e.Value = calculated.ToString("F2", CultureInfo.InvariantCulture);
                     e.CellStyle.Font = interpolationFont;
                     e.CellStyle.BackColor = Color.FromArgb(241, 247, 253);
                     e.FormattingApplied = true;
+                }
+                else
+                {
+                    try
+                    {
+                        double? value = raw is double number ? number : NumberParser.ParseOptional(Convert.ToString(raw, CultureInfo.InvariantCulture), name);
+                        if (value.HasValue) { e.Value = value.Value.ToString("F2", CultureInfo.InvariantCulture); e.FormattingApplied = true; }
+                    }
+                    catch (ProfileValidationException) { }
                 }
             };
             longGrid.CellToolTipTextNeeded += (s, e) =>
@@ -49,30 +66,29 @@ namespace Profiles.AutoCAD
                 if (derivedValues.TryGetValue(e.RowIndex + ":" + name, out var value))
                     e.ToolTipText = "Расчётная отметка " + Format(value) + " м: линейная интерполяция между известными пикетами. Исходная ячейка остаётся пустой. Введите число, чтобы задать свою опорную отметку.";
             };
-            sectionStation.DropDown += (s, e) =>
+            sectionStation.DropDown += (s, e) => RefreshStationList();
+            sectionStation.TextUpdate += (s, e) => { if (!loading) stationInputEdited = true; };
+            sectionStation.SelectionChangeCommitted += (s, e) =>
             {
-                stationBeforeSelection = sectionStation.Text;
-                RefreshStationList();
+                if (loading || !(sectionStation.SelectedItem is StationChoice choice)) return;
+                try { SwitchToStation(choice.Value); }
+                catch (Exception ex) { ShowError(ex.Message); }
             };
-            sectionStation.TextUpdate += (s, e) => stationBeforeSelection = sectionStation.Text;
-            sectionStation.SelectionChangeCommitted += (s, e) => SelectStation();
+            sectionStation.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode != Keys.Enter) return;
+                e.SuppressKeyPress = true;
+                try { CommitStationInput(); }
+                catch (Exception ex) { ShowError(ex.Message); }
+            };
+            sectionStation.Validated += (s, e) =>
+            {
+                if (loading) return;
+                try { CommitStationInput(); }
+                catch (Exception ex) { SetStatus("Пикет не применён: " + ex.Message, true); }
+            };
             sectionWater.ForeColor = Color.RoyalBlue;
             projectBottom.ForeColor = Color.Firebrick;
-            var interpolate = new ToolStripMenuItem("Интерполировать отметку", null, (s, e) => InterpolateCrossCell());
-            crossGrid.ContextMenuStrip.Items.Insert(0, interpolate);
-            crossGrid.ContextMenuStrip.Items.Insert(1, new ToolStripSeparator());
-            crossGrid.ContextMenuStrip.Opening += (s, e) =>
-            {
-                var cell = crossGrid.CurrentCell;
-                interpolate.Enabled = cell != null && !cell.OwningRow.IsNewRow &&
-                    (cell.OwningColumn.Name == "Existing" || cell.OwningColumn.Name == "Design") &&
-                    string.IsNullOrWhiteSpace(Convert.ToString(cell.Value, CultureInfo.InvariantCulture));
-            };
-            crossGrid.CellMouseDown += (s, e) =>
-            {
-                if (e.Button == MouseButtons.Right && e.RowIndex >= 0 && e.ColumnIndex >= 0)
-                    crossGrid.CurrentCell = crossGrid.Rows[e.RowIndex].Cells[e.ColumnIndex];
-            };
         }
 
         private static double? Elevation(LongitudinalPoint point, string field)
@@ -111,11 +127,9 @@ namespace Profiles.AutoCAD
                     index++;
                 }
                 RefreshStationList(raw);
+                RefreshLinkedSectionValues(raw);
             }
-            catch (ProfileValidationException)
-            {
-                // An incomplete number while typing must not display stale calculated values.
-            }
+            catch (ProfileValidationException) { /* A partial input must not show stale derived values. */ }
             finally { longGrid.Invalidate(); }
         }
 
@@ -127,112 +141,191 @@ namespace Profiles.AutoCAD
             try
             {
                 sectionStation.Items.Clear();
-                var values = points ?? ReadLongitudinal();
-                foreach (var point in values) sectionStation.Items.Add(Format(point.Station));
+                foreach (var point in points ?? ReadLongitudinal())
+                    sectionStation.Items.Add(new StationChoice { Value = point.Station });
                 sectionStation.Text = text;
             }
             catch (ProfileValidationException) { sectionStation.Text = text; }
             finally { loading = old; }
         }
 
-        private Control BuildSeedPanel()
+        private static string StationCaption(double value)
         {
-            var group = new GroupBox { Text = "Опорные отметки выбранного ПК, м", Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(7, 18, 7, 5) };
-            var panel = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 1, RowCount = 2 };
-            var values = (FlowLayoutPanel)Fields("Левый берег", seedLeft, "Дно факт.", seedBottom, "Правый берег", seedRight);
-            values.Controls.Add(Button("В таблицу точек", AddSeedPoints));
-            panel.Controls.Add(values, 0, 0);
-            panel.Controls.Add(Note("Отметки можно перенести в таблицу; реальные смещения берегов и дна нужно ввести самостоятельно."), 0, 1);
-            group.Controls.Add(panel);
-            return group;
+            double rounded = Math.Round(value, 2, MidpointRounding.AwayFromZero);
+            if (rounded < 0) return "ПК " + rounded.ToString("F2", CultureInfo.InvariantCulture);
+            double picket = Math.Floor(rounded / 100);
+            return "ПК " + picket.ToString("0", CultureInfo.InvariantCulture) + "+" + (rounded - picket * 100).ToString("00.00", CultureInfo.InvariantCulture);
         }
 
-        private void SelectStation()
+        private static string SectionCaption(CrossSection section) => section.Station.HasValue ? StationCaption(section.Station.Value) : string.IsNullOrWhiteSpace(section.Name) ? "Без названия" : section.Name;
+        private double? ReadSectionStation() => currentSectionStation;
+
+        private void CommitStationInput()
         {
-            if (loading) return;
+            if (loading || stationChangeActive || !stationInputEdited) return;
+            if (!string.IsNullOrWhiteSpace(sectionStation.Text))
+            {
+                string text = sectionStation.Text.Trim();
+                if (text.StartsWith("ПК", StringComparison.OrdinalIgnoreCase)) text = text.Substring(2).Trim();
+                SwitchToStation(NumberParser.ParseRequired(text, "Пикет поперечника"));
+                return;
+            }
+            // Validate the entire current draft before changing any linkage.
+            var current = ReadCurrentSection();
+            var points = current.Points;
+            foreach (var point in points) point.UseLongitudinalElevation = false;
+            int? anchor = crossGrid.ProjectAnchorIndex;
+            crossGrid.LoadPoints(points);
+            crossGrid.SetProjectAnchor(anchor, current.ProjectBottom);
+            currentSectionStation = null;
+            longitudinalProjectBottomLinked = longitudinalWaterLinked = false;
+            stationInputEdited = false;
+            sectionName.ReadOnly = false;
+            sectionName.Text = "Поперечник " + (selectedSection + 1);
+            CommitSection();
+            RefreshSectionList(selectedSection);
+            SetDirty();
+        }
+
+        private void SwitchToStation(double station)
+        {
+            if (loading || stationChangeActive) return;
+            string requestedText = sectionStation.Text;
+            stationChangeActive = true;
             try
             {
-                double station = NumberParser.ParseRequired(sectionStation.Text, "Выбранный пикет");
-                // Selection changed the station control already; preserve the old section's identity.
-                string previousStation = stationBeforeSelection ?? (selectedSection >= 0 ? Format(sections[selectedSection].Station) : "");
-                bool old = loading; loading = true; sectionStation.Text = previousStation; loading = old;
+                if (station < -1000000000 || station > 1000000000)
+                    throw new ProfileValidationException("Пикет поперечника должен находиться в пределах от −1 000 000 000 до 1 000 000 000 м.");
+                // Commit the old section under its cached station, not the just-typed value.
                 CommitSection();
-                int existing = sections.FindIndex(s => s.Station.HasValue && Math.Abs(s.Station.Value - station) < 1e-8);
+                stationInputEdited = false;
+                int existing = sections.FindIndex(s => s.Station.HasValue && s.Station.Value == station);
                 if (existing >= 0)
                 {
                     selectedSection = existing;
-                    RefreshSectionList(existing); DisplaySection();
-                    SetStatus("Открыт существующий поперечник ПК " + Format(station) + ". Для обновления отметок нажмите «Обновить по ПК».");
+                    RefreshSectionList(existing);
+                    DisplaySection();
+                    SetDirty();
+                    SetStatus("Открыт существующий поперечник " + StationCaption(station) + ". Предыдущий поперечник сохранён в списке; ручные точки не заменены.");
+                    return;
+                }
+                if (selectedSection >= 0 && !sections[selectedSection].Station.HasValue && !IsEmptySection(sections[selectedSection]))
+                {
+                    // An unsited imported section or copy must be assignable to a
+                    // station without silently replacing its measured geometry.
+                    sections[selectedSection].Station = station;
+                    sections[selectedSection].Name = StationCaption(station);
+                    RefreshSectionList(selectedSection);
+                    DisplaySection();
+                    SetDirty();
+                    SetStatus("Поперечнику назначен " + StationCaption(station) + ". Его расстояния, отметки и проектные параметры сохранены.");
                     return;
                 }
                 var seed = ProfileInterpolation.CreateSection(ReadLongitudinal(), station);
-                bool reusable = selectedSection >= 0 && IsEmptySection(sections[selectedSection]);
-                if (reusable) sections[selectedSection] = seed;
+                seed.Name = StationCaption(station);
+                seed.DesignMode = ProfileInterpolation.EffectiveDesignMode(seed);
+                if (selectedSection >= 0 && IsEmptySection(sections[selectedSection])) sections[selectedSection] = seed;
                 else { sections.Add(seed); selectedSection = sections.Count - 1; }
-                RefreshSectionList(selectedSection); DisplaySection(); SetDirty();
-                SetStatus("Подтянуты отметки ПК " + Format(station) + ". Смещения не определены: внесите фактическую съёмку поперечника.");
+                RefreshSectionList(selectedSection);
+                DisplaySection();
+                SetDirty();
+                SetStatus("Создан " + StationCaption(station) + ": берега, дно и вода связаны с продольным профилем. Введите измеренные расстояния между точками.");
             }
-            catch (Exception ex) { ShowError(ex.Message); }
+            catch
+            {
+                bool old = loading; loading = true; sectionStation.Text = requestedText; loading = old;
+                stationInputEdited = true;
+                throw;
+            }
+            finally { stationChangeActive = false; }
         }
 
         private static bool IsEmptySection(CrossSection section)
         {
-            return section.Points.Count == 0 && !section.Station.HasValue && !section.LeftBank.HasValue &&
-                !section.RightBank.HasValue && !section.ExistingBottom.HasValue && !section.Water.HasValue &&
-                !section.ProjectBottom.HasValue && !section.BottomWidth.HasValue && !section.LeftSlope.HasValue && !section.RightSlope.HasValue;
+            return !section.Station.HasValue && !section.LeftBank.HasValue && !section.RightBank.HasValue &&
+                !section.ExistingBottom.HasValue && !section.Water.HasValue && !section.ProjectBottom.HasValue &&
+                !section.BottomWidth.HasValue && !section.LeftSlope.HasValue && !section.RightSlope.HasValue &&
+                !section.SiltThickness.HasValue && !section.SiltLeft.HasValue && !section.SiltRight.HasValue &&
+                section.CenterOffset == 0 && !section.ProjectAnchorIndex.HasValue && section.Points.Count <= 3 &&
+                section.Points.All(p => p.Offset == 0 && !p.Existing.HasValue && !p.Design.HasValue && (!p.DistanceFromPrevious.HasValue || p.DistanceFromPrevious == 0));
         }
 
         private void RefreshStationSeed()
         {
             try
             {
-                double station = NumberParser.ParseRequired(sectionStation.Text, "ПК поперечника");
-                var seed = ProfileInterpolation.CreateSection(ReadLongitudinal(), station);
-                if (MessageBox.Show(this,
-                    "Обновить опорные отметки, воду, проектное дно и размеры из продольного профиля?\n\nСмещения, натурные и проектные отметки в таблице точек не изменятся. Их ручные изменения сохранятся.",
+                CommitStationInput();
+                if (!currentSectionStation.HasValue) throw new ProfileValidationException("Сначала выберите или введите пикет поперечника.");
+                var sample = ProfileInterpolation.SampleLongitudinal(ReadLongitudinal(), currentSectionStation.Value);
+                if (MessageBox.Show(this, "Обновить связанные отметки и заменить воду, проектное дно, ширину и откосы значениями продольного профиля?\n\nРасстояния и вручную изменённые фактические или проектные отметки точек сохранятся.",
                     "Обновление по пикету", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-                bool old = loading; loading = true;
-                seedLeft.Text = Format(seed.LeftBank); seedBottom.Text = Format(seed.ExistingBottom); seedRight.Text = Format(seed.RightBank);
-                sectionWater.Text = Format(seed.Water); projectBottom.Text = Format(seed.ProjectBottom);
-                bottomWidth.Text = Format(seed.BottomWidth); leftSlope.Text = Format(seed.LeftSlope); rightSlope.Text = Format(seed.RightSlope);
-                loading = old;
+                DisplayNumber(sectionWater, sample.Water);
+                DisplayNumber(projectBottom, sample.ProjectBottom);
+                DisplayNumber(bottomWidth, sample.BottomWidth);
+                DisplayNumber(leftSlope, sample.LeftSlope);
+                DisplayNumber(rightSlope, sample.RightSlope);
+                longitudinalWaterLinked = longitudinalProjectBottomLinked = true;
+                RefreshLinkedSectionValues();
+                RefreshProjectAnchorDisplay();
                 SetDirty();
-                SetStatus("Отметки и проектные параметры обновлены по ПК. Таблица поперечной съёмки сохранена без изменений.");
+                SetStatus("Связанные отметки и параметры обновлены по пикету. Введённая съёмка сохранена.");
             }
             catch (Exception ex) { ShowError(ex.Message); }
         }
 
-        private void AddSeedPoints()
+        private void RefreshLinkedSectionValues(List<LongitudinalPoint> longitudinal = null)
         {
+            if (loading || stationInputEdited || !currentSectionStation.HasValue || crossGrid.IsCurrentCellInEditMode) return;
             try
             {
-                var values = new[]
+                var points = crossGrid.ReadPoints();
+                bool anyLink = longitudinalProjectBottomLinked || longitudinalWaterLinked || points.Any(p => p.UseLongitudinalElevation);
+                if (!anyLink) return;
+                var sample = ProfileInterpolation.SampleLongitudinal(longitudinal ?? ReadLongitudinal(), currentSectionStation.Value);
+                bool changed = false, pointsChanged = false;
+                foreach (var point in points.Where(p => p.UseLongitudinalElevation))
                 {
-                    NumberParser.ParseOptional(seedLeft.Text, "Левый берег по ПК"),
-                    NumberParser.ParseOptional(seedBottom.Text, "Дно по ПК"),
-                    NumberParser.ParseOptional(seedRight.Text, "Правый берег по ПК")
-                };
-                if (!values.Any(v => v.HasValue)) throw new ProfileValidationException("Нет опорных отметок. Выберите пикет продольного профиля или заполните отметки выше.");
-                if (crossGrid.Rows.Cast<DataGridViewRow>().Any(r => !r.IsNewRow && !RowEmpty(r)) &&
-                    MessageBox.Show(this, "Добавить опорные отметки после имеющихся строк? Их смещения потребуется ввести и расположить строки слева направо.",
-                        "Добавление точек", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-                int first = crossGrid.Rows.Count - 1;
-                foreach (double? value in values) if (value.HasValue) crossGrid.Rows.Add("", Format(value), "");
-                crossGrid.CurrentCell = crossGrid.Rows[first].Cells[0];
-                crossGrid.Focus();
-                SetDirty();
-                SetStatus("Введите реальные смещения добавленных точек. До этого новые строки не могут быть сохранены или построены.", true);
+                    double? value = point.Role == SectionPointRole.LeftBank ? sample.LeftBank :
+                        point.Role == SectionPointRole.Bottom ? sample.ExistingBottom :
+                        point.Role == SectionPointRole.RightBank ? sample.RightBank : point.Existing;
+                    if (point.Existing == value) continue;
+                    point.Existing = value;
+                    changed = pointsChanged = true;
+                }
+                if (longitudinalWaterLinked && ReadOptionalNumber(sectionWater, "Урез воды") != sample.Water)
+                { DisplayNumber(sectionWater, sample.Water); changed = true; }
+                if (longitudinalProjectBottomLinked && ReadOptionalNumber(projectBottom, "Проектное дно") != sample.ProjectBottom)
+                { DisplayNumber(projectBottom, sample.ProjectBottom); changed = true; }
+                if (pointsChanged)
+                {
+                    int index = crossGrid.SelectedPointIndex, row = (int)crossGrid.SelectedRowKind;
+                    int? anchor = crossGrid.ProjectAnchorIndex;
+                    // Invalid manual text must remain in its textbox, without
+                    // losing the existing point anchor when other links refresh.
+                    double? anchorElevation = null;
+                    try { anchorElevation = ReadOptionalNumber(projectBottom, "Проектное дно"); }
+                    catch (ProfileValidationException) { }
+                    crossGrid.LoadPoints(points);
+                    crossGrid.SetProjectAnchor(anchor, anchorElevation);
+                    if (index >= 0 && index < points.Count) crossGrid.CurrentCell = crossGrid.Rows[row].Cells[index + 1];
+                }
+                RefreshProjectAnchorDisplay();
+                if (changed) SetDirty();
             }
-            catch (Exception ex) { ShowError(ex.Message); }
+            catch (ProfileValidationException ex) { SetStatus("Связанные отметки пока не обновлены: " + ex.Message, true); }
         }
 
         private void FindAutoCenter()
         {
             try
             {
-                var section = ReadCurrentSection();
-                centerOffset.Text = Format(ProfileInterpolation.FindCenterOffset(section.Points));
-                SetStatus("Центр найден по минимальной натурной отметке; для плоского дна — середина его участка. Проектное дно, ширину и откосы задайте отдельно.");
+                var resolved = ProfileInterpolation.ResolveSection(ReadCurrentSection(), ReadLongitudinal());
+                double center = ProfileInterpolation.FindCenterOffset(resolved.Points);
+                crossGrid.SetProjectAnchor(null, null);
+                DisplayNumber(centerOffset, center);
+                SelectDesignMode(SectionDesignMode.Trapezoid);
+                SetDirty();
+                SetStatus("Центр найден по минимальной фактической отметке; для плоского дна — середина участка. Задайте отметку проектного дна, ширину и откосы.");
             }
             catch (Exception ex) { ShowError(ex.Message); }
         }
@@ -241,20 +334,19 @@ namespace Profiles.AutoCAD
         {
             try
             {
-                var cell = crossGrid.CurrentCell;
-                if (cell == null || cell.OwningRow.IsNewRow ||
-                    (cell.OwningColumn.Name != "Existing" && cell.OwningColumn.Name != "Design"))
-                    throw new ProfileValidationException("Выберите пустую ячейку натурной или проектной отметки.");
-                if (!string.IsNullOrWhiteSpace(Convert.ToString(cell.Value, CultureInfo.InvariantCulture)))
-                    throw new ProfileValidationException("Ячейка уже заполнена. Очистите её, если хотите заменить отметку расчётной.");
-                bool design = cell.OwningColumn.Name == "Design";
-                double offset = Required(cell.OwningRow, "Offset");
-                var points = ReadCurrentSection().Points;
-                double? value = ProfileInterpolation.SectionElevationAt(points, offset, design);
-                if (!value.HasValue) throw new ProfileValidationException("Для интерполяции нужны известные отметки слева и справа от выбранного смещения. Экстраполяция не выполняется.");
-                cell.Value = Format(value.Value);
+                int index = crossGrid.SelectedPointIndex;
+                if (index < 0 || !crossGrid.IsSelectedCellEmpty) throw new ProfileValidationException("Выберите пустую ячейку отметки под нужной точкой.");
+                if (crossGrid.SelectedRowKind == UI.SectionPointRow.Distance)
+                    throw new ProfileValidationException("Расстояние между точками вводится по съёмке. По одним отметкам его вычислить нельзя.");
+                bool design = crossGrid.SelectedRowKind == UI.SectionPointRow.Design;
+                if (design && SelectedDesignMode != SectionDesignMode.Points) throw new ProfileValidationException("Для ввода проектных отметок выберите режим «По проектным отметкам».");
+                var raw = ReadCurrentSection();
+                var resolved = ProfileInterpolation.ResolveSection(raw, ReadLongitudinal());
+                double? value = ProfileInterpolation.SectionElevationAt(resolved.Points, resolved.Points[index].Offset, design);
+                if (!value.HasValue) throw new ProfileValidationException("Нужны известные отметки по обе стороны выбранной точки и расстояния между всеми точками. За крайними опорными точками значения не вычисляются.");
+                crossGrid.SetElevationAt(index, design, value.Value);
                 SetDirty();
-                SetStatus("Отметка " + Format(value.Value) + " м вычислена между ближайшими известными смещениями и записана в выбранную ячейку.");
+                SetStatus("Отметка интерполирована по расстояниям и записана в выбранную ячейку: " + value.Value.ToString("F2", CultureInfo.InvariantCulture) + " м.");
             }
             catch (Exception ex) { ShowError(ex.Message); }
         }

@@ -65,6 +65,7 @@ namespace Profiles.AutoCAD.UI
                 foreach (var entity in plan.Entities)
                 {
                     if (entity is DrawPolyline line) points.AddRange(line.Points);
+                    else if (entity is DrawHatch hatch) points.AddRange(hatch.Boundary);
                     else if (entity is DrawCircle circle)
                     {
                         points.Add(new Point2(circle.Center.X - circle.Radius, circle.Center.Y - circle.Radius));
@@ -101,7 +102,8 @@ namespace Profiles.AutoCAD.UI
             foreach (var entity in plan.Entities)
             {
                 Color color = EntityColor(entity.ColorIndex);
-                if (entity is DrawPolyline line && line.Points.Count >= 2)
+                if (entity is DrawHatch hatch) DrawRegion(e.Graphics, hatch, color);
+                else if (entity is DrawPolyline line && line.Points.Count >= 2)
                 {
                     using (var pen = new Pen(color, (float)Math.Max(.65, Math.Min(2.2, entity.LineWeightMm * 3))))
                     {
@@ -126,6 +128,35 @@ namespace Profiles.AutoCAD.UI
                 using (var brush = new SolidBrush(Color.FromArgb(255, 243, 205))) e.Graphics.FillRectangle(brush, banner);
                 TextRenderer.DrawText(e.Graphics, message, Font, banner, Color.FromArgb(110, 75, 0), TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             }
+        }
+
+        private void DrawRegion(Graphics graphics, DrawHatch hatch, Color color)
+        {
+            if (hatch.Boundary.Count < 3 || hatch.PatternSpacing <= 0) return;
+            var state = graphics.Save();
+            try
+            {
+                var vertices = hatch.Boundary.Select(Project).ToArray();
+                using (var path = new GraphicsPath())
+                using (var pen = new Pen(color, .7F))
+                {
+                    path.AddPolygon(vertices);
+                    graphics.SetClip(path, CombineMode.Intersect);
+                    // Work in screen coordinates, so positive mathematical angles turn upwards.
+                    double angle = -hatch.PatternAngleDegrees * Math.PI / 180;
+                    double dx = Math.Cos(angle), dy = Math.Sin(angle), nx = -dy, ny = dx;
+                    double minAlong = vertices.Min(p => p.X * dx + p.Y * dy), maxAlong = vertices.Max(p => p.X * dx + p.Y * dy);
+                    double minAcross = vertices.Min(p => p.X * nx + p.Y * ny), maxAcross = vertices.Max(p => p.X * nx + p.Y * ny);
+                    // Avoid a pathological number of subpixel lines while zoomed far out.
+                    double spacing = Math.Max(2, hatch.PatternSpacing * PreviewScale);
+                    double first = Math.Floor(minAcross / spacing) * spacing;
+                    for (double across = first; across <= maxAcross; across += spacing)
+                        graphics.DrawLine(pen,
+                            (float)(minAlong * dx + across * nx), (float)(minAlong * dy + across * ny),
+                            (float)(maxAlong * dx + across * nx), (float)(maxAlong * dy + across * ny));
+                }
+            }
+            finally { graphics.Restore(state); }
         }
 
         private void DrawLabel(Graphics graphics, DrawText text, Color color)
@@ -163,11 +194,11 @@ namespace Profiles.AutoCAD.UI
             switch (index)
             {
                 case 1: return Color.Red;
-                case 3: return Color.ForestGreen;
+                case 3: return Color.Lime;
                 case 5: return Color.Blue;
                 case 6: return Color.Magenta;
                 case 8: return Color.FromArgb(170, 175, 180);
-                case 30: return Color.SaddleBrown;
+                case 30: return Color.FromArgb(255, 127, 0);
                 default: return Color.Black;
             }
         }

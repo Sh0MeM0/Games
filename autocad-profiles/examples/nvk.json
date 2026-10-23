@@ -1,6 +1,6 @@
 {
-  "SchemaVersion": 2,
-  "ProjectId": "918ed8b20b1b4d1fa0aa6c7e22a96bf0",
+  "SchemaVersion": 3,
+  "ProjectId": "e68eed52d1e14afdaadcf1fafff7160d",
   "Name": "Учебные сети НВК",
   "Kind": "Longitudinal",
   "Template": "Nvk",

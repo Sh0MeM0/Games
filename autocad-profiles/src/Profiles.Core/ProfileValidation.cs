@@ -9,7 +9,7 @@ namespace Profiles.Core
         internal static void Check(ProfileProject project, bool geometry = true)
         {
             if (project == null) Fail("Проект не задан.");
-            if (project.SchemaVersion != 2) Fail("Версия проекта не поддерживается: " + project.SchemaVersion + ". Требуется версия 2.");
+            if (project.SchemaVersion != 3) Fail("Версия проекта не поддерживается: " + project.SchemaVersion + ". Требуется версия 3.");
             if (!Guid.TryParseExact(project.ProjectId, "N", out var identity) && !Guid.TryParseExact(project.ProjectId, "D", out identity)) Fail("Некорректный идентификатор проекта.");
             Text(project.Name, "Название проекта", 200);
             if (!Enum.IsDefined(typeof(ProfileKind), project.Kind)) Fail("Неизвестный тип профиля.");
@@ -56,6 +56,21 @@ namespace Profiles.Core
         private static void CheckSection(CrossSection section, bool active)
         {
             Text(section.Name, "Обозначение поперечника", 100, active);
+            if (!Enum.IsDefined(typeof(SectionDesignMode), section.DesignMode)) Fail("Неизвестный способ задания проектной линии.");
+            if (section.ProjectAnchorIndex.HasValue)
+            {
+                Range(section.ProjectAnchorIndex.Value, 0, 9999, "Номер проектной опорной точки");
+                if (active && section.ProjectAnchorIndex.Value >= section.Points.Count) Fail("Проектная опорная точка отсутствует в поперечнике.");
+            }
+            if (section.SiltThickness.HasValue)
+            {
+                Range(section.SiltThickness.Value, 0, 1000000, "Толщина ила");
+                if (active && section.SiltThickness.Value <= 0) Fail("Толщина ила должна быть больше нуля; оставьте поле пустым, если ил отсутствует.");
+            }
+            if (section.SiltLeft.HasValue) Range(section.SiltLeft.Value, -1000000000, 1000000000, "Левая граница удаления ила");
+            if (section.SiltRight.HasValue) Range(section.SiltRight.Value, -1000000000, 1000000000, "Правая граница удаления ила");
+            if (active && section.SiltLeft.HasValue && section.SiltRight.HasValue && section.SiltLeft.Value >= section.SiltRight.Value)
+                Fail("Левая граница удаления ила должна быть меньше правой.");
             if (active && section.Points.Count < 2) Fail("Поперечник «" + section.Name + "»: нужно не менее двух точек.");
             if (section.Station.HasValue) Range(section.Station.Value, -1000000000, 1000000000, "Пикетаж поперечника");
             Range(section.CenterOffset, -1000000000, 1000000000, "Смещение оси");
@@ -68,15 +83,33 @@ namespace Profiles.Core
             Positive(section.LeftSlope, "Левое заложение откоса");
             Positive(section.RightSlope, "Правое заложение откоса");
             int supplied = new[] { section.ProjectBottom, section.BottomWidth, section.LeftSlope, section.RightSlope }.Count(x => x.HasValue);
-            if (active && supplied != 0 && supplied != 4) Fail("Поперечник «" + section.Name + "»: для трапеции нужны одновременно отметка дна, ширина и оба заложения откосов.");
-            if (active && supplied != 0 && section.Points.Any(p => p != null && p.Design.HasValue)) Fail("Поперечник «" + section.Name + "»: выберите трапецию или проектные отметки в таблице; одновременно применять их нельзя.");
+            var mode = ProfileInterpolation.EffectiveDesignMode(section);
+            if (active && mode == SectionDesignMode.Trapezoid && supplied != 4) Fail("Поперечник «" + section.Name + "»: для трапеции нужны одновременно отметка дна, ширина и оба заложения откосов.");
+            if (active && section.DesignMode == SectionDesignMode.Automatic && supplied != 0 && section.Points.Any(p => p != null && p.Design.HasValue)) Fail("Поперечник «" + section.Name + "»: выберите трапецию или проектные отметки в таблице; одновременно применять их нельзя.");
             double previous = double.NegativeInfinity;
+            int pointIndex = 0;
             foreach (SectionPoint point in section.Points)
             {
                 if (point == null) Fail("Поперечник «" + section.Name + "» содержит пустую строку вместо точки.");
+                if (!Enum.IsDefined(typeof(SectionPointRole), point.Role)) Fail("Неизвестная роль точки поперечника.");
                 Range(point.Offset, -1000000000, 1000000000, "Смещение точки поперечника");
-                if (active && point.Offset <= previous) Fail("Поперечник «" + section.Name + "»: смещения должны строго возрастать слева направо; совпадающие точки недопустимы.");
-                previous = point.Offset;
+                if (point.DistanceFromPrevious.HasValue) Range(point.DistanceFromPrevious.Value, 0, 1000000000, "Расстояние от предыдущей точки");
+                double coordinate = point.Offset;
+                if (active && section.UsePointDistances)
+                {
+                    if (pointIndex == 0 && point.DistanceFromPrevious.HasValue && point.DistanceFromPrevious.Value != 0)
+                        Fail("У первой точки расстояние от предыдущей должно быть пустым или нулевым.");
+                    if (pointIndex > 0)
+                    {
+                        if (!point.DistanceFromPrevious.HasValue || point.DistanceFromPrevious.Value <= 0)
+                            Fail("Поперечник «" + section.Name + "»: введите положительное расстояние перед точкой " + (pointIndex + 1) + ".");
+                        coordinate = previous + point.DistanceFromPrevious.Value;
+                        Range(coordinate, -1000000000, 1000000000, "Суммарное смещение поперечника");
+                    }
+                }
+                if (active && coordinate <= previous) Fail("Поперечник «" + section.Name + "»: смещения должны строго возрастать слева направо; совпадающие точки недопустимы.");
+                previous = coordinate;
+                pointIndex++;
                 Elevation(point.Existing, "Натурная отметка");
                 Elevation(point.Design, "Проектная отметка");
             }

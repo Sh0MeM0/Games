@@ -84,7 +84,7 @@ namespace Profiles.AutoCAD
             autoSaveTimer.Tick += (s, e) =>
             {
                 autoSaveTimer.Stop();
-                if (!dirty || loading || saving || longGrid.IsCurrentCellInEditMode || crossGrid.IsCurrentCellInEditMode) return;
+                if (!dirty || loading || saving || longGrid.IsCurrentCellInEditMode || crossGrid.IsCurrentCellInEditMode || (stationInputEdited && sectionStation.ContainsFocus)) return;
                 if (saveProjectToDrawing == null && !(autoSaveJson.Checked && currentFile != null)) return;
                 TrySaveCurrent(false);
             };
@@ -161,7 +161,7 @@ namespace Profiles.AutoCAD
             if (name == null) return;
             var project = new ProfileProject
             {
-                SchemaVersion = 2, ProjectId = Guid.NewGuid().ToString("N"), Name = name, Kind = activeKind, Template = SelectedTemplate,
+                SchemaVersion = 3, ProjectId = Guid.NewGuid().ToString("N"), Name = name, Kind = activeKind, Template = SelectedTemplate,
                 Settings = new ProfileSettings
                 {
                     Title = activeKind == ProfileKind.Longitudinal ? "ПРОДОЛЬНЫЙ ПРОФИЛЬ" : "ПОПЕРЕЧНЫЕ ПРОФИЛИ",

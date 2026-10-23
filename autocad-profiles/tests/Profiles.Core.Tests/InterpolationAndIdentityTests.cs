@@ -107,7 +107,11 @@ public sealed class InterpolationAndIdentityTests
         Assert.Equal(8, section.ProjectBottom);
         Assert.Equal(2, section.BottomWidth);
         Assert.Equal(1.5, section.LeftSlope);
-        Assert.Empty(section.Points);
+        Assert.Equal(3, section.Points.Count);
+        Assert.True(section.UsePointDistances);
+        Assert.Equal(0, section.Points[0].DistanceFromPrevious);
+        Assert.Null(section.Points[1].DistanceFromPrevious);
+        Assert.Null(section.Points[2].DistanceFromPrevious);
         Assert.Contains("ПК", section.Name);
     }
 
@@ -180,13 +184,14 @@ public sealed class InterpolationAndIdentityTests
         var resolved = ProfileInterpolation.ResolveLongitudinal(project);
         Assert.Equal(11, resolved.Longitudinal[1].ExistingBottom);
         var restored = ProjectFile.Deserialize(ProjectFile.Serialize(project));
-        Assert.Equal(2, restored.SchemaVersion);
+        Assert.Equal(3, restored.SchemaVersion);
         Assert.Equal(project.ProjectId, restored.ProjectId);
         Assert.Equal(project.Name, restored.Name);
         Assert.Equal(ProfileTemplate.Nvk, restored.Template);
         Assert.Null(restored.Longitudinal[1].ExistingBottom);
         Assert.Equal(11, restored.Sections[0].ExistingBottom);
-        Assert.Empty(restored.Sections[0].Points);
+        Assert.Equal(3, restored.Sections[0].Points.Count);
+        Assert.Null(restored.Sections[0].Points[1].DistanceFromPrevious);
         var clone = ProjectFile.Clone(restored);
         clone.Longitudinal[0].ExistingBottom = 20;
         Assert.Equal(10, restored.Longitudinal[0].ExistingBottom);
@@ -210,9 +215,12 @@ public sealed class InterpolationAndIdentityTests
         {
             var section = item!.AsObject();
             section.Remove("LeftBank"); section.Remove("RightBank"); section.Remove("ExistingBottom");
+            foreach (string name in new[] { "DesignMode", "UsePointDistances", "ProjectAnchorIndex", "UseLongitudinalProjectBottom", "UseLongitudinalWater", "SiltThickness", "SiltLeft", "SiltRight" }) section.Remove(name);
+            foreach (var node in section["Points"]!.AsArray())
+                foreach (string name in new[] { "Role", "DistanceFromPrevious", "UseLongitudinalElevation" }) node!.AsObject().Remove(name);
         }
         var imported = ProjectFile.Deserialize(root.ToJsonString());
-        Assert.Equal(2, imported.SchemaVersion);
+        Assert.Equal(3, imported.SchemaVersion);
         Assert.Equal(ProfileTemplate.Reconstruction, imported.Template);
         Assert.Null(imported.Longitudinal[0].ProjectGround);
         Assert.Null(imported.Longitudinal[0].PipeInvert);

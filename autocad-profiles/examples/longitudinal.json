@@ -1,6 +1,6 @@
 {
-  "SchemaVersion": 2,
-  "ProjectId": "efe9280aacca4a10ba7fe0cb9e1b57ca",
+  "SchemaVersion": 3,
+  "ProjectId": "d9c96088894543cda205e3bc4380654d",
   "Name": "Учебный канал — подчистка",
   "Kind": "Longitudinal",
   "Template": "Reconstruction",

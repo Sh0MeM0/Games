@@ -14,18 +14,29 @@ namespace Profiles.Core
             var enteredLongitudinal = project.Longitudinal;
             if (project.Kind == ProfileKind.Longitudinal)
                 project = ProfileInterpolation.ResolveLongitudinal(project);
+            else
+            {
+                project = ProjectFile.Clone(project);
+                project.Sections = project.Sections.Select(section => ProfileInterpolation.ResolveSection(section, project.Longitudinal)).ToList();
+            }
             ProfileValidation.Check(project);
             var elevations = new List<double>();
             var trapezoids = new Dictionary<CrossSection, List<Point2>>();
+            var sectionEarthworks = new Dictionary<CrossSection, SectionEarthworks>();
+            EarthworksSummary earthworks = null;
             if (project.Kind == ProfileKind.Longitudinal)
             {
                 foreach (LongitudinalPoint point in project.Longitudinal)
                     elevations.AddRange(Values(point, project.Template));
+                earthworks = Earthworks.CalculateVolumes(project);
             }
             else
             {
                 foreach (CrossSection section in project.Sections)
                 {
+                    var result = Earthworks.Calculate(section, project.Longitudinal);
+                    sectionEarthworks.Add(section, result);
+                    elevations.AddRange(result.CleanedRuns.SelectMany(run => run).Select(point => point.Y));
                     foreach (SectionPoint point in section.Points)
                     {
                         if (point.Existing.HasValue) elevations.Add(point.Existing.Value);
@@ -34,7 +45,9 @@ namespace Profiles.Core
                     if (section.Water.HasValue) elevations.Add(section.Water.Value);
                     if (section.ProjectBottom.HasValue)
                     {
-                        List<Point2> trapezoid = SectionGeometry.Trapezoid(section);
+                        List<Point2> trapezoid = result.DesignCurve;
+                        if (trapezoid.Count < 2)
+                            ProfileValidation.Fail("Поперечник «" + section.Name + "»: " + result.Status);
                         trapezoids.Add(section, trapezoid);
                         elevations.AddRange(trapezoid.Select(p => p.Y));
                     }
@@ -46,7 +59,11 @@ namespace Profiles.Core
             if (datum >= minimum) ProfileValidation.Fail("Условная отметка должна быть ниже всех введённых отметок; минимальная отметка " + F(minimum) + " м.");
             var plan = new DrawingPlan { Datum = datum };
             var builder = new PlanBuilder(project.Settings, plan, project.Template);
-            if (project.Kind == ProfileKind.Longitudinal) builder.Longitudinal(project.Longitudinal, enteredLongitudinal);
+            if (project.Kind == ProfileKind.Longitudinal)
+            {
+                plan.Warnings.AddRange(earthworks.Warnings);
+                builder.Longitudinal(project.Longitudinal, enteredLongitudinal, earthworks);
+            }
             else
             {
                 double? previousBottom = null;
@@ -55,7 +72,7 @@ namespace Profiles.Core
                     List<Point2> trapezoid;
                     trapezoids.TryGetValue(section, out trapezoid);
                     var sectionPlan = new DrawingPlan { Datum = datum };
-                    new PlanBuilder(project.Settings, sectionPlan, project.Template).Section(section, trapezoid);
+                    new PlanBuilder(project.Settings, sectionPlan, project.Template).Section(section, trapezoid, sectionEarthworks[section]);
                     double minY = Bounds(sectionPlan.Entities, false), maxY = Bounds(sectionPlan.Entities, true);
                     double shift = previousBottom.HasValue ? previousBottom.Value - 20 * builder.Layout - maxY : 0;
                     foreach (DrawEntity entity in sectionPlan.Entities) Shift(entity, shift);
@@ -91,6 +108,8 @@ namespace Profiles.Core
         {
             var line = entity as DrawPolyline;
             if (line != null) return line.Points;
+            var hatch = entity as DrawHatch;
+            if (hatch != null) return hatch.Boundary;
             var text = entity as DrawText;
             if (text != null) return new[] { text.Position };
             var circle = (DrawCircle)entity;
@@ -115,6 +134,8 @@ namespace Profiles.Core
         {
             var line = entity as DrawPolyline;
             if (line != null) { line.Points = line.Points.Select(p => new Point2(p.X, p.Y + dy)).ToList(); return; }
+            var hatch = entity as DrawHatch;
+            if (hatch != null) { hatch.Boundary = hatch.Boundary.Select(p => new Point2(p.X, p.Y + dy)).ToList(); return; }
             var text = entity as DrawText;
             if (text != null) { text.Position = new Point2(text.Position.X, text.Position.Y + dy); return; }
             var circle = (DrawCircle)entity;
@@ -127,6 +148,7 @@ namespace Profiles.Core
             internal double Height;
             internal Func<LongitudinalPoint, double?> Value;
             internal Func<LongitudinalPoint, string> TextValue;
+            internal List<Tuple<double, double?>> StationValues;
             internal short Color;
             internal Row(string label, double height, string kind = "", Func<LongitudinalPoint, double?> value = null, short color = 7)
             { Label = label; Height = height; Kind = kind; Value = value; Color = color; }
@@ -160,8 +182,9 @@ namespace Profiles.Core
                 if (points.Count >= 2) plan.Entities.Add(new DrawPolyline { Layer = layer, ColorIndex = color, LineWeightMm = weight, Dashed = dashed, Points = points });
             }
 
-            private void Header(string title, double labelWidth, double width, double highest)
+            private void Header(string title, double labelWidth, double width, double highest, bool longitudinal = false, bool hasPipe = false)
             {
+                if (longitudinal) highest += LongitudinalLegend(labelWidth, highest, hasPipe);
                 double titleWidth = Math.Max(labelWidth + width, 100 * Layout);
                 double titleHeight = WrappedHeight(title, titleWidth);
                 Text(-labelWidth, highest + 20 * Layout + titleHeight / 2, title, alignment: TextAlignment.Left, width: titleWidth);
@@ -181,10 +204,10 @@ namespace Profiles.Core
                 return value.Split('\n').Sum(line => Math.Max(1, Math.Ceiling(line.Length * TextHeight * 0.75 * settings.TextWidthFactor / width))) * TextHeight * 1.2 + 2 * Layout;
             }
 
-            internal void Longitudinal(List<LongitudinalPoint> points, List<LongitudinalPoint> entered)
+            internal void Longitudinal(List<LongitudinalPoint> points, List<LongitudinalPoint> entered, EarthworksSummary earthworks)
             {
                 double first = points[0].Station, width = X(points.Last().Station - first), labels = (template == ProfileTemplate.Nvk ? 60 : 55) * Layout;
-                var rows = LongitudinalRows(points);
+                var rows = LongitudinalRows(points, earthworks);
                 var xs = points.Select(p => X(p.Station - first)).ToList();
                 if (template == ProfileTemplate.Nvk)
                 {
@@ -216,13 +239,16 @@ namespace Profiles.Core
                     double bottom = y - LongRowHeight(row, points, labels - 4 * Layout, width), center = (y + bottom) / 2;
                     Line(new Point2(-labels, bottom), new Point2(width, bottom));
                     bool slopeRow = row.Kind == "slope" || row.Kind == "pipeSlope";
+                    bool volumeRow = row.Kind.StartsWith("volume", StringComparison.Ordinal);
                     if (slopeRow)
                     {
                         SlopeHeading(labels, y, bottom, row.Kind == "pipeSlope");
                         SlopeAnchors(entered, first, y, bottom, row.Kind == "pipeSlope");
                     }
                     else Text(-labels + 2 * Layout, center, row.Label, alignment: TextAlignment.Left, width: labels - 4 * Layout);
-                    if (!slopeRow && row.Kind == "plan") Line(new Point2(0, center), new Point2(width, center));
+                    if (volumeRow) VolumeIntervals(earthworks, row.Kind, first, points.Last().Station, y, bottom);
+                    else if (row.Kind == "area") AreaStations(row, first, points.Last().Station, y, bottom);
+                    else if (!slopeRow && row.Kind == "plan") Line(new Point2(0, center), new Point2(width, center));
                     else if (!slopeRow)
                     {
                         bool uniformRatio = row.Kind == "ratio" && Ratio(points[0]) != "" && points.Select(Ratio).Distinct().Count() == 1;
@@ -249,21 +275,22 @@ namespace Profiles.Core
                 }
                 foreach (double x in new[] { -labels, 0, width }) Line(new Point2(x, 0), new Point2(x, y));
                 double highest = Y(points.SelectMany(point => Values(point, template)).Max());
-                Header(settings.Title, labels, width, highest);
-                if (template == ProfileTemplate.Nvk && width >= 75 * Layout) NvkLegend(width, highest, points.Any(point => point.PipeInvert.HasValue));
+                Header(settings.Title, labels, width, highest, true, points.Any(point => point.PipeInvert.HasValue));
                 if (points.Zip(points.Skip(1), (a, b) => X(b.Station - a.Station) < 5 * Layout).Any(x => x))
                     plan.Warnings.Add("Есть интервалы слишком узкие для выбранного текста: подписи могут пересекаться. Уменьшите знаменатель горизонтального масштаба или разделите профиль.");
                 if (template == ProfileTemplate.Reconstruction && points.Any(p => p.ExistingBottom.HasValue && p.ProjectBottom.HasValue && p.ProjectBottom > p.ExistingBottom))
-                    plan.Warnings.Add("Проектное дно местами выше существующего: глубина подчистки показана как 0.00 по исходному шаблону; объём засыпки не вычислялся.");
+                    plan.Warnings.Add("Проектное дно местами выше существующего: глубина подчистки показана как 0.00. Объёмы досыпки определяются по площадям поперечников.");
+                if (earthworks.Stations.Any(item => item.Station < first - 1e-8 || item.Station > points.Last().Station + 1e-8))
+                    plan.Warnings.Add("Есть поперечники за пределами продольного профиля: их площади и выходящие за границы интервалы объёмов не показаны в этой таблице.");
             }
 
             private void AddRow(List<Row> rows, List<LongitudinalPoint> points, string label, double height, Func<LongitudinalPoint, double?> value, short color = 7, string kind = "")
             { if (settings.ShowEmptyRows || points.Any(p => value(p).HasValue)) rows.Add(new Row(label, height, kind, value, color)); }
 
-            private List<Row> LongitudinalRows(List<LongitudinalPoint> points)
+            private List<Row> LongitudinalRows(List<LongitudinalPoint> points, EarthworksSummary earthworks)
             {
                 if (template == ProfileTemplate.Nvk)
-                    return new List<Row>
+                    return AddEarthworkRows(new List<Row>
                     {
                         new Row("ОТМЕТКА НИЗА ИЛИ\nЛОТКА ТРУБЫ", 15, value: p => p.PipeInvert, color: 1),
                         new Row("ПРОЕКТНАЯ ОТМЕТКА\nЗЕМЛИ", 15, value: p => p.ProjectGround, color: 1),
@@ -273,7 +300,7 @@ namespace Profiles.Core
                         new Row("УКЛОН, % / ДЛИНА, М", 10, "pipeSlope"),
                         new Row("РАССТОЯНИЕ, М", 10, "distance"),
                         new Row("НОМЕР КОЛОДЦА, ТОЧКИ,\nУГЛА ПОВОРОТА", 10, "point")
-                    };
+                    }, earthworks);
 
                 bool reconstruction = template == ProfileTemplate.Reconstruction;
                 var rows = new List<Row> { new Row("П Л А Н", 18, "plan"), new Row("П И К Е Т Ы", 14, "station"), new Row("РАССТОЯНИЯ, М", 5, "distance") };
@@ -284,7 +311,6 @@ namespace Profiles.Core
                     AddRow(rows, points, "ОТМЕТКИ ПОВЕРХНОСТИ ЗЕМЛИ, М\n(ЛЕВЫЙ БЕРЕГ)", 14, p => p.LeftBank);
                     AddRow(rows, points, "ОТМЕТКА УРОВНЯ ВОДЫ, М", 12, p => p.Water, 5);
                     AddRow(rows, points, "ГЛУБИНА ПОДЧИСТКИ, М", 7, p => p.ExistingBottom.HasValue && p.ProjectBottom.HasValue ? Math.Max(0, p.ExistingBottom.Value - p.ProjectBottom.Value) : (double?)null);
-                    if (settings.ShowEmptyRows) rows.Add(new Row("ПЛОЩАДЬ ПОПЕРЕЧНОГО СЕЧЕНИЯ, М2", 8));
                 }
                 else AddRow(rows, points, "ГЛУБИНА ТОРФА, М", 7, p => p.PeatDepth);
                 if (settings.ShowEmptyRows || points.Any(p => p.ProjectBottom.HasValue)) rows.Add(new Row("УКЛОН, ‰ / ДЛИНА, М", 12, "slope"));
@@ -293,28 +319,75 @@ namespace Profiles.Core
                 AddRow(rows, points, "ШИРИНА ПО ДНУ, М", 6, p => p.BottomWidth, kind: "constant");
                 if (settings.ShowEmptyRows || points.Any(p => p.LeftSlope.HasValue || p.RightSlope.HasValue))
                     rows.Add(new Row("ЗАЛОЖЕНИЕ ОТКОСОВ (Л/П)", 6, "ratio"));
-                if (settings.ShowEmptyRows)
+                return AddEarthworkRows(rows, earthworks);
+            }
+
+            private List<Row> AddEarthworkRows(List<Row> rows, EarthworksSummary earthworks)
+            {
+                if (settings.ShowEmptyRows || earthworks.Stations.Count > 0)
                 {
-                    if (!reconstruction) rows.Add(new Row("ПЛОЩАДЬ ПОПЕРЕЧНОГО СЕЧЕНИЯ, М2", 12));
-                    rows.Add(new Row(reconstruction ? "ОБЪЕМ ЗЕМ. РАБОТ ПО ЗАСЫПКЕ, М3" : "ОБЪЕМ ЗЕМ. РАБОТ, М3", 12));
-                    plan.Warnings.Add("Площадь сечения и объём земляных работ не рассчитываются; строки оставлены пустыми.");
+                    rows.Add(AreaRow("ПЛОЩАДЬ СРЕЗКИ, М²", earthworks, result => result.CutArea));
+                    rows.Add(AreaRow("ПЛОЩАДЬ ДОСЫПКИ, М²", earthworks, result => result.FillArea));
+                    rows.Add(AreaRow("ПЛОЩАДЬ ЗАИЛЕНИЯ, М²", earthworks, result => result.SiltArea));
                 }
+                rows.Add(new Row("ОБЪЁМ СРЕЗКИ, М³", 8, "volumeCut"));
+                rows.Add(new Row("ОБЪЁМ ДОСЫПКИ, М³", 8, "volumeFill"));
+                rows.Add(new Row("ОБЪЁМ ЗАИЛЕНИЯ, М³", 8, "volumeSilt"));
                 return rows;
+            }
+
+            private static Row AreaRow(string label, EarthworksSummary earthworks, Func<SectionEarthworks, double?> value)
+            {
+                return new Row(label, 8, "area")
+                {
+                    StationValues = earthworks.Stations.Select(item => Tuple.Create(item.Station, item.Result == null ? null : value(item.Result))).ToList()
+                };
+            }
+
+            private void AreaStations(Row row, double first, double last, double top, double bottom)
+            {
+                foreach (var value in row.StationValues)
+                {
+                    if (value.Item1 < first - 1e-8 || value.Item1 > last + 1e-8) continue;
+                    double x = X(value.Item1 - first);
+                    Line(new Point2(x, top), new Point2(x, bottom));
+                    if (value.Item2.HasValue) Text(x, (top + bottom) / 2, F(value.Item2.Value), 90);
+                }
+            }
+
+            private void VolumeIntervals(EarthworksSummary earthworks, string kind, double first, double last, double top, double bottom)
+            {
+                foreach (var interval in earthworks.Intervals)
+                {
+                    if (interval.StartStation < first - 1e-8 || interval.EndStation > last + 1e-8) continue;
+                    double left = X(interval.StartStation - first), right = X(interval.EndStation - first);
+                    Line(new Point2(left, top), new Point2(left, bottom));
+                    Line(new Point2(right, top), new Point2(right, bottom));
+                    double? value = kind == "volumeCut" ? interval.CutVolume : kind == "volumeFill" ? interval.FillVolume : interval.SiltVolume;
+                    if (value.HasValue) Text((left + right) / 2, (top + bottom) / 2, F(value.Value));
+                }
             }
 
             private static string PointName(LongitudinalPoint point, int index)
             { return string.IsNullOrWhiteSpace(point.PointName) ? (index + 1).ToString(CultureInfo.InvariantCulture) : point.PointName; }
 
-            private void NvkLegend(double width, double highest, bool hasPipe)
+            private double LongitudinalLegend(double labelWidth, double highest, bool hasPipe)
             {
-                var entries = new[] { "Проектная земля", "Натурная земля", "Низ / лоток трубы" };
-                for (int index = 0; index < (hasPipe ? 3 : 2); index++)
+                var labels = template == ProfileTemplate.Nvk ? new[] { "Проектная отм. земли", "Натурная отм. земли", "Низ / лоток трубы" } :
+                    template == ProfileTemplate.NewChannel ? new[] { "Проектная отм. дна", "Существующая отм. земли" } :
+                    new[] { "Проектная отм. дна", "Существующая отм. дна", "Левый берег", "Правый берег", "Уровень воды" };
+                var colors = template == ProfileTemplate.Reconstruction ? new short[] { 1, 7, 7, 6, 5 } : new short[] { 1, 7, 1 };
+                int count = template == ProfileTemplate.Nvk && !hasPipe ? 2 : labels.Length;
+                Text(-labelWidth, highest + (count * 4 + 7) * Layout, "Условные обозначения", alignment: TextAlignment.Left, width: 70 * Layout);
+                for (int index = 0; index < count; index++)
                 {
-                    double y = highest + (16 - 4 * index) * Layout;
-                    Curve(new List<Point2> { new Point2(0, y), new Point2(12 * Layout, y) }, "PROF_LEGEND",
-                        index == 1 ? (short)7 : (short)1, index == 0 ? 0.4 : 0.3, index == 1);
-                    Text(15 * Layout, y, entries[index], alignment: TextAlignment.Left, width: Math.Min(width - 15 * Layout, 60 * Layout));
+                    double y = highest + ((count - index) * 4 + 1) * Layout;
+                    bool dashed = template == ProfileTemplate.Reconstruction ? index >= 3 : template == ProfileTemplate.Nvk && index == 1;
+                    Curve(new List<Point2> { new Point2(-labelWidth, y), new Point2(-labelWidth + 12 * Layout, y) }, "PROF_LEGEND",
+                        colors[index], index == 0 ? (template == ProfileTemplate.Nvk ? 0.4 : 0.5) : 0.3, dashed);
+                    Text(-labelWidth + 15 * Layout, y, labels[index], alignment: TextAlignment.Left, width: 65 * Layout);
                 }
+                return (count * 4 + 10) * Layout;
             }
 
             private void SlopeHeading(double labels, double top, double bottom, bool percent)
@@ -357,6 +430,7 @@ namespace Profiles.Core
                 IEnumerable<string> rotated = Enumerable.Empty<string>();
                 bool uniformText = row.Kind == "text" && row.TextValue != null && row.TextValue(points[0]) != "" && points.Select(row.TextValue).Distinct().Count() == 1;
                 if (row.Kind == "station") rotated = points.Select(p => Station(p.Station));
+                else if (row.StationValues != null) rotated = row.StationValues.Where(item => item.Item2.HasValue).Select(item => F(item.Item2.Value));
                 else if (row.Kind == "point") rotated = points.Select((point, index) => PointName(point, index));
                 else if (row.TextValue != null && !uniformText)
                     rotated = points.Select(row.TextValue);
@@ -402,12 +476,18 @@ namespace Profiles.Core
                 Text(left + (dz < 0 ? 0.33 : 0.67) * dx, bottom + 0.27 * (top - bottom), F(length));
             }
 
-            internal void Section(CrossSection section, List<Point2> trapezoid)
+            internal void Section(CrossSection section, List<Point2> trapezoid, SectionEarthworks earthworks)
             {
                 double minX = section.Points[0].Offset, width = X(section.Points.Last().Offset - minX), labels = 38 * Layout;
                 Func<Point2, Point2> transform = p => new Point2(X(p.X - minX), Y(p.Y));
                 List<List<Point2>> existing = SectionGeometry.Runs(section.Points, false);
                 List<List<Point2>> design = trapezoid != null ? new List<List<Point2>> { trapezoid } : SectionGeometry.Runs(section.Points, true);
+                HatchRegions(earthworks.CutRegions, transform, "PROF_CUT_HATCH", 1, 45);
+                HatchRegions(earthworks.FillRegions, transform, "PROF_FILL_HATCH", 3, 135);
+                HatchRegions(earthworks.SiltRegions, transform, "PROF_SILT_HATCH", 30, 45);
+                if (earthworks.SiltRegions.Count > 0)
+                    foreach (var run in earthworks.CleanedRuns)
+                        Curve(run.Select(transform).ToList(), "PROF_CLEANED", 30, 0.25, true);
                 foreach (List<Point2> run in existing) Curve(run.Select(transform).ToList(), "PROF_EXISTING", 7, 0.3);
                 foreach (List<Point2> run in design) Curve(run.Select(transform).ToList(), "PROF_PROJECT", 1, 0.5);
                 if (section.Water.HasValue)
@@ -464,17 +544,39 @@ namespace Profiles.Core
                 List<Point2> all = existing.Concat(design).SelectMany(x => x).ToList();
                 double highest = all.Max(p => Y(p.Y));
                 if (section.Water.HasValue) highest = Math.Max(highest, Y(section.Water.Value));
-                string title = settings.Title + " — " + section.Name + (section.Station.HasValue ? "   ПК " + Station(section.Station.Value) : "");
+                string stationLabel = section.Station.HasValue ? "ПК " + Station(section.Station.Value) : "";
+                string title = settings.Title + " — " + section.Name;
+                if (stationLabel.Length > 0 && !string.Equals((section.Name ?? "").Trim(), stationLabel, StringComparison.OrdinalIgnoreCase))
+                    title += "   " + stationLabel;
                 if (trapezoid != null)
                     highest = Annotation("Дно " + F(section.ProjectBottom.Value) + " м; b=" + F(section.BottomWidth.Value) + " м; откосы " + F(section.LeftSlope.Value) + "/" + F(section.RightSlope.Value), width, highest, 1);
                 if (section.Water.HasValue) highest = Annotation("УРОВЕНЬ ВОДЫ " + F(section.Water.Value) + " м", width, highest, 5);
+                highest = Annotation("F срезки = " + Quantity(earthworks.CutArea) + " м²", width, highest, 1);
+                highest = Annotation("F досыпки = " + Quantity(earthworks.FillArea) + " м²", width, highest, 3);
+                highest = Annotation("F заиления = " + Quantity(earthworks.SiltArea) + " м²", width, highest, 30);
                 Header(title, labels, width, highest);
+                if (!earthworks.IsValid && !string.IsNullOrWhiteSpace(earthworks.Status))
+                    plan.Warnings.Add("Поперечник «" + section.Name + "»: " + earthworks.Status);
                 if (section.Points.Any(p => !p.Existing.HasValue) && section.Points.Any(p => p.Existing.HasValue))
                     plan.Warnings.Add("Поперечник «" + section.Name + "»: пропуски натурных отметок оставлены разрывами.");
                 if (section.Points.Any(p => !p.Design.HasValue) && section.Points.Any(p => p.Design.HasValue))
                     plan.Warnings.Add("Поперечник «" + section.Name + "»: пропуски проектных отметок оставлены разрывами.");
                 if (section.Points.Zip(section.Points.Skip(1), (a, b) => X(b.Offset - a.Offset) < 5 * Layout).Any(x => x))
                     plan.Warnings.Add("Поперечник «" + section.Name + "»: есть интервалы слишком узкие для выбранного текста; проверьте расположение подписей.");
+            }
+
+            private static string Quantity(double? value) { return value.HasValue ? F(value.Value) : "—"; }
+
+            private void HatchRegions(List<List<Point2>> regions, Func<Point2, Point2> transform, string layer, short color, double angle)
+            {
+                foreach (var region in regions)
+                    if (region.Count >= 3)
+                        plan.Entities.Add(new DrawHatch
+                        {
+                            Layer = layer, ColorIndex = color, LineWeightMm = 0.13,
+                            Boundary = region.Select(transform).ToList(),
+                            PatternSpacing = 2 * Paper, PatternAngleDegrees = angle
+                        });
             }
 
             private double Annotation(string value, double width, double highest, short color)

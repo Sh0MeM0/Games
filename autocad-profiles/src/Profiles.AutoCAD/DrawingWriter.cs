@@ -107,9 +107,21 @@ namespace Profiles.AutoCAD
                         entity.LinetypeScale = dashScale;
                         if (entity is Polyline dashedPolyline) dashedPolyline.Plinegen = true;
                     }
-                    entity.TransformBy(transform);
-                    space.AppendEntity(entity);
-                    transaction.AddNewlyCreatedDBObject(entity, true);
+                    if (entity is Hatch hatch && item is DrawHatch region)
+                    {
+                        // AutoCAD requires a database-resident hatch before its
+                        // loop/pattern are evaluated. It remains in the same
+                        // transaction as all new geometry and prior erasure.
+                        space.AppendEntity(hatch);
+                        transaction.AddNewlyCreatedDBObject(hatch, true);
+                        DrawingHatch.Complete(hatch, region, transform);
+                    }
+                    else
+                    {
+                        entity.TransformBy(transform);
+                        space.AppendEntity(entity);
+                        transaction.AddNewlyCreatedDBObject(entity, true);
+                    }
                     Tag(entity, output);
                     if (entity is DBText text) text.AdjustAlignment(database);
                     output.Handles.Add(entity.Handle.ToString());
@@ -205,6 +217,12 @@ namespace Profiles.AutoCAD
 
         private static Entity CreateEntity(DrawEntity item, Database database)
         {
+            if (item is DrawHatch)
+            {
+                var hatch = new Hatch();
+                hatch.SetDatabaseDefaults(database);
+                return hatch;
+            }
             if (item is DrawPolyline line)
             {
                 if (line.Points.Count < 2) return null;

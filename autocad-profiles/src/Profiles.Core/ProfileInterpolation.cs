@@ -69,7 +69,122 @@ namespace Profiles.Core
                 ExistingBottom = sample.ExistingBottom, Water = sample.Water,
                 ProjectBottom = sample.ProjectBottom, BottomWidth = sample.BottomWidth,
                 LeftSlope = sample.LeftSlope, RightSlope = sample.RightSlope,
-                Points = new List<SectionPoint>()
+                UsePointDistances = true, UseLongitudinalProjectBottom = true, UseLongitudinalWater = true,
+                ProjectAnchorIndex = 1,
+                Points = new List<SectionPoint>
+                {
+                    new SectionPoint { Role = SectionPointRole.LeftBank, Existing = sample.LeftBank, UseLongitudinalElevation = true, DistanceFromPrevious = 0 },
+                    new SectionPoint { Role = SectionPointRole.Bottom, Existing = sample.ExistingBottom, UseLongitudinalElevation = true },
+                    new SectionPoint { Role = SectionPointRole.RightBank, Existing = sample.RightBank, UseLongitudinalElevation = true }
+                }
+            };
+        }
+
+        public static SectionDesignMode EffectiveDesignMode(CrossSection section)
+        {
+            if (section == null) throw new ProfileValidationException("Поперечник не задан.");
+            if (section.DesignMode != SectionDesignMode.Automatic) return section.DesignMode;
+            if (new[] { section.ProjectBottom, section.BottomWidth, section.LeftSlope, section.RightSlope }.Any(value => value.HasValue))
+                return SectionDesignMode.Trapezoid;
+            return section.Points != null && section.Points.Any(point => point != null && point.Design.HasValue)
+                ? SectionDesignMode.Points : SectionDesignMode.None;
+        }
+
+        /// <summary>Resolves a section copy; incomplete surveyed intervals remain null in the saved raw section.</summary>
+        public static CrossSection ResolveSection(CrossSection source, IList<LongitudinalPoint> longitudinal = null)
+        {
+            var result = CloneSection(source);
+            LongitudinalPoint station = null;
+            bool linked = source.UseLongitudinalProjectBottom || source.UseLongitudinalWater || source.Points.Any(point => point.UseLongitudinalElevation);
+            if (linked && longitudinal == null)
+                throw new ProfileValidationException("Для связанных отметок передайте текущие данные продольного профиля; сохранённые опорные значения не заменяют актуальный расчёт.");
+            if (longitudinal != null && linked)
+            {
+                if (!source.Station.HasValue) throw new ProfileValidationException("Для связанных отметок укажите пикет поперечника.");
+                station = SampleLongitudinal(longitudinal, source.Station.Value);
+            }
+            if (station != null)
+            {
+                if (source.UseLongitudinalProjectBottom) result.ProjectBottom = station.ProjectBottom;
+                if (source.UseLongitudinalWater) result.Water = station.Water;
+            }
+            double offset = result.Points.Count == 0 ? 0 : result.Points[0].Offset;
+            for (int index = 0; index < result.Points.Count; index++)
+            {
+                var point = result.Points[index];
+                if (source.UsePointDistances)
+                {
+                    if (index == 0 && point.DistanceFromPrevious.HasValue && point.DistanceFromPrevious.Value != 0)
+                        throw new ProfileValidationException("У первой точки расстояние от предыдущей должно быть пустым или нулевым.");
+                    if (index > 0)
+                    {
+                        if (!point.DistanceFromPrevious.HasValue || !NumberParser.Finite(point.DistanceFromPrevious.Value) || point.DistanceFromPrevious.Value <= 0)
+                            throw new ProfileValidationException("Поперечник «" + source.Name + "»: введите положительное расстояние перед точкой " + (index + 1) + ".");
+                        offset += point.DistanceFromPrevious.Value;
+                    }
+                    ProfileValidation.Range(offset, -1000000000, 1000000000, "Суммарное смещение поперечника");
+                    point.Offset = offset;
+                }
+                if (station != null && point.UseLongitudinalElevation)
+                {
+                    if (point.Role == SectionPointRole.LeftBank) point.Existing = station.LeftBank;
+                    else if (point.Role == SectionPointRole.Bottom) point.Existing = station.ExistingBottom;
+                    else if (point.Role == SectionPointRole.RightBank) point.Existing = station.RightBank;
+                }
+            }
+            CheckSection(result.Points);
+            result.UsePointDistances = false;
+            if (source.ProjectAnchorIndex.HasValue)
+            {
+                if (source.ProjectAnchorIndex.Value < 0 || source.ProjectAnchorIndex.Value >= result.Points.Count)
+                    throw new ProfileValidationException("Выбранная проектная опорная точка отсутствует в поперечнике.");
+                result.CenterOffset = result.Points[source.ProjectAnchorIndex.Value].Offset;
+            }
+            var mode = EffectiveDesignMode(result);
+            if (source.DesignMode == SectionDesignMode.Automatic && mode == SectionDesignMode.Trapezoid && source.Points.Any(point => point.Design.HasValue))
+                throw new ProfileValidationException("Выберите способ проектирования: трапеция или проектные отметки по точкам.");
+            result.DesignMode = mode;
+            if (mode != SectionDesignMode.Points)
+                foreach (var point in result.Points) point.Design = null;
+            else
+            {
+                // Use only raw anchors so intermediate cells recompute after each edit.
+                var anchors = result.Points.Select(point => new SectionPoint { Offset = point.Offset, Design = point.Design }).ToList();
+                int previous = -1;
+                for (int next = 0; next < anchors.Count; next++)
+                {
+                    if (!anchors[next].Design.HasValue) continue;
+                    if (previous >= 0)
+                        for (int index = previous + 1; index < next; index++)
+                            result.Points[index].Design = Between(anchors[previous].Offset, anchors[previous].Design.Value,
+                                anchors[next].Offset, anchors[next].Design.Value, anchors[index].Offset);
+                    previous = next;
+                }
+            }
+            if (mode != SectionDesignMode.Trapezoid)
+                result.ProjectBottom = result.BottomWidth = result.LeftSlope = result.RightSlope = null;
+            return result;
+        }
+
+        public static CrossSection CloneSection(CrossSection source)
+        {
+            if (source == null || source.Points == null || source.Points.Any(point => point == null))
+                throw new ProfileValidationException("Поперечник или его точки отсутствуют.");
+            return new CrossSection
+            {
+                Name = source.Name, Station = source.Station, DesignMode = source.DesignMode,
+                UsePointDistances = source.UsePointDistances, ProjectAnchorIndex = source.ProjectAnchorIndex,
+                UseLongitudinalProjectBottom = source.UseLongitudinalProjectBottom, UseLongitudinalWater = source.UseLongitudinalWater,
+                LeftBank = source.LeftBank, RightBank = source.RightBank, ExistingBottom = source.ExistingBottom,
+                Water = source.Water, ProjectBottom = source.ProjectBottom, BottomWidth = source.BottomWidth,
+                LeftSlope = source.LeftSlope, RightSlope = source.RightSlope, CenterOffset = source.CenterOffset,
+                SiltThickness = source.SiltThickness, SiltLeft = source.SiltLeft, SiltRight = source.SiltRight,
+                Points = source.Points.Select(point => new SectionPoint
+                {
+                    Offset = point.Offset, Existing = point.Existing, Design = point.Design,
+                    Role = point.Role, DistanceFromPrevious = point.DistanceFromPrevious,
+                    UseLongitudinalElevation = point.UseLongitudinalElevation
+                }).ToList()
             };
         }
 

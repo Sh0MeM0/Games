@@ -1,6 +1,6 @@
 {
-  "SchemaVersion": 2,
-  "ProjectId": "6f02f7e1bf13448a8f756ed61b4b40b6",
+  "SchemaVersion": 3,
+  "ProjectId": "5d7f07bc4b4941f3a87203e83c1605bb",
   "Name": "Учебный новый канал",
   "Kind": "Longitudinal",
   "Template": "NewChannel",

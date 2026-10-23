@@ -97,14 +97,18 @@ namespace Profiles.Core
                 {
                     new CrossSection
                     {
-                        Name = "1-1 — проектная трапеция",
+                        Name = "ПК 0+00.00",
                         Station = 0,
+                        DesignMode = SectionDesignMode.Trapezoid,
                         CenterOffset = 0,
                         Water = 142.10,
                         ProjectBottom = 141.20,
                         BottomWidth = 0.6,
                         LeftSlope = 1.5,
                         RightSlope = 1.5,
+                        SiltThickness = .2,
+                        SiltLeft = -1,
+                        SiltRight = 1,
                         Points = new List<SectionPoint>
                         {
                             new SectionPoint { Offset = -8, Existing = 143.70 },
@@ -118,17 +122,21 @@ namespace Profiles.Core
                     },
                     new CrossSection
                     {
-                        Name = "2-2 — проект по отметкам",
+                        Name = "ПК 1+00.00",
                         Station = 100,
+                        DesignMode = SectionDesignMode.Points,
                         Water = 141.80,
+                        SiltThickness = .15,
+                        SiltLeft = -.4,
+                        SiltRight = .4,
                         Points = new List<SectionPoint>
                         {
                             new SectionPoint { Offset = -7, Existing = 143.35, Design = 143.35 },
                             new SectionPoint { Offset = -3.2, Existing = 143.25, Design = 142.70 },
                             new SectionPoint { Offset = -0.4, Existing = 141.35, Design = 140.80 },
                             new SectionPoint { Offset = 0.4, Existing = 141.30, Design = 140.80 },
-                            new SectionPoint { Offset = 3.2, Existing = 143.30, Design = 142.70 },
-                            new SectionPoint { Offset = 7, Existing = 143.40, Design = 143.40 }
+                            new SectionPoint { Offset = 3.2, Existing = 143.30, Design = 143.60 },
+                            new SectionPoint { Offset = 7, Existing = 143.40, Design = 143.70 }
                         }
                     }
                 }

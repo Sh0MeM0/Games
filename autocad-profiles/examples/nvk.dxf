@@ -493,7 +493,7 @@ $SKPOLY
   9
 $TDCREATE
  40
-2461337.4760879627
+2461337.518287037
   9
 $TDUCREATE
  40
@@ -501,7 +501,7 @@ $TDUCREATE
   9
 $TDUPDATE
  40
-2461337.4760879627
+2461337.518287037
   9
 $TDUUPDATE
  40
@@ -553,7 +553,7 @@ $SPLINESEGS
   9
 $HANDSEED
   5
-9A
+A1
   9
 $SURFTAB1
  70
@@ -933,11 +933,11 @@ $PSTYLEMODE
   9
 $FINGERPRINTGUID
   2
-{AA6FB2E7-6B90-40EE-ACD1-CADFC7DB7BCE}
+{84B5CA59-A248-41EA-A2C2-93846DE02C9C}
   9
 $VERSIONGUID
   2
-{CA9C2F2D-3E8E-4F47-8C0D-C54228D1BC27}
+{2EB0CF2B-F2FB-4975-9BBE-4F5BB7324F04}
   9
 $EXTNAMES
 290
@@ -1327,9 +1327,9 @@ ISM
   0
 CLASS
   1
-ACDBPLACEHOLDER
+LAYOUT
   2
-AcDbPlaceHolder
+AcDbLayout
   3
 ObjectDBX Classes
  90
@@ -1343,9 +1343,9 @@ ObjectDBX Classes
   0
 CLASS
   1
-LAYOUT
+ACDBPLACEHOLDER
   2
-AcDbLayout
+AcDbPlaceHolder
   3
 ObjectDBX Classes
  90
@@ -1805,7 +1805,7 @@ Continuous
   0
 LAYER
   5
-90
+93
 330
 1
 100
@@ -1927,7 +1927,7 @@ ACAD
   0
 APPID
   5
-97
+9E
 330
 3
 100
@@ -1941,7 +1941,7 @@ HATCHBACKGROUNDCOLOR
   0
 APPID
   5
-98
+9F
 330
 3
 100
@@ -4953,13 +4953,13 @@ AcDbPolyline
  10
 -30.0
  20
-0.0
+-54.0
  10
--30.0
+100.0
  20
--50.0
+-54.0
   0
-LWPOLYLINE
+MTEXT
   5
 8A
 330
@@ -4967,25 +4967,27 @@ LWPOLYLINE
 100
 AcDbEntity
   8
-PROF_GRID
+PROF_TEXT
  62
-8
+7
 370
 18
 100
-AcDbPolyline
- 90
-2
- 70
-0
+AcDbMText
  10
-0.0
+-29.0
  20
+-52.0
+ 30
 0.0
- 10
-0.0
- 20
--50.0
+ 40
+1.25
+ 41
+28.0
+ 71
+4
+  1
+{\W0.85;\pxql;ОБЪЁМ СРЕЗКИ, М³}
   0
 LWPOLYLINE
   5
@@ -5007,13 +5009,13 @@ AcDbPolyline
  70
 0
  10
-100.0
+-30.0
  20
-0.0
+-58.0
  10
 100.0
  20
--50.0
+-58.0
   0
 MTEXT
   5
@@ -5031,21 +5033,21 @@ PROF_TEXT
 100
 AcDbMText
  10
--30.0
+-29.0
  20
-36.625
+-56.0
  30
 0.0
  40
 1.25
  41
-130.0
+28.0
  71
 4
   1
-{\W0.85;\pxql;УЧЕБНЫЙ ПРИМЕР — СЕТИ НВК}
+{\W0.85;\pxql;ОБЪЁМ ДОСЫПКИ, М³}
   0
-MTEXT
+LWPOLYLINE
   5
 8D
 330
@@ -5053,27 +5055,25 @@ MTEXT
 100
 AcDbEntity
   8
-PROF_TEXT
+PROF_GRID
  62
-7
+8
 370
 18
 100
-AcDbMText
+AcDbPolyline
+ 90
+2
+ 70
+0
  10
 -30.0
  20
-33.0
- 30
-0.0
- 40
-1.25
- 41
-30.0
- 71
-4
-  1
-{\W0.85;\pxql;ГОР. 1:500}
+-62.0
+ 10
+100.0
+ 20
+-62.0
   0
 MTEXT
   5
@@ -5091,9 +5091,391 @@ PROF_TEXT
 100
 AcDbMText
  10
+-29.0
+ 20
+-60.0
+ 30
+0.0
+ 40
+1.25
+ 41
+28.0
+ 71
+4
+  1
+{\W0.85;\pxql;ОБЪЁМ ЗАИЛЕНИЯ, М³}
+  0
+LWPOLYLINE
+  5
+8F
+330
+17
+100
+AcDbEntity
+  8
+PROF_GRID
+ 62
+8
+370
+18
+100
+AcDbPolyline
+ 90
+2
+ 70
+0
+ 10
 -30.0
  20
-31.0
+0.0
+ 10
+-30.0
+ 20
+-62.0
+  0
+LWPOLYLINE
+  5
+90
+330
+17
+100
+AcDbEntity
+  8
+PROF_GRID
+ 62
+8
+370
+18
+100
+AcDbPolyline
+ 90
+2
+ 70
+0
+ 10
+0.0
+ 20
+0.0
+ 10
+0.0
+ 20
+-62.0
+  0
+LWPOLYLINE
+  5
+91
+330
+17
+100
+AcDbEntity
+  8
+PROF_GRID
+ 62
+8
+370
+18
+100
+AcDbPolyline
+ 90
+2
+ 70
+0
+ 10
+100.0
+ 20
+0.0
+ 10
+100.0
+ 20
+-62.0
+  0
+MTEXT
+  5
+92
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+-30.0
+ 20
+34.5
+ 30
+0.0
+ 40
+1.25
+ 41
+35.0
+ 71
+4
+  1
+{\W0.85;\pxql;Условные обозначения}
+  0
+LWPOLYLINE
+  5
+94
+330
+17
+100
+AcDbEntity
+  8
+PROF_LEGEND
+ 62
+1
+370
+40
+100
+AcDbPolyline
+ 90
+2
+ 70
+0
+ 10
+-30.0
+ 20
+31.5
+ 10
+-24.0
+ 20
+31.5
+  0
+MTEXT
+  5
+95
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+-22.5
+ 20
+31.5
+ 30
+0.0
+ 40
+1.25
+ 41
+32.5
+ 71
+4
+  1
+{\W0.85;\pxql;Проектная отм. земли}
+  0
+LWPOLYLINE
+  5
+96
+330
+17
+100
+AcDbEntity
+  8
+PROF_LEGEND
+  6
+PROF_DASH
+ 62
+7
+370
+30
+ 48
+1.25
+100
+AcDbPolyline
+ 90
+2
+ 70
+0
+ 10
+-30.0
+ 20
+29.5
+ 10
+-24.0
+ 20
+29.5
+  0
+MTEXT
+  5
+97
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+-22.5
+ 20
+29.5
+ 30
+0.0
+ 40
+1.25
+ 41
+32.5
+ 71
+4
+  1
+{\W0.85;\pxql;Натурная отм. земли}
+  0
+LWPOLYLINE
+  5
+98
+330
+17
+100
+AcDbEntity
+  8
+PROF_LEGEND
+ 62
+1
+370
+30
+100
+AcDbPolyline
+ 90
+2
+ 70
+0
+ 10
+-30.0
+ 20
+27.5
+ 10
+-24.0
+ 20
+27.5
+  0
+MTEXT
+  5
+99
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+-22.5
+ 20
+27.5
+ 30
+0.0
+ 40
+1.25
+ 41
+32.5
+ 71
+4
+  1
+{\W0.85;\pxql;Низ / лоток трубы}
+  0
+MTEXT
+  5
+9A
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+-30.0
+ 20
+47.625
+ 30
+0.0
+ 40
+1.25
+ 41
+130.0
+ 71
+4
+  1
+{\W0.85;\pxql;УЧЕБНЫЙ ПРИМЕР — СЕТИ НВК}
+  0
+MTEXT
+  5
+9B
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+-30.0
+ 20
+44.0
+ 30
+0.0
+ 40
+1.25
+ 41
+30.0
+ 71
+4
+  1
+{\W0.85;\pxql;ГОР. 1:500}
+  0
+MTEXT
+  5
+9C
+330
+17
+100
+AcDbEntity
+  8
+PROF_TEXT
+ 62
+7
+370
+18
+100
+AcDbMText
+ 10
+-30.0
+ 20
+42.0
  30
 0.0
  40
@@ -5107,7 +5489,7 @@ AcDbMText
   0
 MTEXT
   5
-8F
+9D
 330
 17
 100
@@ -5134,184 +5516,6 @@ AcDbMText
 4
   1
 {\W0.85;\pxql;УСЛ. ОТМ. 139.00}
-  0
-LWPOLYLINE
-  5
-91
-330
-17
-100
-AcDbEntity
-  8
-PROF_LEGEND
- 62
-1
-370
-40
-100
-AcDbPolyline
- 90
-2
- 70
-0
- 10
-0.0
- 20
-33.0
- 10
-6.0
- 20
-33.0
-  0
-MTEXT
-  5
-92
-330
-17
-100
-AcDbEntity
-  8
-PROF_TEXT
- 62
-7
-370
-18
-100
-AcDbMText
- 10
-7.5
- 20
-33.0
- 30
-0.0
- 40
-1.25
- 41
-30.0
- 71
-4
-  1
-{\W0.85;\pxql;Проектная земля}
-  0
-LWPOLYLINE
-  5
-93
-330
-17
-100
-AcDbEntity
-  8
-PROF_LEGEND
-  6
-PROF_DASH
- 62
-7
-370
-30
- 48
-1.25
-100
-AcDbPolyline
- 90
-2
- 70
-0
- 10
-0.0
- 20
-31.0
- 10
-6.0
- 20
-31.0
-  0
-MTEXT
-  5
-94
-330
-17
-100
-AcDbEntity
-  8
-PROF_TEXT
- 62
-7
-370
-18
-100
-AcDbMText
- 10
-7.5
- 20
-31.0
- 30
-0.0
- 40
-1.25
- 41
-30.0
- 71
-4
-  1
-{\W0.85;\pxql;Натурная земля}
-  0
-LWPOLYLINE
-  5
-95
-330
-17
-100
-AcDbEntity
-  8
-PROF_LEGEND
- 62
-1
-370
-30
-100
-AcDbPolyline
- 90
-2
- 70
-0
- 10
-0.0
- 20
-29.0
- 10
-6.0
- 20
-29.0
-  0
-MTEXT
-  5
-96
-330
-17
-100
-AcDbEntity
-  8
-PROF_TEXT
- 62
-7
-370
-18
-100
-AcDbMText
- 10
-7.5
- 20
-29.0
- 30
-0.0
- 40
-1.25
- 41
-30.0
- 71
-4
-  1
-{\W0.85;\pxql;Низ / лоток трубы}
   0
 ENDSEC
   0
@@ -6303,7 +6507,7 @@ CREATED_BY_EZDXF
   3
 WRITTEN_BY_EZDXF
 350
-99
+A0
   0
 DICTIONARYVAR
   5
@@ -6315,11 +6519,11 @@ DictionaryVariables
 280
 0
   1
-1.4.4 @ 2026-10-23T11:25:34.278415+00:00
+1.4.4 @ 2026-10-23T12:26:20.628551+00:00
   0
 DICTIONARYVAR
   5
-99
+A0
 330
 2D
 100
@@ -6327,7 +6531,7 @@ DictionaryVariables
 280
 0
   1
-1.4.4 @ 2026-10-23T11:25:34.285150+00:00
+1.4.4 @ 2026-10-23T12:26:20.634066+00:00
   0
 ENDSEC
   0

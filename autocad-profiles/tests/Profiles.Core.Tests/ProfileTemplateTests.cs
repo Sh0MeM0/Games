@@ -49,7 +49,7 @@ public sealed class ProfileTemplateTests
     }
 
     [Fact]
-    public void NvkRetainsEightStructuralRowsAndDoesNotTreatChannelBottomAsDesignGround()
+    public void NvkRetainsEightStructuralRowsAndAddsMandatoryVolumeRowsWithoutChannelGround()
     {
         var project = Longitudinal(140, 142);
         project.Template = ProfileTemplate.Nvk;
@@ -60,7 +60,7 @@ public sealed class ProfileTemplateTests
         var boundaries = plan.Entities.OfType<DrawPolyline>().Where(line => line.Layer == "PROF_GRID" &&
             line.Points.Count == 2 && line.Points[0].X == -60 && line.Points[1].X == 20 &&
             line.Points[0].Y == line.Points[1].Y).ToList();
-        Assert.Equal(9, boundaries.Count);
+        Assert.Equal(12, boundaries.Count);
         var texts = plan.Entities.OfType<DrawText>().Select(text => text.Text).ToList();
         Assert.Contains("ОТМЕТКА НИЗА ИЛИ\nЛОТКА ТРУБЫ", texts);
         Assert.Contains("ПРОЕКТНАЯ ОТМЕТКА\nЗЕМЛИ", texts);
