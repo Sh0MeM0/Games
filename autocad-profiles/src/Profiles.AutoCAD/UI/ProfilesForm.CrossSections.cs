@@ -10,7 +10,10 @@ namespace Profiles.AutoCAD
 {
     public sealed partial class ProfilesForm
     {
-        private readonly ComboBox designMode = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 205, Margin = new Padding(3, 4, 12, 4) };
+        private readonly ComboBox designMode = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 175, Margin = new Padding(2, 3, 6, 3) };
+        private readonly CheckBox showEarthworks = new CheckBox { Text = "Ил / площади", AutoSize = true, Checked = true, Margin = new Padding(8, 5, 2, 2) };
+        private TableLayoutPanel crossLayout;
+        private Control earthworksPanel;
         private readonly TextBox siltThickness = Input();
         private readonly TextBox siltLeft = Input();
         private readonly TextBox siltRight = Input();
@@ -42,13 +45,13 @@ namespace Profiles.AutoCAD
                 RefreshProjectAnchorDisplay();
                 if (!loading) SetDirty();
             };
-            var panel = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 1, RowCount = 3 };
-            panel.Controls.Add(Fields("Проект", designMode, "Дно, м", projectBottom), 0, 0);
-            panel.Controls.Add(Fields("Ширина дна, м", bottomWidth, "Откос слева 1:", leftSlope, "справа 1:", rightSlope), 0, 1);
-            var center = (FlowLayoutPanel)Fields("Центр дна, м", centerOffset);
-            center.Controls.Add(Button("Центр по фактическому дну", FindAutoCenter));
-            panel.Controls.Add(center, 0, 2);
-            tips.SetToolTip(projectBottom, "Отметка дна проектной трапеции. Кнопка под таблицей связывает её с продольным профилем под выбранной точкой.");
+            var panel = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 1, RowCount = 2 };
+            panel.Controls.Add(Fields("Проект", designMode, "Дно, м", projectBottom, "Ширина, м", bottomWidth), 0, 0);
+            leftSlope.Width = rightSlope.Width = 62;
+            var center = (FlowLayoutPanel)Fields("Откосы 1:", leftSlope, "/", rightSlope, "Центр, м", centerOffset);
+            center.Controls.Add(Button("Автоцентр", FindAutoCenter));
+            panel.Controls.Add(center, 0, 1);
+            tips.SetToolTip(projectBottom, "Общая проектная отметка этого ПК. Её можно изменить здесь или в красной опорной ячейке под точкой; изменение переносится в продольный профиль.");
             tips.SetToolTip(centerOffset, "Смещение центра проектной трапеции в системе поперечника. Ручной ввод снимает привязку к выбранному столбцу.");
             tips.SetToolTip(designMode, "Смена способа сохраняет неактивные исходные параметры. В режиме «По проектным отметкам» заполняется красная строка таблицы.");
             return panel;
@@ -66,7 +69,7 @@ namespace Profiles.AutoCAD
                     RunPointAction(crossGrid.RemoveSelectedPoint);
             }));
             bar.Controls.Add(Button("Вставить из Excel", () => RunPointAction(crossGrid.PasteTable)));
-            bar.Controls.Add(Button("Проектное дно из продольного", SetProjectAnchorFromLongitudinal));
+            bar.Controls.Add(Button("Дно под точкой", SetProjectAnchorFromLongitudinal));
             return bar;
         }
 
@@ -102,21 +105,30 @@ namespace Profiles.AutoCAD
                 CommitStationInput();
                 int index = crossGrid.SelectedPointIndex;
                 if (index < 0) throw new ProfileValidationException("Выберите ячейку в столбце точки, под которой должно находиться проектное дно.");
-                if (!currentSectionStation.HasValue) throw new ProfileValidationException("Сначала выберите или введите пикет поперечника.");
-                var sample = ProfileInterpolation.SampleLongitudinal(ReadLongitudinal(), currentSectionStation.Value);
-                if (!sample.ProjectBottom.HasValue) throw new ProfileValidationException("На этом пикете нет проектной отметки дна. Задайте её в продольном профиле или введите вручную в поле «Дно».");
-                DisplayNumber(projectBottom, sample.ProjectBottom);
-                longitudinalProjectBottomLinked = true;
-                crossGrid.SetProjectAnchor(index, sample.ProjectBottom);
-                SelectDesignMode(SectionDesignMode.Trapezoid);
+                CommitSection();
+                double? value = ReadOptionalNumber(projectBottom, "Проектное дно");
+                bool sampled = false;
+                if (!value.HasValue && currentSectionStation.HasValue)
+                {
+                    value = ProfileInterpolation.SampleLongitudinal(ReadLongitudinal(), currentSectionStation.Value).ProjectBottom;
+                    sampled = true;
+                }
+                var source = SynchronizationSource(ReadLongitudinal());
+                var section = source.Sections[selectedSection];
+                section.ProjectAnchorIndex = index;
+                section.ProjectBottom = value;
+                section.DesignMode = SectionDesignMode.Trapezoid;
+                if (sampled) section.UseLongitudinalProjectBottom = true;
                 try
                 {
-                    var resolved = ProfileInterpolation.ResolveSection(ReadCurrentSection(), ReadLongitudinal());
-                    DisplayNumber(centerOffset, resolved.CenterOffset);
+                    var resolved = ProfileInterpolation.ResolveSection(section, source.Longitudinal);
+                    section.CenterOffset = resolved.CenterOffset;
                 }
                 catch (ProfileValidationException) { /* An anchor can be saved before survey distances exist. */ }
+                ApplySynchronizedProject(source, selectedSection);
                 SetDirty();
-                SetStatus("Проектное дно связано с продольным профилем под точкой " + (index + 1) + ". Для трапеции задайте ширину и оба откоса; расстояния должны быть известны.");
+                QueueSharedCommit();
+                SetStatus("Проектное дно под точкой " + (index + 1) + ": введите отметку в красной ячейке. Для трапеции нужны ширина, откосы и измеренные расстояния.");
             }
             catch (Exception ex) { ShowError(ex.Message); }
         }
@@ -143,16 +155,16 @@ namespace Profiles.AutoCAD
             var content = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, Padding = new Padding(3) };
             content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             content.Controls.Add(new Label { Text = "Снятие ила", AutoSize = true, Font = new Font(Font, FontStyle.Bold), Margin = new Padding(3, 6, 3, 8) });
-            content.Controls.Add(Caption("Толщина по вертикали, м"));
+            content.Controls.Add(Caption("Толщина, м"));
             content.Controls.Add(siltThickness);
             content.Controls.Add(Caption("Левая граница, м"));
             content.Controls.Add(siltLeft);
             content.Controls.Add(Caption("Правая граница, м"));
             content.Controls.Add(siltRight);
-            content.Controls.Add(Note("Толщина пустая — без снятия ила. Границы пустые — по ширине проекта; без проекта — по измеренному участку."));
+            content.Controls.Add(Note("Пустая толщина — без ила. Пустые границы — автоматически."));
             content.Controls.Add(surveyOrigin);
             content.Controls.Add(new Label { Text = "Площади поперечника", AutoSize = true, Font = new Font(Font, FontStyle.Bold), Margin = new Padding(3, 12, 3, 8) });
-            content.Controls.Add(Caption("Выемка после снятия ила"));
+            content.Controls.Add(Caption("Выемка без ила"));
             content.Controls.Add(cutArea);
             content.Controls.Add(Caption("Насыпь"));
             content.Controls.Add(fillArea);
@@ -162,7 +174,7 @@ namespace Profiles.AutoCAD
             content.Controls.Add(Button("Обновить расчёт", RefreshEarthworks));
             scroll.Controls.Add(content);
             foreach (Control control in content.Controls)
-                if (control is Label label) label.MaximumSize = new Size(215, 0);
+                if (control is Label label) label.MaximumSize = new Size(185, 0);
             tips.SetToolTip(siltLeft, "Граница в системе смещений поперечника. Для нового поперечника первая точка имеет смещение 0. Импортированные абсолютные смещения сохраняются.");
             tips.SetToolTip(siltRight, "Весь диапазон снятия ила должен быть покрыт фактическими отметками без пропусков.");
             return scroll;
@@ -188,7 +200,7 @@ namespace Profiles.AutoCAD
         private void UpdateSurveyOrigin(CrossSection section)
         {
             double origin = section.Points.Count == 0 ? 0 : section.Points[0].Offset;
-            surveyOrigin.Text = "Границы и центр — смещения в системе съёмки. Первая точка: " + origin.ToString("F2", CultureInfo.InvariantCulture) + " м.";
+            surveyOrigin.Text = "Начало съёмки: " + origin.ToString("F2", CultureInfo.InvariantCulture) + " м.";
         }
 
         private void RefreshEarthworks()

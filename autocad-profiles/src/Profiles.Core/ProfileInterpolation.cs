@@ -148,6 +148,12 @@ namespace Profiles.Core
                 foreach (var point in result.Points) point.Design = null;
             else
             {
+                // A selected manual design anchor is the same shared project
+                // elevation as the longitudinal cell. Resolve the live value
+                // before filling intermediate design cells, without fixing it
+                // into the saved raw survey buffer.
+                if (station != null && source.UseLongitudinalProjectBottom && source.ProjectAnchorIndex.HasValue)
+                    result.Points[source.ProjectAnchorIndex.Value].Design = station.ProjectBottom;
                 // Use only raw anchors so intermediate cells recompute after each edit.
                 var anchors = result.Points.Select(point => new SectionPoint { Offset = point.Offset, Design = point.Design }).ToList();
                 int previous = -1;

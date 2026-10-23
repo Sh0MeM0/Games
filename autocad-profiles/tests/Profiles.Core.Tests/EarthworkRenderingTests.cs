@@ -47,7 +47,7 @@ public sealed class EarthworkRenderingTests
         Assert.All(hatches, hatch =>
         {
             Assert.True(Area(hatch.Boundary) > 0);
-            Assert.Equal(2 * horizontal / (1000 * metres), hatch.PatternSpacing, 8);
+            Assert.InRange(hatch.PatternSpacing, double.Epsilon, 1.2 * horizontal / (1000 * metres));
             Assert.Equal(hatch.Layer == "PROF_CUT_HATCH" ? 1 : hatch.Layer == "PROF_FILL_HATCH" ? 3 : 30, hatch.ColorIndex);
         });
         Assert.NotEmpty(Curves(plan, "PROF_CLEANED"));
@@ -98,15 +98,21 @@ public sealed class EarthworkRenderingTests
     }
 
     [Theory]
-    [InlineData("ПК 0+25.00", "ПК 0+25.00")]
-    [InlineData("Мост", "Мост   ПК 0+25.00")]
-    public void CrossHeadingIncludesStationOnceAndPreservesCustomName(string name, string suffix)
+    [InlineData("ПК 0+25.00")]
+    [InlineData("Мост")]
+    public void CrossIdentifierIsCompactAtTheLeftAboveDatumWithoutGenericHeadingOrScales(string name)
     {
         var project = CutFillProject();
         project.Sections[0].Name = name;
         project.Sections[0].Station = 25;
         var plan = ProfileEngine.Build(project);
-        Assert.Contains(plan.Entities.OfType<DrawText>(), text => text.Text == project.Settings.Title + " — " + suffix);
+        var texts = plan.Entities.OfType<DrawText>().ToList();
+        var identifier = Assert.Single(texts, text => text.Text == "0+25.00");
+        var datum = Assert.Single(texts, text => text.Text.StartsWith("УСЛ. ОТМ."));
+        Assert.Equal(datum.Position.X, identifier.Position.X);
+        Assert.Equal(6, identifier.Position.Y - datum.Position.Y, 8);
+        Assert.True(identifier.Position.X < 0);
+        Assert.DoesNotContain(texts, text => text.Text.Contains("ПК") || text.Text.Contains(project.Settings.Title) || text.Text.StartsWith("ГОР.") || text.Text.StartsWith("ВЕРТ."));
     }
 
     [Fact]

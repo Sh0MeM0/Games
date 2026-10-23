@@ -15,6 +15,7 @@ namespace Profiles.AutoCAD
 
         private object longEditOriginal;
         private bool longEditChanged;
+        private bool longEditParsed;
         private bool longEditSetup;
         private int longEditRow = -1;
         private int longEditColumn = -1;
@@ -49,8 +50,6 @@ namespace Profiles.AutoCAD
         {
             if (loading || saving) return;
             if (input.Tag is NumberState state) state.Edited = true;
-            if (input == projectBottom) longitudinalProjectBottomLinked = false;
-            if (input == sectionWater) longitudinalWaterLinked = false;
             if (input == centerOffset) crossGrid.SetProjectAnchor(null, null);
         }
 
@@ -68,6 +67,7 @@ namespace Profiles.AutoCAD
                 longEditColumn = e.ColumnIndex;
                 longEditOriginal = longGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value;
                 longEditChanged = false;
+                longEditParsed = false;
             };
             longGrid.EditingControlShowing += (s, e) =>
             {
@@ -87,6 +87,7 @@ namespace Profiles.AutoCAD
             };
             longGrid.CellParsing += (s, e) =>
             {
+                longEditParsed = true;
                 if (e.RowIndex == longEditRow && e.ColumnIndex == longEditColumn && !longEditChanged)
                 {
                     // Preserve the raw value before CellValueChanged/autosave can

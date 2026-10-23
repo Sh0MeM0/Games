@@ -10,6 +10,22 @@ namespace Profiles.AutoCAD.UI
 {
     public enum SectionPointRow { Distance = 0, Existing = 1, Design = 2 }
 
+    public sealed class SectionAnchorElevationEventArgs : EventArgs
+    {
+        public double? Value { get; }
+        public SectionAnchorElevationEventArgs(double? value) { Value = value; }
+    }
+
+    public sealed class SectionElevationEditedEventArgs : EventArgs
+    {
+        public int PointIndex { get; }
+        public SectionPointRole Role { get; }
+        public bool Design { get; }
+        public double? Value { get; }
+        public SectionElevationEditedEventArgs(int pointIndex, SectionPointRole role, bool design, double? value)
+        { PointIndex = pointIndex; Role = role; Design = design; Value = value; }
+    }
+
     /// <summary>Horizontal section editor; rendered precision never changes the raw survey data.</summary>
     public sealed class SectionPointGrid : DataGridView
     {
@@ -25,12 +41,16 @@ namespace Profiles.AutoCAD.UI
         private object editOriginalValue;
         private TextBox editingBox;
         private double? projectAnchorElevation;
+        private string invalidAnchor;
+        private readonly List<Action> pendingEditNotifications = new List<Action>();
         private bool manualDesignEnabled = true;
         private bool projectAnchorVisible = true;
         private Font anchorFont;
 
         public event EventHandler PointsChanged;
         public event EventHandler InterpolationRequested;
+        public event EventHandler<SectionAnchorElevationEventArgs> ProjectAnchorElevationChanged;
+        public event EventHandler<SectionElevationEditedEventArgs> ElevationEdited;
         public int SelectedPointIndex => CurrentCell == null ? -1 : CurrentCell.ColumnIndex - 1;
         public SectionPointRow SelectedRowKind => (SectionPointRow)Math.Max(0, CurrentCell?.RowIndex ?? 0);
         public int? ProjectAnchorIndex { get; private set; }
@@ -42,7 +62,7 @@ namespace Profiles.AutoCAD.UI
         public bool ProjectAnchorVisible
         {
             get => projectAnchorVisible;
-            set { projectAnchorVisible = value; UpdateHeaders(); Invalidate(); }
+            set { projectAnchorVisible = value; UpdateDesignMode(); }
         }
         public bool IsSelectedCellEmpty => SelectedPointIndex >= 0 &&
             string.IsNullOrWhiteSpace(Convert.ToString(CurrentCell.Value, CultureInfo.InvariantCulture));
@@ -56,7 +76,7 @@ namespace Profiles.AutoCAD.UI
             AllowUserToResizeRows = false;
             AutoGenerateColumns = false;
             RowHeadersVisible = false;
-            ColumnHeadersHeight = 58;
+            ColumnHeadersHeight = 44;
             ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
             BackgroundColor = Color.White;
             SelectionMode = DataGridViewSelectionMode.CellSelect;
@@ -67,21 +87,23 @@ namespace Profiles.AutoCAD.UI
             DefaultCellStyle.Format = "F2";
             DefaultCellStyle.FormatProvider = CultureInfo.InvariantCulture;
             DefaultCellStyle.NullValue = "";
-            DefaultCellStyle.Padding = new Padding(3, 0, 18, 0);
+            DefaultCellStyle.Padding = new Padding(2, 0, 13, 0);
             EnableHeadersVisualStyles = false;
             ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(234, 239, 244);
             ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
             Columns.Add(new DataGridViewTextBoxColumn
             {
                 Name = "Parameter", HeaderText = "Параметр", Frozen = true, ReadOnly = true,
-                Width = 250, MinimumWidth = 190, SortMode = DataGridViewColumnSortMode.NotSortable
+                Width = 185, MinimumWidth = 150, SortMode = DataGridViewColumnSortMode.NotSortable
             });
             Columns[0].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
             Columns[0].DefaultCellStyle.BackColor = Color.FromArgb(247, 249, 251);
+            Columns[0].DefaultCellStyle.Padding = new Padding(3, 0, 2, 0);
+            Columns[0].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
             Rows.Add("Расстояние от предыдущей точки, м");
             Rows.Add("Фактическая отметка, м");
             Rows.Add("Проектная отметка, м");
-            foreach (DataGridViewRow row in Rows) row.Height = 38;
+            foreach (DataGridViewRow row in Rows) row.Height = 30;
             Rows[2].DefaultCellStyle.ForeColor = Color.Firebrick;
 
             ContextMenuStrip = new ContextMenuStrip();
@@ -105,6 +127,7 @@ namespace Profiles.AutoCAD.UI
             points.Clear();
             points.AddRange(source.Select(Copy));
             invalid.Clear();
+            invalidAnchor = null;
             ProjectAnchorIndex = null;
             projectAnchorElevation = null;
             RebuildColumns();
@@ -113,6 +136,8 @@ namespace Profiles.AutoCAD.UI
         public List<SectionPoint> ReadPoints()
         {
             EndEdit();
+            if (invalidAnchor != null)
+                throw new ProfileValidationException("Проектное дно в опорном столбце: исправьте значение «" + invalidAnchor + "» в режиме «Трапеция».");
             if (invalid.Count > 0)
             {
                 string key = invalid.Keys.First();
@@ -133,8 +158,7 @@ namespace Profiles.AutoCAD.UI
                 throw new ArgumentOutOfRangeException(nameof(index), "Проектная опорная точка отсутствует в поперечнике.");
             ProjectAnchorIndex = index;
             projectAnchorElevation = elevation;
-            UpdateHeaders();
-            Invalidate();
+            UpdateDesignMode();
         }
 
         public void SetElevationAt(int index, bool design, double value)
@@ -142,13 +166,16 @@ namespace Profiles.AutoCAD.UI
             if (index < 0 || index >= points.Count) throw new ArgumentOutOfRangeException(nameof(index));
             if (double.IsNaN(value) || double.IsInfinity(value)) throw new ProfileValidationException("Отметка должна быть конечным числом.");
             int row = design ? 2 : 1;
-            if (design) points[index].Design = value;
-            else { points[index].Existing = value; points[index].UseLongitudinalElevation = false; }
-            invalid.Remove(Key(index, row));
+            bool anchor = design && IsAnchor(index);
+            if (anchor) { projectAnchorElevation = value; invalidAnchor = null; }
+            else if (design) points[index].Design = value;
+            else points[index].Existing = value;
+            if (!anchor) invalid.Remove(Key(index, row));
             loading = true;
             Rows[row].Cells[index + 1].Value = value;
             Rows[row].Cells[index + 1].ErrorText = "";
             loading = false;
+            NotifyElevationEdit(index, row);
             OnPointsChanged();
         }
 
@@ -199,7 +226,7 @@ namespace Profiles.AutoCAD.UI
             }
             points.RemoveAt(index);
             ReindexInvalid(index, -1, true);
-            if (ProjectAnchorIndex == index) ProjectAnchorIndex = null;
+            if (ProjectAnchorIndex == index) { ProjectAnchorIndex = null; invalidAnchor = null; }
             else if (ProjectAnchorIndex > index) ProjectAnchorIndex--;
             // Do not silently add neighboring intervals or reuse a stale interval.
             if (index < points.Count)
@@ -236,7 +263,7 @@ namespace Profiles.AutoCAD.UI
             {
                 Columns.Add(new DataGridViewTextBoxColumn
                 {
-                    Name = "Point" + index, ValueType = typeof(object), Width = 140, MinimumWidth = 100,
+                    Name = "Point" + index, ValueType = typeof(object), Width = 105, MinimumWidth = 75,
                     SortMode = DataGridViewColumnSortMode.NotSortable
                 });
                 for (int row = 0; row < 3; row++)
@@ -270,10 +297,36 @@ namespace Profiles.AutoCAD.UI
         private void UpdateDesignMode()
         {
             if (Rows.Count < 3) return;
-            for (int index = 1; index < Columns.Count; index++) Rows[2].Cells[index].ReadOnly = !manualDesignEnabled;
+            bool wasLoading = loading;
+            loading = true;
+            try
+            {
+                for (int index = 0; index < points.Count; index++)
+                {
+                    var cell = Rows[2].Cells[index + 1];
+                    bool anchor = IsAnchor(index);
+                    cell.ReadOnly = !manualDesignEnabled && !anchor;
+                    if (editingPoint == index && editingRow == 2 && IsCurrentCellInEditMode) continue;
+                    string error;
+                    if (anchor)
+                    {
+                        cell.Value = invalidAnchor ?? (object)projectAnchorElevation;
+                        cell.ErrorText = invalidAnchor == null ? "" : "Исправьте проектную отметку дна.";
+                    }
+                    else if (manualDesignEnabled)
+                    {
+                        cell.Value = invalid.TryGetValue(Key(index, 2), out error) ? (object)error : points[index].Design;
+                        cell.ErrorText = error == null ? "" : "Исправьте проектную отметку.";
+                    }
+                    else { cell.Value = null; cell.ErrorText = ""; }
+                }
+            }
+            finally { loading = wasLoading; }
             UpdateHeaders();
             Invalidate();
         }
+
+        private bool IsAnchor(int index) => !manualDesignEnabled && projectAnchorVisible && ProjectAnchorIndex == index;
 
         protected override void OnCellBeginEdit(DataGridViewCellCancelEventArgs e)
         {
@@ -282,7 +335,8 @@ namespace Profiles.AutoCAD.UI
             if (editingBox != null) editingBox.TextChanged -= EditorTextChanged;
             editingPoint = e.ColumnIndex - 1;
             editingRow = e.RowIndex;
-            editOriginalValue = Rows[e.RowIndex].Cells[e.ColumnIndex].Value;
+            editOriginalValue = e.RowIndex == 2 && IsAnchor(editingPoint) ?
+                invalidAnchor ?? (object)projectAnchorElevation : Rows[e.RowIndex].Cells[e.ColumnIndex].Value;
             editorChanged = false;
             editParsed = false;
             base.OnCellBeginEdit(e);
@@ -323,39 +377,52 @@ namespace Profiles.AutoCAD.UI
             if (loading || e.ColumnIndex <= 0 || e.RowIndex < 0 || e.ColumnIndex - 1 >= points.Count) return;
             int index = e.ColumnIndex - 1;
             var cell = Rows[e.RowIndex].Cells[e.ColumnIndex];
+            bool anchor = e.RowIndex == 2 && IsAnchor(index);
+            bool valid = false;
             try
             {
                 double? value = cell.Value is double number ? number :
                     NumberParser.ParseOptional(Convert.ToString(cell.Value, CultureInfo.InvariantCulture), RowName(e.RowIndex));
+                if (value.HasValue && (double.IsNaN(value.Value) || double.IsInfinity(value.Value)))
+                    throw new ProfileValidationException("Значение должно быть конечным числом.");
                 if (e.RowIndex == 0 && value.HasValue && (index == 0 ? value.Value != 0 : value.Value <= 0))
                     throw new ProfileValidationException(index == 0 ? "У первой точки нет предыдущего интервала." : "Расстояние должно быть положительным либо пустым.");
-                SetValue(points[index], e.RowIndex, value);
-                if (e.RowIndex == 1 && (programmaticManual || (editingPoint == index && editorChanged)))
-                    points[index].UseLongitudinalElevation = false;
-                invalid.Remove(Key(index, e.RowIndex));
+                if (anchor) { projectAnchorElevation = value; invalidAnchor = null; }
+                else
+                {
+                    SetValue(points[index], e.RowIndex, value);
+                    invalid.Remove(Key(index, e.RowIndex));
+                }
                 cell.ErrorText = "";
                 loading = true;
                 cell.Value = value;
                 loading = false;
+                valid = true;
             }
             catch (ProfileValidationException error)
             {
-                invalid[Key(index, e.RowIndex)] = Convert.ToString(cell.Value, CultureInfo.InvariantCulture);
+                string text = Convert.ToString(cell.Value, CultureInfo.InvariantCulture);
+                if (anchor) invalidAnchor = text;
+                else invalid[Key(index, e.RowIndex)] = text;
                 cell.ErrorText = error.Message;
             }
+            // Editing callbacks run only after the editor has finished committing.
+            // This lets the parent synchronize a shared value without reentering EndEdit.
+            if (!programmaticManual && editingPoint == index && editingRow == e.RowIndex) return;
+            if (valid) NotifyElevationEdit(index, e.RowIndex);
             OnPointsChanged();
         }
 
         protected override void OnCellEndEdit(DataGridViewCellEventArgs e)
         {
             if (editingBox != null) editingBox.TextChanged -= EditorTextChanged;
-            if (editingPoint >= 0 && editingPoint < points.Count && editingRow == 1 && editParsed && editorChanged && points[editingPoint].UseLongitudinalElevation)
-            {
-                points[editingPoint].UseLongitudinalElevation = false;
-                OnPointsChanged();
-            }
+            int index = editingPoint, row = editingRow;
+            bool changed = editParsed && editorChanged && index >= 0 && index < points.Count;
+            bool valid = changed && (row == 2 && IsAnchor(index) ? invalidAnchor == null : !invalid.ContainsKey(Key(index, row)));
             editingPoint = editingRow = -1;
             base.OnCellEndEdit(e);
+            if (valid) NotifyElevationEdit(index, row);
+            if (changed) OnPointsChanged();
         }
 
         protected override void OnCellFormatting(DataGridViewCellFormattingEventArgs e)
@@ -363,9 +430,9 @@ namespace Profiles.AutoCAD.UI
             if (e.ColumnIndex > 0) e.CellStyle.Font = Font;
             if (e.ColumnIndex > 0 && e.RowIndex == 2 && !ManualDesignEnabled)
             {
-                bool anchor = ProjectAnchorVisible && ProjectAnchorIndex == e.ColumnIndex - 1 && projectAnchorElevation.HasValue;
-                e.Value = anchor ? projectAnchorElevation.Value.ToString("F2", CultureInfo.InvariantCulture) : "";
-                if (anchor)
+                bool anchor = IsAnchor(e.ColumnIndex - 1);
+                e.Value = anchor ? invalidAnchor ?? (projectAnchorElevation.HasValue ? projectAnchorElevation.Value.ToString("F2", CultureInfo.InvariantCulture) : "") : "";
+                if (anchor && invalidAnchor == null)
                 {
                     if (anchorFont == null) anchorFont = new Font(Font, FontStyle.Italic);
                     e.CellStyle.Font = anchorFont;
@@ -432,8 +499,13 @@ namespace Profiles.AutoCAD.UI
                 if (first != "" && first != "—" && NumberParser.ParseRequired(first, "Первый интервал") != 0)
                     throw new ProfileValidationException("Первый столбец не имеет предыдущего интервала: оставьте пусто или 0.");
             }
-            if (!ManualDesignEnabled && data.Length + startRow > 2 && data[2 - startRow].Any(value => !string.IsNullOrWhiteSpace(value)))
-                throw new ProfileValidationException("Для вставки проектных отметок выберите режим проекта «По точкам».");
+            if (!ManualDesignEnabled && data.Length + startRow > 2)
+            {
+                var design = data[2 - startRow];
+                for (int column = 0; column < design.Length; column++)
+                    if (!IsAnchor(startPoint + column) && !string.IsNullOrWhiteSpace(design[column]))
+                        throw new ProfileValidationException("В режиме «Трапеция» редактируется только проектное дно в опорном столбце. Для остальных проектных отметок выберите режим «По проектным отметкам».");
+            }
             bool previousBatch = batchingChanges;
             bool previousManual = programmaticManual;
             batchingChanges = true;
@@ -459,19 +531,23 @@ namespace Profiles.AutoCAD.UI
                     {
                         int targetRow = startRow + row, point = startPoint + column;
                         string value = data[row][column].Trim();
-                        if (targetRow == 2 && !ManualDesignEnabled) continue;
+                        if (targetRow == 2 && !ManualDesignEnabled && !IsAnchor(point)) continue;
                         if (targetRow == 0 && point == 0)
                         {
                             continue;
                         }
-                        if (targetRow == 1) points[point].UseLongitudinalElevation = false;
-                        Rows[targetRow].Cells[point + 1].Value = value;
+                        var cell = Rows[targetRow].Cells[point + 1];
+                        bool unchanged = Equals(cell.Value, value);
+                        cell.Value = value;
+                        if (unchanged && !invalid.ContainsKey(Key(point, targetRow)) && (targetRow != 2 || !IsAnchor(point) || invalidAnchor == null))
+                            NotifyElevationEdit(point, targetRow);
                     }
             }
             finally
             {
                 programmaticManual = previousManual;
                 batchingChanges = previousBatch;
+                FlushEditNotifications();
                 OnPointsChanged();
             }
         }
@@ -481,24 +557,58 @@ namespace Profiles.AutoCAD.UI
             if (keyData == (Keys.Control | Keys.V)) { RunAction(PasteTable); return true; }
             if (keyData == Keys.Delete && !IsCurrentCellInEditMode)
             {
+                bool previousBatch = batchingChanges;
+                batchingChanges = true;
                 programmaticManual = true;
                 try
                 {
                     foreach (DataGridViewCell cell in SelectedCells)
                         if (cell.ColumnIndex > 0 && !cell.ReadOnly)
                         {
-                            if (cell.RowIndex == 1) points[cell.ColumnIndex - 1].UseLongitudinalElevation = false;
+                            bool alreadyEmpty = cell.Value == null;
                             cell.Value = null;
+                            if (alreadyEmpty) NotifyElevationEdit(cell.ColumnIndex - 1, cell.RowIndex);
                         }
                 }
-                finally { programmaticManual = false; }
-                OnPointsChanged();
+                finally
+                {
+                    programmaticManual = false;
+                    batchingChanges = previousBatch;
+                    FlushEditNotifications();
+                    OnPointsChanged();
+                }
                 return true;
             }
             return base.ProcessCmdKey(ref msg, keyData);
         }
 
         private void OnPointsChanged() { if (!loading && !batchingChanges) PointsChanged?.Invoke(this, EventArgs.Empty); }
+        private void NotifyElevationEdit(int index, int row)
+        {
+            if (row != 1 && row != 2) return;
+            if (index < 0 || index >= points.Count) return;
+            Action notification;
+            if (row == 2 && IsAnchor(index))
+            {
+                var args = new SectionAnchorElevationEventArgs(projectAnchorElevation);
+                notification = () => ProjectAnchorElevationChanged?.Invoke(this, args);
+            }
+            else
+            {
+                var args = new SectionElevationEditedEventArgs(index, points[index].Role, row == 2, GetValue(points[index], row));
+                notification = () => ElevationEdited?.Invoke(this, args);
+            }
+            if (batchingChanges) pendingEditNotifications.Add(notification);
+            else notification();
+        }
+
+        private void FlushEditNotifications()
+        {
+            if (batchingChanges || pendingEditNotifications.Count == 0) return;
+            var notifications = pendingEditNotifications.ToArray();
+            pendingEditNotifications.Clear();
+            foreach (var notification in notifications) notification();
+        }
         private void RunAction(Action action)
         {
             try { action(); }
@@ -538,10 +648,10 @@ namespace Profiles.AutoCAD.UI
             {
                 int index = e.ColumnIndex - 1;
                 if (e.RowIndex == 2 && !ManualDesignEnabled && ProjectAnchorVisible && ProjectAnchorIndex == index && projectAnchorElevation.HasValue)
-                    e.ToolTipText = "Проектное дно: " + projectAnchorElevation.Value.ToString("G17", CultureInfo.InvariantCulture) + " м. Показана опорная отметка трапеции; строка ручного проекта не изменена.";
+                    e.ToolTipText = "Проектное дно: " + projectAnchorElevation.Value.ToString("G17", CultureInfo.InvariantCulture) + " м. Можно изменить прямо в ячейке; исходные отметки ручного проекта сохранятся.";
                 else if (GetValue(points[index], e.RowIndex).HasValue)
                     e.ToolTipText = "Исходное значение: " + GetValue(points[index], e.RowIndex).Value.ToString("G17", CultureInfo.InvariantCulture) +
-                        (e.RowIndex == 1 && points[index].UseLongitudinalElevation ? ". Связано с продольным профилем; ручное изменение отключает связь." : "");
+                        (e.RowIndex == 1 && points[index].UseLongitudinalElevation ? ". Общая отметка с продольным профилем." : "");
             }
             base.OnCellToolTipTextNeeded(e);
         }

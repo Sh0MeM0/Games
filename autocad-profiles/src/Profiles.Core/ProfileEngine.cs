@@ -159,6 +159,7 @@ namespace Profiles.Core
             private readonly ProfileSettings settings;
             private readonly DrawingPlan plan;
             private readonly ProfileTemplate template;
+            private readonly List<Tuple<double, double, double, double>> calloutBoxes = new List<Tuple<double, double, double, double>>();
             internal double Paper { get; }
             internal double Layout { get { return Paper * Math.Max(1, settings.TextHeightMm / 2.5); } }
             private double TextHeight { get { return settings.TextHeightMm * Paper; } }
@@ -480,8 +481,10 @@ namespace Profiles.Core
             {
                 double minX = section.Points[0].Offset, width = X(section.Points.Last().Offset - minX), labels = 38 * Layout;
                 Func<Point2, Point2> transform = p => new Point2(X(p.X - minX), Y(p.Y));
+                List<SectionPoint> display = SectionDisplayGeometry.Build(earthworks);
                 List<List<Point2>> existing = SectionGeometry.Runs(section.Points, false);
                 List<List<Point2>> design = trapezoid != null ? new List<List<Point2>> { trapezoid } : SectionGeometry.Runs(section.Points, true);
+                var water = new List<List<Point2>>();
                 HatchRegions(earthworks.CutRegions, transform, "PROF_CUT_HATCH", 1, 45);
                 HatchRegions(earthworks.FillRegions, transform, "PROF_FILL_HATCH", 3, 135);
                 HatchRegions(earthworks.SiltRegions, transform, "PROF_SILT_HATCH", 30, 45);
@@ -498,7 +501,7 @@ namespace Profiles.Core
                         boundary = design;
                         plan.Warnings.Add("Поперечник «" + section.Name + "»: нет непрерывного натурного участка; вода ограничена проектным профилем.");
                     }
-                    List<List<Point2>> water = SectionGeometry.Water(boundary, section.Water.Value);
+                    water = SectionGeometry.Water(boundary, section.Water.Value);
                     foreach (List<Point2> run in water) Curve(run.Select(transform).ToList(), "PROF_WATER", 5, 0.3, true);
                     if (water.Count == 0) plan.Warnings.Add("Поперечник «" + section.Name + "»: уровень воды не образует затопленного участка на доступных данных; линия воды не построена.");
                     else if (water.Any(run => Math.Abs(run[0].X - minX) < 1e-9 || Math.Abs(run.Last().X - section.Points.Last().Offset) < 1e-9))
@@ -507,83 +510,329 @@ namespace Profiles.Core
                 var rows = new List<Tuple<string, double, string>> { Tuple.Create("№ ТОЧКИ", 6.0, "number"), Tuple.Create("РАССТОЯНИЕ, м", 5.0, "distance") };
                 if (settings.ShowEmptyRows || existing.Count > 0) rows.Add(Tuple.Create("ОТМЕТКИ\nПОВЕРХНОСТИ, м", 12.0, "existing"));
                 if (settings.ShowEmptyRows || design.Count > 0) rows.Add(Tuple.Create("ПРОЕКТНЫЕ\nОТМЕТКИ, м", 12.0, "design"));
-                var heights = rows.Select(row => Math.Max(Math.Max(row.Item2 * Layout, LabelHeight(row.Item1, 35 * Layout)),
-                    row.Item3 == "existing" ? RotatedHeight(section.Points.Where(p => p.Existing.HasValue).Select(p => F(p.Existing.Value))) :
-                    row.Item3 == "design" ? RotatedHeight(section.Points.Select(p => trapezoid != null ? SectionGeometry.Interpolate(trapezoid, p.Offset) : p.Design).Where(z => z.HasValue).Select(z => F(z.Value))) : 0)).ToList();
+                var cells = rows.Select(row => SectionCells(row.Item3, display, minX)).ToList();
+                var heights = rows.Select((row, index) => Math.Max(Math.Max(row.Item2 * Layout, LabelHeight(row.Item1, 35 * Layout)),
+                    SectionCellHeight(cells[index]) * cells[index].Select(cell => cell.Lane + 1).DefaultIfEmpty(1).Max())).ToList();
                 double bottomY = -heights.Sum(), top = 0;
                 int rowIndex = 0;
                 Line(new Point2(-labels, 0), new Point2(width, 0));
                 foreach (var row in rows)
                 {
+                    var rowCells = cells[rowIndex];
                     double bottom = top - heights[rowIndex++], center = (top + bottom) / 2;
                     Line(new Point2(-labels, bottom), new Point2(width, bottom));
                     Text(-labels + 1.5 * Layout, center, row.Item1, alignment: TextAlignment.Left, width: labels - 3 * Layout);
-                    for (int i = 0; i < section.Points.Count; i++)
-                    {
-                        SectionPoint point = section.Points[i];
-                        double x = X(point.Offset - minX);
-                        if (row.Item3 == "number") Text(x, center, (i + 1).ToString(CultureInfo.InvariantCulture));
-                        else if (row.Item3 == "distance" && i > 0) Text(X((point.Offset + section.Points[i - 1].Offset) / 2 - minX), center, F(point.Offset - section.Points[i - 1].Offset));
-                        else if (row.Item3 == "existing" && point.Existing.HasValue) Text(x, center, F(point.Existing.Value), 90);
-                        else if (row.Item3 == "design")
-                        {
-                            double? value = trapezoid != null ? SectionGeometry.Interpolate(trapezoid, point.Offset) : point.Design;
-                            if (value.HasValue) Text(x, center, F(value.Value), 90, 1);
-                        }
-                    }
+                    int laneCount = rowCells.Select(cell => cell.Lane + 1).DefaultIfEmpty(1).Max();
+                    foreach (var cell in rowCells)
+                        Text(cell.X, top - (top - bottom) * (cell.Lane + .5) / laneCount, cell.Text, cell.Rotation, cell.Color);
                     top = bottom;
                 }
                 foreach (double x in new[] { -labels, 0, width }) Line(new Point2(x, 0), new Point2(x, bottomY));
-                foreach (SectionPoint point in section.Points)
+                foreach (SectionPoint point in display)
                 {
-                    double? designZ = trapezoid != null ? SectionGeometry.Interpolate(trapezoid, point.Offset) : point.Design;
-                    double maximum = new[] { point.Existing, designZ }.Where(z => z.HasValue).Select(z => Y(z.Value)).DefaultIfEmpty(0).Max();
+                    double maximum = new[] { point.Existing, point.Design }.Where(z => z.HasValue).Select(z => Y(z.Value)).DefaultIfEmpty(0).Max();
                     double x = X(point.Offset - minX);
                     Line(new Point2(x, bottomY), new Point2(x, maximum), "PROF_ORD");
                 }
                 List<Point2> all = existing.Concat(design).SelectMany(x => x).ToList();
                 double highest = all.Max(p => Y(p.Y));
-                if (section.Water.HasValue) highest = Math.Max(highest, Y(section.Water.Value));
-                string stationLabel = section.Station.HasValue ? "ПК " + Station(section.Station.Value) : "";
-                string title = settings.Title + " — " + section.Name;
-                if (stationLabel.Length > 0 && !string.Equals((section.Name ?? "").Trim(), stationLabel, StringComparison.OrdinalIgnoreCase))
-                    title += "   " + stationLabel;
-                if (trapezoid != null)
-                    highest = Annotation("Дно " + F(section.ProjectBottom.Value) + " м; b=" + F(section.BottomWidth.Value) + " м; откосы " + F(section.LeftSlope.Value) + "/" + F(section.RightSlope.Value), width, highest, 1);
-                if (section.Water.HasValue) highest = Annotation("УРОВЕНЬ ВОДЫ " + F(section.Water.Value) + " м", width, highest, 5);
-                highest = Annotation("F срезки = " + Quantity(earthworks.CutArea) + " м²", width, highest, 1);
-                highest = Annotation("F досыпки = " + Quantity(earthworks.FillArea) + " м²", width, highest, 3);
-                highest = Annotation("F заиления = " + Quantity(earthworks.SiltArea) + " м²", width, highest, 30);
-                Header(title, labels, width, highest);
+                if (water.Count > 0) highest = Math.Max(highest, Y(section.Water.Value));
+                Text(-labels + 2 * Layout, 9 * Layout, SectionIdentifier(section), alignment: TextAlignment.Left, width: labels - 2 * Layout);
+                Text(-labels + 2 * Layout, 3 * Layout, "УСЛ. ОТМ. " + F(plan.Datum), alignment: TextAlignment.Left, width: labels - 2 * Layout);
+                calloutBoxes.Add(Tuple.Create(-labels, 1 * Layout, labels, 10 * Layout));
+                var callouts = new List<SectionCallout>
+                {
+                    AreaCallout("F срезки = " + Quantity(earthworks.CutArea) + " м²", earthworks.CutRegions, transform, 1),
+                    AreaCallout("F досыпки = " + Quantity(earthworks.FillArea) + " м²", earthworks.FillRegions, transform, 3),
+                    AreaCallout("F заиления = " + Quantity(earthworks.SiltArea) + " м²", earthworks.SiltRegions, transform, 30)
+                };
+                if (water.Count > 0)
+                {
+                    var run = water.OrderByDescending(points => points.Last().X - points[0].X).First();
+                    callouts.Add(new SectionCallout { Text = "УРОВЕНЬ ВОДЫ " + F(section.Water.Value) + " м", Color = 5,
+                        Target = transform(new Point2((run[0].X + run.Last().X) / 2, section.Water.Value)) });
+                }
+                SectionCallouts(callouts, width, highest);
+                if (trapezoid != null && trapezoid.Count >= 4)
+                {
+                    SlopeCallout(transform(trapezoid[0]), transform(trapezoid[1]), section.LeftSlope.Value, true);
+                    SlopeCallout(transform(trapezoid[trapezoid.Count - 2]), transform(trapezoid[trapezoid.Count - 1]), section.RightSlope.Value, false);
+                }
+                else
+                    foreach (var run in design)
+                    {
+                        var simplified = StraightSegments(run);
+                        for (int index = 1; index < simplified.Count; index++)
+                        {
+                            var a = simplified[index - 1];
+                            var b = simplified[index];
+                            double rise = b.Y - a.Y;
+                            if (Math.Abs(rise) <= 1e-10) continue;
+                            SlopeCallout(transform(a), transform(b), Math.Abs((b.X - a.X) / rise), rise < 0);
+                        }
+                    }
                 if (!earthworks.IsValid && !string.IsNullOrWhiteSpace(earthworks.Status))
                     plan.Warnings.Add("Поперечник «" + section.Name + "»: " + earthworks.Status);
                 if (section.Points.Any(p => !p.Existing.HasValue) && section.Points.Any(p => p.Existing.HasValue))
                     plan.Warnings.Add("Поперечник «" + section.Name + "»: пропуски натурных отметок оставлены разрывами.");
                 if (section.Points.Any(p => !p.Design.HasValue) && section.Points.Any(p => p.Design.HasValue))
                     plan.Warnings.Add("Поперечник «" + section.Name + "»: пропуски проектных отметок оставлены разрывами.");
-                if (section.Points.Zip(section.Points.Skip(1), (a, b) => X(b.Offset - a.Offset) < 5 * Layout).Any(x => x))
-                    plan.Warnings.Add("Поперечник «" + section.Name + "»: есть интервалы слишком узкие для выбранного текста; проверьте расположение подписей.");
+                if (cells.Any(row => row.Any(cell => cell.Lane > 0)))
+                    plan.Warnings.Add("Поперечник «" + section.Name + "»: подписи близких точек разнесены по высоте внутри строк таблицы.");
             }
 
             private static string Quantity(double? value) { return value.HasValue ? F(value.Value) : "—"; }
+
+            private sealed class SectionCell
+            {
+                internal double X, Rotation;
+                internal string Text;
+                internal short Color = 7;
+                internal int Lane;
+            }
+
+            private List<SectionCell> SectionCells(string kind, List<SectionPoint> display, double first)
+            {
+                var cells = new List<SectionCell>();
+                for (int index = 0; index < display.Count; index++)
+                {
+                    var point = display[index];
+                    double x = X(point.Offset - first);
+                    if (kind == "number") cells.Add(new SectionCell { X = x, Text = (index + 1).ToString(CultureInfo.InvariantCulture) });
+                    else if (kind == "distance" && index > 0)
+                        cells.Add(new SectionCell { X = X((point.Offset + display[index - 1].Offset) / 2 - first), Text = F(point.Offset - display[index - 1].Offset) });
+                    else if (kind == "existing" && point.Existing.HasValue)
+                        cells.Add(new SectionCell { X = x, Text = F(point.Existing.Value), Rotation = 90 });
+                    else if (kind == "design" && point.Design.HasValue)
+                        cells.Add(new SectionCell { X = x, Text = F(point.Design.Value), Rotation = 90, Color = 1 });
+                }
+                var laneEnds = new List<double>();
+                foreach (var cell in cells)
+                {
+                    double halfWidth = (cell.Rotation == 90 ? TextHeight * 1.2 : cell.Text.Length * TextHeight * .75 * settings.TextWidthFactor) / 2;
+                    int lane = laneEnds.FindIndex(end => end + .7 * Layout <= cell.X - halfWidth);
+                    if (lane < 0) { lane = laneEnds.Count; laneEnds.Add(double.NegativeInfinity); }
+                    cell.Lane = lane;
+                    laneEnds[lane] = cell.X + halfWidth;
+                }
+                return cells;
+            }
+
+            private double SectionCellHeight(List<SectionCell> cells)
+            {
+                return cells.Any(cell => cell.Rotation == 90) ? RotatedHeight(cells.Select(cell => cell.Text)) : TextHeight * 1.3 + 2 * Layout;
+            }
 
             private void HatchRegions(List<List<Point2>> regions, Func<Point2, Point2> transform, string layer, short color, double angle)
             {
                 foreach (var region in regions)
                     if (region.Count >= 3)
+                    {
+                        var boundary = region.Select(transform).ToList();
+                        double radians = angle * Math.PI / 180;
+                        var perpendicular = boundary.Select(point => -(point.X - boundary[0].X) * Math.Sin(radians) + (point.Y - boundary[0].Y) * Math.Cos(radians)).ToList();
+                        double span = perpendicular.Max() - perpendicular.Min();
                         plan.Entities.Add(new DrawHatch
                         {
                             Layer = layer, ColorIndex = color, LineWeightMm = 0.13,
-                            Boundary = region.Select(transform).ToList(),
-                            PatternSpacing = 2 * Paper, PatternAngleDegrees = angle
+                            Boundary = boundary,
+                            PatternSpacing = span > 0 ? Math.Min(1.2 * Paper, span / 3) : 1.2 * Paper, PatternAngleDegrees = angle
                         });
+                    }
             }
 
-            private double Annotation(string value, double width, double highest, short color)
+            private sealed class SectionCallout
             {
-                double boxWidth = Math.Max(width, 70 * Layout), height = WrappedHeight(value, boxWidth);
-                Text(width / 2, highest + 3 * Layout + height / 2, value, color: color, width: boxWidth);
-                return highest + 3 * Layout + height;
+                internal string Text;
+                internal Point2? Target;
+                internal short Color;
+            }
+
+            private static string SectionIdentifier(CrossSection section)
+            {
+                if (section.Station.HasValue) return Station(section.Station.Value);
+                string name = (section.Name ?? "").Trim();
+                return name.StartsWith("ПК", StringComparison.OrdinalIgnoreCase) ? name.Substring(2).Trim() : name;
+            }
+
+            private SectionCallout AreaCallout(string text, List<List<Point2>> regions, Func<Point2, Point2> transform, short color)
+            {
+                var region = regions.OrderByDescending(PolygonArea).FirstOrDefault();
+                return new SectionCallout { Text = text, Color = color, Target = region == null ? (Point2?)null : transform(InteriorPoint(region)) };
+            }
+
+            private static double PolygonArea(List<Point2> polygon)
+            {
+                double twice = 0;
+                var origin = polygon[0];
+                for (int index = 0; index < polygon.Count; index++)
+                {
+                    var a = polygon[index];
+                    var b = polygon[(index + 1) % polygon.Count];
+                    twice += (a.X - origin.X) * (b.Y - origin.Y) - (b.X - origin.X) * (a.Y - origin.Y);
+                }
+                return Math.Abs(twice) / 2;
+            }
+
+            private static Point2 InteriorPoint(List<Point2> polygon)
+            {
+                var xs = polygon.Select(point => point.X).Distinct().OrderBy(x => x).ToList();
+                var best = polygon[0];
+                double bestArea = -1;
+                for (int index = 1; index < xs.Count; index++)
+                {
+                    double x = (xs[index - 1] + xs[index]) / 2;
+                    var crossings = new List<double>();
+                    for (int edge = 0; edge < polygon.Count; edge++)
+                    {
+                        var a = polygon[edge];
+                        var b = polygon[(edge + 1) % polygon.Count];
+                        if ((a.X < x && b.X > x) || (b.X < x && a.X > x))
+                            crossings.Add(a.Y + (b.Y - a.Y) * (x - a.X) / (b.X - a.X));
+                    }
+                    crossings.Sort();
+                    for (int crossing = 1; crossing < crossings.Count; crossing += 2)
+                    {
+                        double area = (xs[index] - xs[index - 1]) * (crossings[crossing] - crossings[crossing - 1]);
+                        if (area > bestArea)
+                        {
+                            bestArea = area;
+                            best = new Point2(x, (crossings[crossing] + crossings[crossing - 1]) / 2);
+                        }
+                    }
+                }
+                return best;
+            }
+
+            private void SectionCallouts(List<SectionCallout> callouts, double width, double highest)
+            {
+                double labelWidth = callouts.Max(note => note.Text.Length) * TextHeight * .65 * settings.TextWidthFactor + 2 * Layout;
+                double spread = Math.Max(width, 2 * labelWidth + 8 * Layout);
+                double left = (width - spread) / 2;
+                var sorted = callouts.OrderBy(note => note.Target.HasValue ? note.Target.Value.X : width / 2).ToList();
+                int leftCount = (sorted.Count + 1) / 2;
+                for (int index = 0; index < sorted.Count; index++)
+                {
+                    var note = sorted[index];
+                    bool onLeft = index < leftCount;
+                    int row = onLeft ? index : index - leftCount;
+                    double x = onLeft ? left : left + spread - labelWidth;
+                    double y = highest + (7 + row * 9) * Layout;
+                    Leader(note.Text, note.Target, x, y, labelWidth, note.Color);
+                }
+            }
+
+            private void SlopeCallout(Point2 a, Point2 b, double slope, bool left)
+            {
+                var target = new Point2((a.X + b.X) / 2, (a.Y + b.Y) / 2);
+                double labelWidth = 12 * Layout;
+                double x = target.X + (left ? -labelWidth - 5 * Layout : 5 * Layout);
+                Leader("1:" + slope.ToString("0.###", CultureInfo.InvariantCulture), target, x, target.Y + 5 * Layout, labelWidth, 1);
+            }
+
+            private static List<Point2> StraightSegments(List<Point2> run)
+            {
+                var simplified = new List<Point2>();
+                foreach (var point in run)
+                {
+                    while (simplified.Count >= 2)
+                    {
+                        var a = simplified[simplified.Count - 2];
+                        var b = simplified[simplified.Count - 1];
+                        double cross = (b.X - a.X) * (point.Y - b.Y) - (b.Y - a.Y) * (point.X - b.X);
+                        double scale = Math.Abs((b.X - a.X) * (point.Y - b.Y)) + Math.Abs((b.Y - a.Y) * (point.X - b.X));
+                        if (Math.Abs(cross) > 1e-10 * Math.Max(1, scale)) break;
+                        simplified.RemoveAt(simplified.Count - 1);
+                    }
+                    simplified.Add(point);
+                }
+                return simplified;
+            }
+
+            private void Leader(string value, Point2? target, double x, double y, double width, short color)
+            {
+                width = Math.Max(width, value.Length * TextHeight * .65 * settings.TextWidthFactor);
+                double labelHeight = TextHeight * 1.3;
+                double preferredX = x, preferredY = y;
+                var candidates = new List<Point2>();
+                for (int ring = 0; ring <= 8; ring++)
+                    for (int horizontal = -ring; horizontal <= ring; horizontal++)
+                        for (int vertical = -ring; vertical <= ring; vertical++)
+                            if (Math.Max(Math.Abs(horizontal), Math.Abs(vertical)) == ring)
+                                candidates.Add(new Point2(preferredX + horizontal * (width + 4 * Layout), preferredY + vertical * 6 * Layout));
+                var placement = candidates.Where(point => point.Y >= 2 * Layout)
+                    .OrderBy(point => Math.Abs(point.X - preferredX) + 1.3 * Math.Abs(point.Y - preferredY))
+                    .FirstOrDefault(point => LeaderFits(point.X, point.Y, width, labelHeight, target));
+                if (placement.Y >= 2 * Layout)
+                { x = placement.X; y = placement.Y; }
+                else
+                {
+                    // Dense profiles can exhaust nearby positions; move outside all annotations.
+                    x = Math.Max(preferredX, calloutBoxes.Select(box => box.Item1 + box.Item3).DefaultIfEmpty(preferredX).Max() + 4 * Layout);
+                    y = Math.Max(y, 2 * Layout);
+                    for (int attempt = 0; attempt < 32 && !LeaderFits(x, y, width, labelHeight, target); attempt++)
+                    { x += width + 4 * Layout; y += 6 * Layout; }
+                    if (!LeaderFits(x, y, width, labelHeight, target))
+                        plan.Warnings.Add("Для выноски «" + value + "» недостаточно свободного места: проверьте её положение после построения.");
+                }
+                calloutBoxes.Add(Tuple.Create(x, y + 2 * Layout - labelHeight / 2, width, labelHeight));
+                if (target.HasValue)
+                {
+                    bool connectRight = target.Value.X >= x + width / 2;
+                    var elbow = new Point2(connectRight ? x + width : x, y);
+                    var landing = new Point2(connectRight ? x : x + width, y);
+                    Curve(new List<Point2> { target.Value, elbow, landing }, "PROF_LEADER", color, 0.18);
+                    double dx = elbow.X - target.Value.X, dy = elbow.Y - target.Value.Y;
+                    double length = Math.Sqrt(dx * dx + dy * dy);
+                    if (length > 1e-12)
+                    {
+                        dx /= length; dy /= length;
+                        double size = 1.5 * Layout;
+                        Curve(new List<Point2> {
+                            new Point2(target.Value.X + size * (dx - .3 * dy), target.Value.Y + size * (dy + .3 * dx)),
+                            target.Value,
+                            new Point2(target.Value.X + size * (dx + .3 * dy), target.Value.Y + size * (dy - .3 * dx))
+                        }, "PROF_LEADER_ARROW", color, 0.18);
+                    }
+                }
+                Text(x, y + 2 * Layout, value, color: color, alignment: TextAlignment.Left);
+            }
+
+            private bool LeaderFits(double x, double y, double width, double height, Point2? target)
+            {
+                var label = Tuple.Create(x - Layout, y + 2 * Layout - height / 2 - .7 * Layout, width + 2 * Layout, height + 1.4 * Layout);
+                if (calloutBoxes.Any(box => RectanglesOverlap(label, box))) return false;
+                foreach (var curve in plan.Entities.OfType<DrawPolyline>().Where(line =>
+                    line.Layer == "PROF_EXISTING" || line.Layer == "PROF_PROJECT" || line.Layer == "PROF_CLEANED" || line.Layer == "PROF_WATER" || line.Layer == "PROF_LEADER"))
+                    for (int index = 1; index < curve.Points.Count; index++)
+                        if (SegmentMeetsBox(curve.Points[index - 1], curve.Points[index], label)) return false;
+                if (!target.HasValue) return true;
+                var elbow = new Point2(target.Value.X >= x + width / 2 ? x + width : x, y);
+                var landing = new Point2(target.Value.X >= x + width / 2 ? x : x + width, y);
+                var ownText = Tuple.Create(x, y + 2 * Layout - height / 2, width, height);
+                if (SegmentMeetsBox(target.Value, elbow, ownText)) return false;
+                return !calloutBoxes.Any(box => SegmentMeetsBox(target.Value, elbow, box) || SegmentMeetsBox(elbow, landing, box));
+            }
+
+            private static bool RectanglesOverlap(Tuple<double, double, double, double> a, Tuple<double, double, double, double> b)
+            {
+                return a.Item1 < b.Item1 + b.Item3 && a.Item1 + a.Item3 > b.Item1 && a.Item2 < b.Item2 + b.Item4 && a.Item2 + a.Item4 > b.Item2;
+            }
+
+            private static bool SegmentMeetsBox(Point2 a, Point2 b, Tuple<double, double, double, double> box)
+            {
+                double lower = 0, upper = 1;
+                return ClipAxis(a.X, b.X - a.X, box.Item1, box.Item1 + box.Item3, ref lower, ref upper) &&
+                    ClipAxis(a.Y, b.Y - a.Y, box.Item2, box.Item2 + box.Item4, ref lower, ref upper);
+            }
+
+            private static bool ClipAxis(double origin, double delta, double minimum, double maximum, ref double lower, ref double upper)
+            {
+                if (delta == 0) return origin >= minimum && origin <= maximum;
+                double first = (minimum - origin) / delta, last = (maximum - origin) / delta;
+                if (first > last) { double swap = first; first = last; last = swap; }
+                lower = Math.Max(lower, first); upper = Math.Min(upper, last);
+                return lower <= upper;
             }
         }
     }

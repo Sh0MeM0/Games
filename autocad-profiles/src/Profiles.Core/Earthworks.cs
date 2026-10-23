@@ -165,6 +165,12 @@ namespace Profiles.Core
                 result.Warnings.Add(error.Message);
                 result.Status = string.Join(" ", result.Warnings);
             }
+            // Integration strips are numerical cells, not physical hatch regions.
+            // Join only cells sharing a positive-length interior edge; zero-area
+            // point contacts and unmeasured gaps remain separate boundaries.
+            EarthworkRegions.MergeAdjacent(result.CutRegions);
+            EarthworkRegions.MergeAdjacent(result.FillRegions);
+            EarthworkRegions.MergeAdjacent(result.SiltRegions);
             return result;
         }
 
@@ -252,16 +258,10 @@ namespace Profiles.Core
 
         private static double Height(List<Point2> curve, double x)
         {
-            int low = 0, high = curve.Count - 1;
-            while (high - low > 1)
-            {
-                int middle = low + (high - low) / 2;
-                if (curve[middle].X <= x) low = middle; else high = middle;
-            }
-            var a = curve[low]; var b = curve[high];
-            if (x < a.X || x > b.X || b.X <= a.X)
+            double? elevation = SectionGeometry.InterpolateStrict(curve, x);
+            if (!elevation.HasValue)
                 throw new ProfileValidationException("Геометрия не покрывает требуемое расстояние; экстраполяция не выполняется.");
-            return a.Y + (b.Y - a.Y) * ((x - a.X) / (b.X - a.X));
+            return elevation.Value;
         }
 
         private static List<List<Point2>> Cleaned(List<List<Point2>> runs, double thickness, double? left, double? right)

@@ -108,5 +108,32 @@ namespace Profiles.Core
                 }
             return null;
         }
+
+        /// <summary>
+        /// Sample a nondecreasing-X curve without extrapolation. At a vertical
+        /// domain boundary use the interior-facing endpoint (the bottom knee of
+        /// a vertical project wall), retaining the complete wall in the curve.
+        /// </summary>
+        internal static double? InterpolateStrict(IList<Point2> curve, double x)
+        {
+            if (curve == null || curve.Count == 0 || x < curve[0].X || x > curve[curve.Count - 1].X) return null;
+            if (curve.Count == 1) return x == curve[0].X ? curve[0].Y : (double?)null;
+            int low = 0, high = curve.Count - 1;
+            if (x == curve[high].X)
+            {
+                while (high > 0 && curve[high - 1].X == x) high--;
+                if (high == 0) return curve[0].Y;
+                return curve[high].Y;
+            }
+            while (high - low > 1)
+            {
+                int middle = low + (high - low) / 2;
+                if (curve[middle].X <= x) low = middle; else high = middle;
+            }
+            var a = curve[low]; var b = curve[high];
+            if (a.X == x) return a.Y;
+            if (b.X <= a.X) return null;
+            return a.Y + (b.Y - a.Y) * ((x - a.X) / (b.X - a.X));
+        }
     }
 }

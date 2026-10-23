@@ -30,7 +30,7 @@ namespace Profiles.AutoCAD
             interpolationTimer.Tick += (s, e) =>
             {
                 interpolationTimer.Stop();
-                if (loading || longGrid.IsCurrentCellInEditMode || crossGrid.IsCurrentCellInEditMode || stationInputEdited) return;
+                if (loading || HasActiveNumericEditor || stationInputEdited) return;
                 RecalculateDerivedValues();
                 RefreshEarthworks();
             };
@@ -127,7 +127,6 @@ namespace Profiles.AutoCAD
                     index++;
                 }
                 RefreshStationList(raw);
-                RefreshLinkedSectionValues(raw);
             }
             catch (ProfileValidationException) { /* A partial input must not show stale derived values. */ }
             finally { longGrid.Invalidate(); }
@@ -213,10 +212,12 @@ namespace Profiles.AutoCAD
                 {
                     // An unsited imported section or copy must be assignable to a
                     // station without silently replacing its measured geometry.
-                    sections[selectedSection].Station = station;
-                    sections[selectedSection].Name = StationCaption(station);
-                    RefreshSectionList(selectedSection);
-                    DisplaySection();
+                    var previous = CloneSection(sections[selectedSection]);
+                    var assigned = CloneSection(previous);
+                    assigned.Station = station;
+                    assigned.Name = StationCaption(station);
+                    var synchronized = ProjectSynchronization.CommitSection(SynchronizationSource(ReadLongitudinal()), selectedSection, previous, assigned);
+                    ApplySynchronizedProject(synchronized, selectedSection);
                     SetDirty();
                     SetStatus("Поперечнику назначен " + StationCaption(station) + ". Его расстояния, отметки и проектные параметры сохранены.");
                     return;
@@ -226,7 +227,7 @@ namespace Profiles.AutoCAD
                 seed.DesignMode = ProfileInterpolation.EffectiveDesignMode(seed);
                 if (selectedSection >= 0 && IsEmptySection(sections[selectedSection])) sections[selectedSection] = seed;
                 else { sections.Add(seed); selectedSection = sections.Count - 1; }
-                RefreshSectionList(selectedSection);
+                SortSections(seed);
                 DisplaySection();
                 SetDirty();
                 SetStatus("Создан " + StationCaption(station) + ": берега, дно и вода связаны с продольным профилем. Введите измеренные расстояния между точками.");
@@ -255,18 +256,20 @@ namespace Profiles.AutoCAD
             try
             {
                 CommitStationInput();
+                CommitSection();
                 if (!currentSectionStation.HasValue) throw new ProfileValidationException("Сначала выберите или введите пикет поперечника.");
                 var sample = ProfileInterpolation.SampleLongitudinal(ReadLongitudinal(), currentSectionStation.Value);
                 if (MessageBox.Show(this, "Обновить связанные отметки и заменить воду, проектное дно, ширину и откосы значениями продольного профиля?\n\nРасстояния и вручную изменённые фактические или проектные отметки точек сохранятся.",
                     "Обновление по пикету", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
-                DisplayNumber(sectionWater, sample.Water);
-                DisplayNumber(projectBottom, sample.ProjectBottom);
-                DisplayNumber(bottomWidth, sample.BottomWidth);
-                DisplayNumber(leftSlope, sample.LeftSlope);
-                DisplayNumber(rightSlope, sample.RightSlope);
-                longitudinalWaterLinked = longitudinalProjectBottomLinked = true;
-                RefreshLinkedSectionValues();
-                RefreshProjectAnchorDisplay();
+                var source = SynchronizationSource(ReadLongitudinal());
+                var section = source.Sections[selectedSection];
+                section.UseLongitudinalWater = section.UseLongitudinalProjectBottom = true;
+                section.BottomWidth = sample.BottomWidth;
+                section.LeftSlope = sample.LeftSlope;
+                section.RightSlope = sample.RightSlope;
+                // This button adopts derived values; it is not an explicit edit
+                // of a raw longitudinal anchor.
+                ApplySynchronizedProject(ProjectSynchronization.RefreshFromLongitudinal(source), selectedSection);
                 SetDirty();
                 SetStatus("Связанные отметки и параметры обновлены по пикету. Введённая съёмка сохранена.");
             }
@@ -339,6 +342,18 @@ namespace Profiles.AutoCAD
                 if (crossGrid.SelectedRowKind == UI.SectionPointRow.Distance)
                     throw new ProfileValidationException("Расстояние между точками вводится по съёмке. По одним отметкам его вычислить нельзя.");
                 bool design = crossGrid.SelectedRowKind == UI.SectionPointRow.Design;
+                if (design && SelectedDesignMode == SectionDesignMode.Trapezoid && crossGrid.ProjectAnchorIndex == index)
+                {
+                    if (!currentSectionStation.HasValue) throw new ProfileValidationException("Для интерполяции проектного дна нужен пикет; либо введите отметку вручную.");
+                    var sample = ProfileInterpolation.SampleLongitudinal(ReadLongitudinal(), currentSectionStation.Value);
+                    if (!sample.ProjectBottom.HasValue) throw new ProfileValidationException("В продольном профиле нет двух опорных отметок проектного дна по обе стороны этого ПК.");
+                    DisplayNumber(projectBottom, sample.ProjectBottom);
+                    RecordSharedValue(currentSectionStation.Value, SharedProfileField.ProjectBottom, sample.ProjectBottom);
+                    RefreshProjectAnchorDisplay();
+                    SetDirty();
+                    QueueSharedCommit();
+                    return;
+                }
                 if (design && SelectedDesignMode != SectionDesignMode.Points) throw new ProfileValidationException("Для ввода проектных отметок выберите режим «По проектным отметкам».");
                 var raw = ReadCurrentSection();
                 var resolved = ProfileInterpolation.ResolveSection(raw, ReadLongitudinal());

@@ -21,6 +21,7 @@ namespace Profiles.AutoCAD
         private readonly UI.SectionPointGrid crossGrid = new UI.SectionPointGrid { Dock = DockStyle.Fill };
         private readonly ListBox sectionList = new ListBox { Dock = DockStyle.Fill, IntegralHeight = false };
         private readonly TextBox title = new TextBox { Dock = DockStyle.Fill };
+        private readonly Label titleCaption = Caption("Название");
         private readonly TextBox horizontal = Input();
         private readonly TextBox vertical = Input();
         private readonly TextBox datum = Input();
@@ -29,7 +30,7 @@ namespace Profiles.AutoCAD
         private readonly TextBox textWidth = Input();
         private readonly CheckBox emptyRows = new CheckBox { Text = "Сохранять пустые строки таблицы", AutoSize = true };
         private readonly TextBox sectionName = Input();
-        private readonly ComboBox sectionStation = new ComboBox { Width = 140, DropDownStyle = ComboBoxStyle.DropDown, Margin = new Padding(3, 4, 12, 4) };
+        private readonly ComboBox sectionStation = new ComboBox { Width = 135, DropDownStyle = ComboBoxStyle.DropDown, Margin = new Padding(2, 3, 5, 3) };
         private readonly TextBox sectionWater = Input();
         private readonly TextBox projectBottom = Input();
         private readonly TextBox bottomWidth = Input();
@@ -62,9 +63,9 @@ namespace Profiles.AutoCAD
             this.saveProjectToDrawing = saveProjectToDrawing;
             Text = "Профиля — данные и построение";
             StartPosition = FormStartPosition.CenterParent;
-            MinimumSize = new Size(1100, 740);
-            Size = new Size(1360, 900);
-            Font = new Font("Segoe UI", 9F);
+            MinimumSize = new Size(1060, 700);
+            Size = new Size(1540, 940);
+            Font = new Font("Segoe UI", 8.5F);
             AutoScaleMode = AutoScaleMode.Dpi;
             ShowInTaskbar = false;
             KeyPreview = true;
@@ -74,10 +75,18 @@ namespace Profiles.AutoCAD
             ConfigureCrossGrid();
             WireChanges(this);
             InitializeInterpolation();
+            InitializeRowOrdering();
+            InitializeSharedEditing();
             InitializeProjectSupport(availableProjects);
             sectionList.SelectedIndexChanged += SectionSelectionChanged;
             tabs.Selected += TabSelected;
             FormClosing += ClosingForm;
+            Shown += (s, e) =>
+            {
+                var area = Screen.FromControl(this).WorkingArea;
+                if (Width > area.Width || Height > area.Height)
+                    Bounds = new Rectangle(area.Left + 8, area.Top + 8, Math.Max(MinimumSize.Width, area.Width - 16), Math.Max(MinimumSize.Height, area.Height - 16));
+            };
             KeyDown += (s, e) =>
             {
                 if (e.Control && e.KeyCode == Keys.S) { e.SuppressKeyPress = true; SaveDraftExplicit(); }
@@ -115,7 +124,7 @@ namespace Profiles.AutoCAD
 
         private void BuildWindow()
         {
-            var root = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 6, ColumnCount = 1, Padding = new Padding(12) };
+            var root = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 6, ColumnCount = 1, Padding = new Padding(8) };
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -125,7 +134,7 @@ namespace Profiles.AutoCAD
             Controls.Add(root);
             root.Controls.Add(BuildProjectBar(), 0, 0);
 
-            var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = false, Padding = new Padding(0, 0, 0, 6) };
+            var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true, Padding = new Padding(0) };
             toolbar.Controls.Add(Button("Импорт JSON…", OpenProject));
             toolbar.Controls.Add(Button("Экспорт JSON…", SaveProject));
             toolbar.Controls.Add(autoSaveJson);
@@ -135,7 +144,7 @@ namespace Profiles.AutoCAD
 
             var common = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 8, RowCount = 2, Padding = new Padding(0, 0, 0, 8) };
             for (int i = 0; i < 8; i++) common.ColumnStyles.Add(new ColumnStyle(i == 1 ? SizeType.Percent : SizeType.AutoSize, i == 1 ? 100 : 0));
-            common.Controls.Add(Caption("Название"), 0, 0);
+            common.Controls.Add(titleCaption, 0, 0);
             common.Controls.Add(title, 1, 0);
             common.SetColumnSpan(title, 7);
             common.Controls.Add(Caption("Масштаб по горизонтали 1:"), 0, 1);
@@ -181,7 +190,7 @@ namespace Profiles.AutoCAD
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            layout.Controls.Add(Note("Расстояния и отметки — в метрах. ПК: 125,5 или 1+25,50. Берега — по направлению течения.\nПропуски между известными отметками интерполируются по пикетажу: расчётные значения показаны курсивом. За крайними опорными точками значения не выдумываются."), 0, 0);
+            layout.Controls.Add(Note("ПК 6+50 = 650 м; 6 = 6 м. Курсив — интерполяция. Пикеты упорядочиваются после ввода; берега — по течению."), 0, 0);
             layout.Controls.Add(longGrid, 0, 1);
             layout.Controls.Add(GridToolbar(longGrid), 0, 2);
             longPage.Controls.Add(layout);
@@ -189,48 +198,57 @@ namespace Profiles.AutoCAD
 
         private void BuildCrossPage()
         {
-            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Padding = new Padding(6) };
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));
+            var layout = crossLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Padding = new Padding(3) };
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 245));
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 215));
             var left = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(4) };
             left.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             left.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             left.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             left.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             left.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            left.Controls.Add(Caption("Пикет поперечника"), 0, 0);
+            left.Controls.Add(Caption("Пикет · 6+50 = 650 м"), 0, 0);
             sectionStation.Dock = DockStyle.Top;
             left.Controls.Add(sectionStation, 0, 1);
             left.Controls.Add(Button("Обновить по ПК", RefreshStationSeed), 0, 2);
             left.Controls.Add(sectionList, 0, 3);
             var listButtons = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true };
-            listButtons.Controls.Add(Button("+", AddSection));
+            listButtons.Controls.Add(Button("+ до", () => InsertSection(false)));
+            listButtons.Controls.Add(Button("+ после", () => InsertSection(true)));
             listButtons.Controls.Add(Button("Копия", CopySection));
             listButtons.Controls.Add(Button("−", RemoveSection));
             left.Controls.Add(listButtons, 0, 4);
             layout.Controls.Add(left, 0, 0);
 
-            var center = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 6, ColumnCount = 1, Padding = new Padding(6) };
+            var center = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 6, ColumnCount = 1, Padding = new Padding(3) };
             center.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             center.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             center.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             center.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             center.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             center.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            center.Controls.Add(Fields("Профиль", sectionName, "Урез воды, м", sectionWater), 0, 0);
+            var header = (FlowLayoutPanel)Fields("Профиль", sectionName, "Вода, м", sectionWater);
+            header.Controls.Add(showEarthworks);
+            center.Controls.Add(header, 0, 0);
             center.Controls.Add(BuildCrossDesignPanel(), 0, 1);
-            center.Controls.Add(Note("Точки слева направо, смотрим по течению. Расстояние — от предыдущей точки, м. Пустые расстояния сохраняются как неизвестные."), 0, 2);
+            center.Controls.Add(Note("Слева направо по течению · интервалы по съёмке · пусто = неизвестно"), 0, 2);
             center.Controls.Add(crossGrid, 0, 3);
             center.Controls.Add(BuildPointToolbar(), 0, 4);
-            center.Controls.Add(Note("Для пустой отметки: стрелка в ячейке или ПКМ → «Интерполировать». Исходные числа хранятся без округления; на экране — 2 знака."), 0, 5);
+            center.Controls.Add(Note("Пустая отметка: ▼ → интерполяция · Красная опорная ячейка: проектное дно · Ctrl+V: Excel"), 0, 5);
             layout.Controls.Add(center, 1, 0);
-            layout.Controls.Add(BuildEarthworksPanel(), 2, 0);
+            earthworksPanel = BuildEarthworksPanel();
+            layout.Controls.Add(earthworksPanel, 2, 0);
+            showEarthworks.CheckedChanged += (s, e) =>
+            {
+                earthworksPanel.Visible = showEarthworks.Checked;
+                crossLayout.ColumnStyles[2].Width = showEarthworks.Checked ? 215 : 0;
+            };
             crossPage.Controls.Add(layout);
-            tips.SetToolTip(sectionStation, "Выберите существующий пикет или введите значение и нажмите Enter. Для выбранного ПК берега и дно заполняются из продольного профиля; расстояния вводятся по съёмке.");
+            tips.SetToolTip(sectionStation, "Выберите или введите пикет и нажмите Enter. 6+50 означает 650 м, число 6 означает 6 м. Пикеты сортируются численно. Расстояния поперечника вводятся по съёмке.");
             tips.SetToolTip(leftSlope, "Заложение — горизонталь / вертикаль: для откоса 1:1,5 введите 1,5.");
             tips.SetToolTip(rightSlope, "Правый откос может отличаться от левого. Требуется положительное число.");
-            tips.SetToolTip(sectionWater, "Связанный урез обновляется по продольному профилю. Ручное изменение отключает связь для воды этого поперечника.");
+            tips.SetToolTip(sectionWater, "Урез общий для этого пикета: изменение переносится в продольный профиль и другие поперечники на том же ПК.");
         }
 
         private void BuildPreviewPage()
@@ -317,6 +335,7 @@ namespace Profiles.AutoCAD
                 if (loading) return;
                 SetDirty();
                 RefreshProjectAnchorDisplay();
+                QueueSharedCommit();
             };
             crossGrid.InterpolationRequested += (s, e) => InterpolateCrossCell();
         }
@@ -334,8 +353,8 @@ namespace Profiles.AutoCAD
                 BorderStyle = BorderStyle.FixedSingle,
                 SelectionMode = DataGridViewSelectionMode.CellSelect,
                 MultiSelect = true,
-                RowHeadersWidth = 55,
-                ColumnHeadersHeight = 46,
+                RowHeadersWidth = 42,
+                ColumnHeadersHeight = 38,
                 ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
                 ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithoutHeaderText,
                 EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2
@@ -365,10 +384,15 @@ namespace Profiles.AutoCAD
         private Control GridToolbar(DataGridView grid)
         {
             var bar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(0, 5, 0, 0) };
+            bar.Controls.Add(Button("+ до", () => InsertLongitudinalRow(false)));
+            bar.Controls.Add(Button("+ после", () => InsertLongitudinalRow(true)));
             bar.Controls.Add(Button("Вставить из Excel", () => Paste(grid)));
             bar.Controls.Add(Button("Удалить строки", () => DeleteRows(grid)));
-            bar.Controls.Add(new Label { Text = "Ctrl+V — вставить таблицу без заголовков; Ctrl+C — копировать выделение.", AutoSize = true, Margin = new Padding(8, 9, 0, 0) });
+            bar.Controls.Add(new Label { Text = "Ctrl+V — Excel · Ctrl+C — копировать", AutoSize = true, Margin = new Padding(6, 6, 0, 0) });
             var menu = new ContextMenuStrip();
+            menu.Items.Add("Вставить строку до", null, (s, e) => InsertLongitudinalRow(false));
+            menu.Items.Add("Вставить строку после", null, (s, e) => InsertLongitudinalRow(true));
+            menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Вставить из Excel", null, (s, e) => Paste(grid));
             menu.Items.Add("Удалить выбранные строки", null, (s, e) => DeleteRows(grid));
             grid.ContextMenuStrip = menu;
@@ -398,7 +422,12 @@ namespace Profiles.AutoCAD
                 while (grid.Rows.Count - 1 < row + values.Length) grid.Rows.Add();
                 for (int y = 0; y < values.Length; y++)
                     for (int x = 0; x < values[y].Length; x++)
+                    {
                         grid.Rows[row + y].Cells[visible[column + x].Index].Value = values[y][x].Trim();
+                        RecordLongitudinalCell(grid.Rows[row + y].Cells[visible[column + x].Index]);
+                    }
+                SortLongitudinalRows();
+                QueueSharedCommit();
                 SetDirty();
                 SetStatus("Вставлено строк: " + values.Length + ". Проверьте соответствие столбцов перед построением.");
             }
@@ -413,6 +442,7 @@ namespace Profiles.AutoCAD
             if (indexes.Count == 0) return;
             if (MessageBox.Show(this, "Удалить выбранные строки: " + indexes.Count + "?", "Удаление строк", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
             foreach (int index in indexes) grid.Rows.RemoveAt(index);
+            QueueSharedCommit();
             SetDirty();
         }
 
@@ -424,8 +454,6 @@ namespace Profiles.AutoCAD
                 var next = e.TabPage == longPage ? ProfileKind.Longitudinal : ProfileKind.CrossSection;
                 if (next != activeKind)
                 {
-                    if (title.Text == "ПРОДОЛЬНЫЙ ПРОФИЛЬ" || title.Text == "ПОПЕРЕЧНЫЕ ПРОФИЛИ")
-                        title.Text = next == ProfileKind.Longitudinal ? "ПРОДОЛЬНЫЙ ПРОФИЛЬ" : "ПОПЕРЕЧНЫЕ ПРОФИЛИ";
                     activeKind = next;
                     SetDirty();
                 }
@@ -436,6 +464,7 @@ namespace Profiles.AutoCAD
         private void UpdateModeCaption()
         {
             modeCaption.Text = activeKind == ProfileKind.Longitudinal ? "Построение: продольный профиль" : "Построение: все поперечники из списка";
+            title.Visible = titleCaption.Visible = activeKind == ProfileKind.Longitudinal;
         }
 
         private ProfileSettings ReadSettings()
@@ -456,6 +485,7 @@ namespace Profiles.AutoCAD
         private List<LongitudinalPoint> ReadLongitudinal()
         {
             longGrid.EndEdit();
+            SortLongitudinalRows();
             var result = new List<LongitudinalPoint>();
             foreach (DataGridViewRow row in longGrid.Rows)
             {
@@ -533,32 +563,27 @@ namespace Profiles.AutoCAD
         private void CommitSection()
         {
             if (selectedSection < 0 || selectedSection >= sections.Count) return;
-            sections[selectedSection] = ReadCurrentSection();
-            if (selectedSection < sectionList.Items.Count)
-            {
-                bool old = loading;
-                loading = true;
-                sectionList.Items[selectedSection] = (selectedSection + 1) + ". " +
-                    SectionCaption(sections[selectedSection]);
-                loading = old;
-            }
+            CommitSynchronizedSection();
         }
 
         private void SectionSelectionChanged(object sender, EventArgs e)
         {
             if (loading || sectionList.SelectedIndex == selectedSection) return;
             int next = sectionList.SelectedIndex;
+            requestedSectionSelection = next >= 0 && next < sections.Count ? sections[next] : null;
             try { CommitStationInput(); CommitSection(); }
             catch (Exception ex)
             {
                 loading = true;
                 sectionList.SelectedIndex = selectedSection;
                 loading = false;
+                requestedSectionSelection = null;
                 ShowError(ex.Message);
                 return;
             }
-            selectedSection = next;
-            RefreshSectionList(next);
+            selectedSection = requestedSectionSelection == null ? -1 : sections.IndexOf(requestedSectionSelection);
+            requestedSectionSelection = null;
+            RefreshSectionList(selectedSection);
             DisplaySection();
         }
 
@@ -591,6 +616,7 @@ namespace Profiles.AutoCAD
             finally { loading = old; }
             RefreshLinkedSectionValues();
             RefreshEarthworks();
+            sectionBeforeEditing = ReadCurrentSection();
         }
 
         private void RefreshSectionList(int selection)
@@ -647,6 +673,7 @@ namespace Profiles.AutoCAD
             if (selectedSection < 0) return;
             if (MessageBox.Show(this, "Удалить поперечник «" + sectionName.Text + "»?", "Удаление поперечника", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
             sections.RemoveAt(selectedSection);
+            pendingSharedValues.Clear();
             if (sections.Count == 0) sections.Add(NewSection(1));
             selectedSection = Math.Min(selectedSection, sections.Count - 1);
             RefreshSectionList(selectedSection);
@@ -678,6 +705,10 @@ namespace Profiles.AutoCAD
             loading = true;
             try
             {
+                pendingSharedValues.Clear();
+                pendingLongitudinalCells.Clear();
+                sectionBeforeEditing = null;
+                requestedSectionSelection = null;
                 currentProjectId = string.IsNullOrWhiteSpace(project.ProjectId) ? Guid.NewGuid().ToString("N") : project.ProjectId;
                 currentProjectName = string.IsNullOrWhiteSpace(project.Name) ? "Проект" : project.Name;
                 activeKind = project.Kind;
@@ -696,13 +727,15 @@ namespace Profiles.AutoCAD
                     longGrid.Rows.Add(point.Station, point.Ground, point.LeftBank, point.RightBank,
                         point.ExistingBottom, point.Water, point.ProjectBottom, point.BottomWidth, point.LeftSlope, point.RightSlope,
                         point.ProjectGround, point.PipeInvert, point.PipeDescription, point.Foundation, point.PointName, point.PeatDepth);
+                SortLongitudinalRows();
+                sharedLongitudinalBaseline = CopyLongitudinal(ReadLongitudinal());
                 sections.Clear();
                 sections.AddRange((project.Sections ?? new List<CrossSection>()).Select(CloneSection));
                 foreach (var section in sections)
                     if (section.Station.HasValue) section.Name = StationCaption(section.Station.Value);
                 if (sections.Count == 0) sections.Add(NewSection(1));
                 selectedSection = 0;
-                RefreshSectionList(0);
+                SortSections(sections.OrderBy(section => section.Station.HasValue ? 0 : 1).ThenBy(section => section.Station ?? 0).First());
                 DisplaySection();
                 tabs.SelectedTab = activeKind == ProfileKind.Longitudinal ? longPage : crossPage;
                 UpdateModeCaption();
@@ -769,7 +802,7 @@ namespace Profiles.AutoCAD
                 SetDirty();
             };
             if (control == sectionStation) sectionStation.TextChanged += (s, e) => SetDirty();
-            if (control is CheckBox check) check.CheckedChanged += (s, e) => SetDirty();
+            if (control is CheckBox check && check != showEarthworks) check.CheckedChanged += (s, e) => SetDirty();
             if (control is DataGridView grid && grid != crossGrid)
             {
                 grid.CellValueChanged += (s, e) => SetDirty();
@@ -810,15 +843,15 @@ namespace Profiles.AutoCAD
             return ProfileInterpolation.CloneSection(value);
         }
 
-        private static TextBox Input() => new TextBox { Width = 100, Margin = new Padding(3, 4, 12, 4) };
+        private static TextBox Input() => new TextBox { Width = 82, Margin = new Padding(2, 3, 6, 3) };
 
-        private static Label Caption(string text) => new Label { Text = text, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(3, 7, 7, 7) };
+        private static Label Caption(string text) => new Label { Text = text, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(2, 4, 4, 4) };
 
-        private static Label Note(string text) => new Label { Text = text, AutoSize = true, Dock = DockStyle.Fill, ForeColor = Color.DimGray, Margin = new Padding(3, 4, 3, 9) };
+        private static Label Note(string text) => new Label { Text = text, AutoSize = true, Dock = DockStyle.Fill, ForeColor = Color.DimGray, Margin = new Padding(2, 3, 2, 5) };
 
         private static Button Button(string text, Action action)
         {
-            var button = new Button { Text = text, AutoSize = true, MinimumSize = new Size(text.Length < 3 ? 36 : 85, 30), Padding = new Padding(6, 3, 6, 3), Margin = new Padding(3) };
+            var button = new Button { Text = text, AutoSize = true, MinimumSize = new Size(text.Length < 3 ? 30 : 65, 26), Padding = new Padding(3, 1, 3, 1), Margin = new Padding(2) };
             button.Click += (s, e) => action();
             return button;
         }

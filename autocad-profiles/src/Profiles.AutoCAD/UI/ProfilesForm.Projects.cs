@@ -10,8 +10,8 @@ namespace Profiles.AutoCAD
 {
     public sealed partial class ProfilesForm
     {
-        private readonly ComboBox projectPicker = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 300, Margin = new Padding(4, 5, 10, 4) };
-        private readonly ComboBox templatePicker = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 190, Margin = new Padding(4, 5, 10, 4) };
+        private readonly ComboBox projectPicker = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 240, Margin = new Padding(2, 3, 6, 3) };
+        private readonly ComboBox templatePicker = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170, Margin = new Padding(2, 3, 6, 3) };
         private readonly CheckBox autoSaveJson = new CheckBox { Text = "Автосохранять JSON", AutoSize = true, Enabled = false, Margin = new Padding(8, 9, 8, 4) };
         private readonly Timer autoSaveTimer = new Timer { Interval = 700 };
         private readonly List<ProfileProject> projects = new List<ProfileProject>();
@@ -84,7 +84,7 @@ namespace Profiles.AutoCAD
             autoSaveTimer.Tick += (s, e) =>
             {
                 autoSaveTimer.Stop();
-                if (!dirty || loading || saving || longGrid.IsCurrentCellInEditMode || crossGrid.IsCurrentCellInEditMode || (stationInputEdited && sectionStation.ContainsFocus)) return;
+                if (!dirty || loading || saving || HasActiveNumericEditor || (stationInputEdited && sectionStation.ContainsFocus)) return;
                 if (saveProjectToDrawing == null && !(autoSaveJson.Checked && currentFile != null)) return;
                 TrySaveCurrent(false);
             };
