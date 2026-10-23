@@ -12,7 +12,7 @@ Unicode True
   !error "Pass /DOUTPUT=installer-path"
 !endif
 !define PRODUCT "Профиля для AutoCAD 2020–2024"
-!define VERSION "0.7.0"
+!define VERSION "0.8.0"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Sh0MeM0.Profiles"
 
 Name "${PRODUCT}"
@@ -24,7 +24,7 @@ SetCompressorDictSize 32
 BrandingText "Профиля ${VERSION}"
 ShowInstDetails show
 ShowUninstDetails show
-VIProductVersion "0.7.0.0"
+VIProductVersion "0.8.0.0"
 VIAddVersionKey /LANG=1049 "ProductName" "${PRODUCT}"
 VIAddVersionKey /LANG=1049 "FileDescription" "Установка модуля Профиля"
 VIAddVersionKey /LANG=1049 "FileVersion" "${VERSION}"

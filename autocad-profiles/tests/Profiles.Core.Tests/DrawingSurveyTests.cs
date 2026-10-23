@@ -57,7 +57,8 @@ public sealed class DrawingSurveyTests
         Assert.Equal(12, section.LeftBank);
         Assert.Equal(9, section.ExistingBottom);
         Assert.Equal(13, section.RightBank);
-        Assert.Equal(SectionDesignMode.None, section.DesignMode);
+        Assert.Equal(SectionDesignMode.Automatic, section.DesignMode);
+        Assert.Equal(SectionDesignMode.None, ProfileInterpolation.EffectiveDesignMode(section));
         Assert.Null(section.Station);
         Assert.Null(section.ProjectBottom);
         Assert.Null(section.BottomWidth);

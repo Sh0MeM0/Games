@@ -118,7 +118,14 @@ namespace Profiles.Core
             section.RightBank = RoleElevation(section, SectionPointRole.RightBank);
             int bottom = section.Points.FindIndex(point => point.Role == SectionPointRole.Bottom);
             if (bottom >= 0) section.ProjectAnchorIndex = bottom;
-            section.DesignMode = section.Points.Any(point => point.Design.HasValue) ? SectionDesignMode.Points : SectionDesignMode.None;
+            section.DesignMode = section.Points.Any(point => point.Design.HasValue) ? SectionDesignMode.Points : SectionDesignMode.Automatic;
+            if (section.DesignMode == SectionDesignMode.Automatic)
+            {
+                // The inferred bottom role is a surveyed point; a flat bottom's
+                // geometric center can lie between points and must remain there.
+                section.ProjectAnchorIndex = null;
+                ProfileInterpolation.EnsureProjectAnchor(section);
+            }
             return ProjectFile.Clone(new ProfileProject { Sections = new List<CrossSection> { section } }).Sections[0];
         }
 

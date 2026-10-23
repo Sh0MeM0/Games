@@ -385,15 +385,21 @@ namespace Profiles.Core
                 bool covered = !earthworks.HasUnassignedSections && intervals.Count > 0
                     && intervals[0].StartStation == first && intervals[intervals.Count - 1].EndStation == last
                     && intervals.Zip(intervals.Skip(1), (left, right) => left.EndStation == right.StartStation).All(adjacent => adjacent);
-                bool complete = covered && intervals.All(interval => VolumeValue(interval, kind).HasValue);
+                var calculated = intervals.Where(interval => VolumeValue(interval, kind).HasValue).ToList();
                 // Sum original values before formatting once; sums of rounded
-                // table cells can differ materially on a long alignment.
-                string total = complete ? intervals.Sum(interval => VolumeValue(interval, kind).Value).ToString("F1", CultureInfo.InvariantCulture) + " м³"
+                // table cells can differ materially on a long alignment. Missing
+                // ends or interior areas must not discard the calculated part.
+                string total = calculated.Count > 0 ? calculated.Sum(interval => VolumeValue(interval, kind).Value).ToString("F1", CultureInfo.InvariantCulture) + " м³"
                     : "— (неполные данные)";
                 string label = kind == "volumeCut" ? "Срезка" : kind == "volumeFill" ? "Досыпка" : "Удаление ила";
                 double x = X(last - first) + 6 * Layout;
                 if (kind == "volumeCut")
-                    Text(x, top + 3 * Layout, "Итого по показанному участку", alignment: TextAlignment.Left, width: 80 * Layout);
+                {
+                    bool complete = covered && intervals.All(interval => interval.CutVolume.HasValue &&
+                        interval.FillVolume.HasValue && interval.SiltVolume.HasValue);
+                    Text(x, top + 3 * Layout, complete ? "Итого по показанному участку" : "По рассчитанным участкам",
+                        alignment: TextAlignment.Left, width: 80 * Layout);
+                }
                 Text(x, (top + bottom) / 2, label + " = " + total, alignment: TextAlignment.Left, width: 80 * Layout);
             }
 

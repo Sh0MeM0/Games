@@ -50,7 +50,16 @@ namespace Profiles.AutoCAD
         {
             if (loading || saving) return;
             if (input.Tag is NumberState state) state.Edited = true;
-            if (input == centerOffset) crossGrid.SetProjectAnchor(null, null);
+            if (input == centerOffset)
+            {
+                // Detach the geometric anchor, retaining its scalar editor
+                // while a new manual centre is still being typed.
+                crossGrid.SetProjectDisplayIndex(crossGrid.ProjectDisplayIndex);
+                double? bottom = null;
+                try { bottom = ReadOptionalNumber(projectBottom, "Проектное дно"); }
+                catch (ProfileValidationException) { }
+                crossGrid.SetProjectAnchor(null, bottom);
+            }
         }
 
         private void InitializeLongitudinalPrecision()

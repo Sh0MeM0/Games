@@ -79,6 +79,16 @@ namespace Profiles.Core
                 || previousIdentity != Guid.Parse(current.SectionId) || editedIdentity != Guid.Parse(current.SectionId))
                 throw new ProfileValidationException("Редактируемый поперечник изменился. Выберите нужный поперечник заново перед сохранением.");
             pending.SectionId = current.SectionId;
+            // A longitudinal edit may have enabled a previously empty project
+            // while this section's edit buffer was still open. Keep those new
+            // mode/anchor settings unless the user changed them in that buffer.
+            if (pending.DesignMode == previous.DesignMode) pending.DesignMode = current.DesignMode;
+            if (pending.ProjectAnchorIndex == previous.ProjectAnchorIndex && pending.CenterOffset == previous.CenterOffset
+                && (!current.ProjectAnchorIndex.HasValue || current.ProjectAnchorIndex.Value < pending.Points.Count))
+            {
+                pending.ProjectAnchorIndex = current.ProjectAnchorIndex;
+                pending.CenterOffset = current.CenterOffset;
+            }
             var assignedRoles = ChangedRoleAssignments(previous, pending);
             if (assignedRoles.Count > 0) DrawingSurvey.CheckUniqueRoles(pending);
             var changes = new Dictionary<SharedProfileField, double?>();
@@ -116,6 +126,9 @@ namespace Profiles.Core
                     if (value.HasValue) changes.Add(field, value);
                 }
             }
+            if (changes.TryGetValue(SharedProfileField.ProjectBottom, out var changedBottom)
+                && changedBottom.HasValue && !previous.ProjectBottom.HasValue)
+                PrepareFirstProjectValue(pending);
             result.Sections[sectionIndex] = pending;
             if (!pending.Station.HasValue)
             {
@@ -133,6 +146,15 @@ namespace Profiles.Core
             }
             var oldLongitudinal = SortLongitudinal(result.Longitudinal);
             var anchor = EnsureStation(result, pending.Station.Value);
+            var suggestions = ProfileInterpolation.SampleDesignParameters(oldLongitudinal, pending.Station.Value);
+            foreach (var field in new[] { SharedProfileField.BottomWidth, SharedProfileField.LeftSlope, SharedProfileField.RightSlope })
+            {
+                // Only fill absent values, never overwrite a manual parameter or
+                // revive a field explicitly cleared in this same transaction.
+                if (changes.ContainsKey(field) || Get(anchor, field).HasValue || Get(pending, field).HasValue) continue;
+                double? suggestion = Get(suggestions, field);
+                if (suggestion.HasValue) changes.Add(field, suggestion);
+            }
             foreach (var change in changes) Set(anchor, change.Key, change.Value);
             ProfileValidation.Check(result, false);
             Propagate(result, oldLongitudinal, changes.Keys, pending.Station.Value);
@@ -336,7 +358,9 @@ namespace Profiles.Core
             if (section.UseLongitudinalWater) section.Water = station.Water;
             if (section.UseLongitudinalProjectBottom)
             {
+                bool firstProjectValue = station.ProjectBottom.HasValue && !section.ProjectBottom.HasValue;
                 section.ProjectBottom = station.ProjectBottom;
+                if (firstProjectValue) PrepareFirstProjectValue(section);
                 SetProjectAnchor(section, station.ProjectBottom);
             }
             foreach (var point in section.Points)
@@ -350,6 +374,7 @@ namespace Profiles.Core
 
         private static void Apply(CrossSection section, SharedProfileField field, double? value, bool linked)
         {
+            bool firstProjectValue = field == SharedProfileField.ProjectBottom && value.HasValue && !section.ProjectBottom.HasValue;
             var role = Role(field);
             if (role.HasValue)
             {
@@ -366,8 +391,20 @@ namespace Profiles.Core
             if (field == SharedProfileField.ProjectBottom)
             {
                 section.UseLongitudinalProjectBottom = linked;
+                if (firstProjectValue) PrepareFirstProjectValue(section);
                 SetProjectAnchor(section, value);
             }
+        }
+
+        private static void PrepareFirstProjectValue(CrossSection section)
+        {
+            // Version 0.7 captures without a project stored None. A first project
+            // elevation is a new design request, while None with retained design
+            // data is an intentional disabled project and stays disabled.
+            if (section.DesignMode == SectionDesignMode.None && !section.Points.Any(point => point.Design.HasValue))
+                section.DesignMode = SectionDesignMode.Automatic;
+            if (ProfileInterpolation.EffectiveDesignMode(section) != SectionDesignMode.None)
+                ProfileInterpolation.EnsureProjectAnchor(section);
         }
 
         private static void SetProjectAnchor(CrossSection section, double? value)

@@ -16,6 +16,12 @@ namespace Profiles.AutoCAD.UI
         public SectionAnchorElevationEventArgs(double? value) { Value = value; }
     }
 
+    public sealed class SectionAnchorRequestedEventArgs : EventArgs
+    {
+        public int PointIndex { get; }
+        public SectionAnchorRequestedEventArgs(int pointIndex) { PointIndex = pointIndex; }
+    }
+
     public sealed class SectionElevationEditedEventArgs : EventArgs
     {
         public int PointIndex { get; }
@@ -58,10 +64,13 @@ namespace Profiles.AutoCAD.UI
         public event EventHandler PointsChanged;
         public event EventHandler InterpolationRequested;
         public event EventHandler<SectionAnchorElevationEventArgs> ProjectAnchorElevationChanged;
+        public event EventHandler<SectionAnchorRequestedEventArgs> ProjectAnchorRequested;
         public event EventHandler<SectionElevationEditedEventArgs> ElevationEdited;
         public int SelectedPointIndex => CurrentCell == null ? -1 : CurrentCell.ColumnIndex - 1;
         public SectionPointRow SelectedRowKind => (SectionPointRow)Math.Max(0, CurrentCell?.RowIndex ?? 0);
         public int? ProjectAnchorIndex { get; private set; }
+        private int? projectDisplayIndex;
+        public int? ProjectDisplayIndex => ProjectAnchorIndex ?? projectDisplayIndex;
         public bool ManualDesignEnabled
         {
             get => manualDesignEnabled;
@@ -84,7 +93,7 @@ namespace Profiles.AutoCAD.UI
             AllowUserToResizeRows = false;
             AutoGenerateColumns = false;
             RowHeadersVisible = false;
-            ColumnHeadersHeight = 44;
+            ColumnHeadersHeight = 66;
             ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing;
             BackgroundColor = Color.White;
             SelectionMode = DataGridViewSelectionMode.CellSelect;
@@ -236,6 +245,7 @@ namespace Profiles.AutoCAD.UI
             invalid.Clear();
             invalidAnchor = null;
             ProjectAnchorIndex = null;
+            projectDisplayIndex = null;
             projectAnchorElevation = null;
             RebuildColumns();
         }
@@ -265,6 +275,15 @@ namespace Profiles.AutoCAD.UI
                 throw new ArgumentOutOfRangeException(nameof(index), "Проектная опорная точка отсутствует в поперечнике.");
             ProjectAnchorIndex = index;
             projectAnchorElevation = elevation;
+            UpdateDesignMode();
+        }
+
+        /// <summary>A scalar editor for an unanchored centre; never changes geometry or saved anchor identity.</summary>
+        public void SetProjectDisplayIndex(int? index)
+        {
+            if (index.HasValue && (index.Value < 0 || index.Value >= points.Count))
+                throw new ArgumentOutOfRangeException(nameof(index));
+            projectDisplayIndex = index;
             UpdateDesignMode();
         }
 
@@ -397,6 +416,7 @@ namespace Profiles.AutoCAD.UI
                 invalid.Remove(Key(index + 1, 0));
             }
             if (ProjectAnchorIndex >= index) ProjectAnchorIndex++;
+            if (projectDisplayIndex >= index) projectDisplayIndex++;
             RebuildColumns();
             CurrentCell = Rows[0].Cells[index + 1];
             OnPointsChanged();
@@ -423,6 +443,8 @@ namespace Profiles.AutoCAD.UI
             ReindexInvalid(index, -1, true);
             if (ProjectAnchorIndex == index) { ProjectAnchorIndex = null; invalidAnchor = null; }
             else if (ProjectAnchorIndex > index) ProjectAnchorIndex--;
+            if (projectDisplayIndex == index) projectDisplayIndex = null;
+            else if (projectDisplayIndex > index) projectDisplayIndex--;
             // Do not silently add neighboring intervals or reuse a stale interval.
             if (index < points.Count)
             {
@@ -484,16 +506,20 @@ namespace Profiles.AutoCAD.UI
                 string name = points[index].Role == SectionPointRole.LeftBank ? "Л. берег" :
                     points[index].Role == SectionPointRole.RightBank ? "П. берег" :
                     points[index].Role == SectionPointRole.Bottom ? "Дно" : "Точка";
-                bool anchor = ProjectAnchorVisible && !ManualDesignEnabled && ProjectAnchorIndex == index;
+                bool anchor = ProjectAnchorVisible && !ManualDesignEnabled && ProjectDisplayIndex == index;
                 bool named = !string.IsNullOrWhiteSpace(points[index].Label);
-                Columns[index + 1].HeaderText = named ? (anchor ? "▼ " : "") + points[index].Label :
-                    name + (anchor ? "\n▼ Проект" : "\n№ " + (index + 1));
+                // Every column keeps its number, including a named bank or the
+                // project anchor. The bottom of the header is a real, always
+                // visible role-menu button rather than a hidden context action.
+                Columns[index + 1].HeaderText = (named ? points[index].Label + "\n" + name : name + "\n") +
+                    " № " + (index + 1) + (anchor ? " · П" : "");
+                Columns[index + 1].HeaderCell.Style.Padding = new Padding(1, 0, 1, ScalePixels(23));
                 Columns[index + 1].ToolTipText = (named ? points[index].Label + "\n" : "") + "Точка " + (index + 1) + ": " +
                     (points[index].Role == SectionPointRole.LeftBank ? "левый берег по направлению течения" :
                     points[index].Role == SectionPointRole.RightBank ? "правый берег по направлению течения" :
                     points[index].Role == SectionPointRole.Bottom ? "фактическое дно" : "точка поперечника") +
-                    (anchor ? ". Опорный столбец проектного дна трапеции." : ".") +
-                    "\nДвойной щелчок — название; правой кнопкой — назначение точки.";
+                    (anchor ? (ProjectAnchorIndex.HasValue ? ". Опорный столбец проектного дна трапеции." : ". Ячейка проектного дна; центр между точками сохраняется.") : ".") +
+                    "\nКнопка «Назначить» — левый берег, дно, правый берег или обычная точка. Двойной щелчок — название.";
                 Columns[index + 1].HeaderCell.Style.ForeColor = anchor ? Color.Firebrick : Color.Black;
             }
         }
@@ -530,7 +556,7 @@ namespace Profiles.AutoCAD.UI
             Invalidate();
         }
 
-        private bool IsAnchor(int index) => !manualDesignEnabled && projectAnchorVisible && ProjectAnchorIndex == index;
+        private bool IsAnchor(int index) => !manualDesignEnabled && projectAnchorVisible && ProjectDisplayIndex == index;
 
         protected override void OnCellBeginEdit(DataGridViewCellCancelEventArgs e)
         {
@@ -652,6 +678,15 @@ namespace Profiles.AutoCAD.UI
 
         protected override void OnCellPainting(DataGridViewCellPaintingEventArgs e)
         {
+            if (e.ColumnIndex > 0 && e.RowIndex == -1)
+            {
+                e.Paint(e.ClipBounds, DataGridViewPaintParts.All);
+                var button = HeaderRoleButton(e.CellBounds);
+                ControlPaint.DrawButton(e.Graphics, button, ButtonState.Normal);
+                TextRenderer.DrawText(e.Graphics, "Назначить ▾", Font, button, Color.FromArgb(35, 65, 85),
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
+                e.Handled = true;
+            }
             if (e.ColumnIndex > 0 && e.RowIndex >= 0 && !Rows[e.RowIndex].Cells[e.ColumnIndex].ReadOnly &&
                 string.IsNullOrWhiteSpace(Convert.ToString(Rows[e.RowIndex].Cells[e.ColumnIndex].Value, CultureInfo.InvariantCulture)))
             {
@@ -675,8 +710,47 @@ namespace Profiles.AutoCAD.UI
         {
             base.OnColumnHeaderMouseDoubleClick(e);
             if (e.Button != MouseButtons.Left || e.ColumnIndex <= 0) return;
+            if (e.Y >= ColumnHeadersHeight - ScalePixels(24)) return;
             CurrentCell = Rows[1].Cells[e.ColumnIndex];
             RunAction(RenameSelectedPoint);
+        }
+
+        protected override void OnCellDoubleClick(DataGridViewCellEventArgs e)
+        {
+            base.OnCellDoubleClick(e);
+            if (e.RowIndex != 2 || e.ColumnIndex <= 0 || ManualDesignEnabled || IsAnchor(e.ColumnIndex - 1)) return;
+            CurrentCell = Rows[2].Cells[e.ColumnIndex];
+            ProjectAnchorRequested?.Invoke(this, new SectionAnchorRequestedEventArgs(e.ColumnIndex - 1));
+        }
+
+        private Rectangle HeaderRoleButton(Rectangle bounds) => new Rectangle(bounds.Left + ScalePixels(3),
+            bounds.Bottom - ScalePixels(23), Math.Max(1, bounds.Width - ScalePixels(6)), ScalePixels(20));
+
+        protected override void OnColumnHeaderMouseClick(DataGridViewCellMouseEventArgs e)
+        {
+            base.OnColumnHeaderMouseClick(e);
+            if (e.Button != MouseButtons.Left || e.ColumnIndex <= 0 || e.Y < ColumnHeadersHeight - ScalePixels(24)) return;
+            RunAction(() =>
+            {
+                ReadPoints();
+                CurrentCell = Rows[1].Cells[e.ColumnIndex];
+                int selected = e.ColumnIndex - 1;
+                var menu = new ContextMenuStrip();
+                foreach (SectionPointRole role in new[] { SectionPointRole.LeftBank, SectionPointRole.Bottom, SectionPointRole.RightBank, SectionPointRole.Regular })
+                {
+                    var assignedRole = role;
+                    int previous = role == SectionPointRole.Regular ? -1 : points.FindIndex(point => point.Role == role);
+                    var item = new ToolStripMenuItem(RoleCaption(role) + (previous >= 0 && previous != selected ? " — перенести с № " + (previous + 1) : ""),
+                        null, (s, args) => RunAction(() => AssignSelectedRole(assignedRole)))
+                    { Checked = points[selected].Role == role };
+                    menu.Items.Add(item);
+                }
+                menu.Items.Add(new ToolStripSeparator());
+                menu.Items.Add("Название точки…", null, (s, args) => RunAction(RenameSelectedPoint));
+                menu.Closed += (s, args) => menu.Dispose();
+                var bounds = GetCellDisplayRectangle(e.ColumnIndex, -1, true);
+                menu.Show(this, new Point(bounds.Left, bounds.Bottom));
+            });
         }
 
         protected override void OnCellMouseClick(DataGridViewCellMouseEventArgs e)
@@ -862,8 +936,11 @@ namespace Profiles.AutoCAD.UI
             if (e.ColumnIndex > 0 && e.RowIndex >= 0 && e.ColumnIndex - 1 < points.Count)
             {
                 int index = e.ColumnIndex - 1;
-                if (e.RowIndex == 2 && !ManualDesignEnabled && ProjectAnchorVisible && ProjectAnchorIndex == index && projectAnchorElevation.HasValue)
-                    e.ToolTipText = "Проектное дно: " + projectAnchorElevation.Value.ToString("G17", CultureInfo.InvariantCulture) + " м. Можно изменить прямо в ячейке; исходные отметки ручного проекта сохранятся.";
+                if (e.RowIndex == 2 && IsAnchor(index))
+                    e.ToolTipText = "Проектное дно" + (projectAnchorElevation.HasValue ? ": " + projectAnchorElevation.Value.ToString("G17", CultureInfo.InvariantCulture) + " м" : "") +
+                        ". Можно ввести или изменить прямо в ячейке." + (ProjectAnchorIndex.HasValue ? "" : " Ячейка показывает общую отметку; заданный центр сохраняется, даже если находится между точками.");
+                else if (e.RowIndex == 2 && !ManualDesignEnabled)
+                    e.ToolTipText = "Двойной щелчок или кнопка «Дно под точкой» — разместить центр проектного дна под этой точкой.";
                 else if (GetValue(points[index], e.RowIndex).HasValue)
                     e.ToolTipText = "Исходное значение: " + GetValue(points[index], e.RowIndex).Value.ToString("G17", CultureInfo.InvariantCulture) +
                         (e.RowIndex == 1 && points[index].UseLongitudinalElevation ? ". Общая отметка с продольным профилем." : "");

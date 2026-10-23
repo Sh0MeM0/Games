@@ -122,7 +122,7 @@ namespace Profiles.Core
             int supplied = new[] { section.ProjectBottom, section.BottomWidth, section.LeftSlope, section.RightSlope }.Count(x => x.HasValue);
             var mode = ProfileInterpolation.EffectiveDesignMode(section);
             if (active && mode == SectionDesignMode.Trapezoid && supplied != 4) Fail("Поперечник «" + section.Name + "»: для трапеции нужны одновременно отметка дна, ширина и оба заложения откосов.");
-            if (active && section.DesignMode == SectionDesignMode.Automatic && supplied != 0 && section.Points.Any(p => p != null && p.Design.HasValue)) Fail("Поперечник «" + section.Name + "»: выберите трапецию или проектные отметки в таблице; одновременно применять их нельзя.");
+            if (active && section.DesignMode == SectionDesignMode.Automatic && mode == SectionDesignMode.Trapezoid && section.Points.Any(p => p != null && p.Design.HasValue)) Fail("Поперечник «" + section.Name + "»: выберите трапецию или проектные отметки в таблице; одновременно применять их нельзя.");
             double previous = double.NegativeInfinity;
             int pointIndex = 0;
             foreach (SectionPoint point in section.Points)

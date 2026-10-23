@@ -176,6 +176,7 @@ namespace Profiles.AutoCAD
             int? anchor = crossGrid.ProjectAnchorIndex;
             crossGrid.LoadPoints(points);
             crossGrid.SetProjectAnchor(anchor, current.ProjectBottom);
+            UpdateProjectDisplayIndex(current, !current.ProjectBottom.HasValue);
             currentSectionStation = null;
             longitudinalProjectBottomLinked = longitudinalWaterLinked = false;
             stationInputEdited = false;
@@ -242,7 +243,6 @@ namespace Profiles.AutoCAD
                 seed.ProjectAnchorIndex = seed.Points.Count >= 2 ? 1 : (int?)null;
                 seed.DesignMode = SectionDesignMode.Automatic;
                 var seeded = ProjectSynchronization.CommitSection(source, target, blank, seed);
-                seeded.Sections[target].DesignMode = ProfileInterpolation.EffectiveDesignMode(seeded.Sections[target]);
                 ApplySynchronizedProject(seeded, target);
                 SetDirty();
                 SetStatus("Создан " + StationCaption(station) + ": берега, дно и вода связаны с продольным профилем. Введите измеренные расстояния между точками.");
@@ -317,7 +317,13 @@ namespace Profiles.AutoCAD
                 if (longitudinalWaterLinked && ReadOptionalNumber(sectionWater, "Урез воды") != sample.Water)
                 { DisplayNumber(sectionWater, sample.Water); changed = true; }
                 if (longitudinalProjectBottomLinked && ReadOptionalNumber(projectBottom, "Проектное дно") != sample.ProjectBottom)
-                { DisplayNumber(projectBottom, sample.ProjectBottom); changed = true; }
+                {
+                    bool firstProject = !ReadOptionalNumber(projectBottom, "Проектное дно").HasValue;
+                    DisplayNumber(projectBottom, sample.ProjectBottom);
+                    if (sample.ProjectBottom.HasValue && (automaticDesignMode || firstProject))
+                        ActivateProjectBottom(sample.ProjectBottom, firstProject);
+                    changed = true;
+                }
                 if (pointsChanged)
                 {
                     int index = crossGrid.SelectedPointIndex, row = (int)crossGrid.SelectedRowKind;
@@ -329,6 +335,7 @@ namespace Profiles.AutoCAD
                     catch (ProfileValidationException) { }
                     crossGrid.LoadPoints(points);
                     crossGrid.SetProjectAnchor(anchor, anchorElevation);
+                    UpdateProjectDisplayIndex(ReadCurrentSection(), !anchorElevation.HasValue);
                     if (index >= 0 && index < points.Count) crossGrid.CurrentCell = crossGrid.Rows[row].Cells[index + 1];
                 }
                 RefreshProjectAnchorDisplay();
@@ -341,13 +348,20 @@ namespace Profiles.AutoCAD
         {
             try
             {
-                var resolved = ProfileInterpolation.ResolveSection(ReadCurrentSection(), ReadLongitudinal());
-                double center = ProfileInterpolation.FindCenterOffset(resolved.Points);
-                crossGrid.SetProjectAnchor(null, null);
-                DisplayNumber(centerOffset, center);
+                var section = ReadCurrentSection();
+                // Keep the exact centre of a flat bottom. When it is between
+                // survey points, only the editor cell uses a nearby column.
+                var resolved = ProfileInterpolation.ResolveSection(section, ReadLongitudinal());
+                ProfileInterpolation.FindCenterOffset(resolved.Points); // Explain incomplete survey data.
+                section.ProjectAnchorIndex = null;
+                ProfileInterpolation.EnsureProjectAnchor(section);
+                crossGrid.SetProjectAnchor(section.ProjectAnchorIndex, section.ProjectBottom);
+                UpdateProjectDisplayIndex(section, false);
+                DisplayNumber(centerOffset, section.CenterOffset);
                 SelectDesignMode(SectionDesignMode.Trapezoid);
                 SetDirty();
-                SetStatus("Центр найден по минимальной фактической отметке; для плоского дна — середина участка. Задайте отметку проектного дна, ширину и откосы.");
+                QueueSharedCommit();
+                SetStatus("Центр найден по фактическому дну; для плоского участка — точно посередине. Отметка доступна в красной ячейке; центр между точками сохраняется.");
             }
             catch (Exception ex) { ShowError(ex.Message); }
         }
@@ -361,12 +375,13 @@ namespace Profiles.AutoCAD
                 if (crossGrid.SelectedRowKind == UI.SectionPointRow.Distance)
                     throw new ProfileValidationException("Расстояние между точками вводится по съёмке. По одним отметкам его вычислить нельзя.");
                 bool design = crossGrid.SelectedRowKind == UI.SectionPointRow.Design;
-                if (design && SelectedDesignMode == SectionDesignMode.Trapezoid && crossGrid.ProjectAnchorIndex == index)
+                if (design && SelectedDesignMode != SectionDesignMode.Points && crossGrid.ProjectDisplayIndex == index)
                 {
                     if (!currentSectionStation.HasValue) throw new ProfileValidationException("Для интерполяции проектного дна нужен пикет; либо введите отметку вручную.");
                     var sample = ProfileInterpolation.SampleLongitudinal(ReadLongitudinal(), currentSectionStation.Value);
                     if (!sample.ProjectBottom.HasValue) throw new ProfileValidationException("В продольном профиле нет двух опорных отметок проектного дна по обе стороны этого ПК.");
                     DisplayNumber(projectBottom, sample.ProjectBottom);
+                    ActivateProjectBottom(sample.ProjectBottom, sectionBeforeEditing == null || !sectionBeforeEditing.ProjectBottom.HasValue);
                     RecordSharedValue(currentSectionStation.Value, SharedProfileField.ProjectBottom, sample.ProjectBottom);
                     RefreshProjectAnchorDisplay();
                     SetDirty();

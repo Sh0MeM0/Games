@@ -226,12 +226,13 @@ namespace Profiles.Core
             }
             if (summary.Intervals.Count == 0)
                 summary.Warnings.Add("Для объёмов нужны как минимум два поперечника с разными пикетами.");
-            if (!unsited && summary.Intervals.Count > 0)
-            {
-                if (summary.Intervals.All(interval => interval.CutVolume.HasValue)) summary.TotalCutVolume = summary.KnownCutVolume;
-                if (summary.Intervals.All(interval => interval.FillVolume.HasValue)) summary.TotalFillVolume = summary.KnownFillVolume;
-                if (summary.Intervals.All(interval => interval.SiltVolume.HasValue)) summary.TotalSiltVolume = summary.KnownSiltVolume;
-            }
+            // Sum the measured intervals independently. An unknown interval is
+            // not zero and remains a barrier between its neighboring sections,
+            // but does not erase volumes already calculated elsewhere. Keep a
+            // genuinely unavailable quantity null instead of reporting a zero.
+            if (summary.Intervals.Any(interval => interval.CutVolume.HasValue)) summary.TotalCutVolume = summary.KnownCutVolume;
+            if (summary.Intervals.Any(interval => interval.FillVolume.HasValue)) summary.TotalFillVolume = summary.KnownFillVolume;
+            if (summary.Intervals.Any(interval => interval.SiltVolume.HasValue)) summary.TotalSiltVolume = summary.KnownSiltVolume;
             return summary;
         }
 

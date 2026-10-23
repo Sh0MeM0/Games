@@ -241,7 +241,7 @@ namespace Profiles.AutoCAD
             center.Controls.Add(Note("Слева направо по течению · интервалы по съёмке · пусто = неизвестно"), 0, 2);
             center.Controls.Add(crossGrid, 0, 3);
             center.Controls.Add(BuildPointToolbar(), 0, 4);
-            center.Controls.Add(Note("Пустая отметка: ▼ → интерполяция · Красная опорная ячейка: проектное дно · Ctrl+V: Excel"), 0, 5);
+            center.Controls.Add(Note("«Назначить» в шапке: берега / дно · Пустая отметка: ▼ → интерполяция · Красная ячейка: проектное дно · Ctrl+V: Excel"), 0, 5);
             layout.Controls.Add(center, 1, 0);
             earthworksPanel = BuildEarthworksPanel();
             earthworksPanel.Visible = showEarthworks.Checked;
@@ -347,6 +347,7 @@ namespace Profiles.AutoCAD
                 QueueSharedCommit();
             };
             crossGrid.InterpolationRequested += (s, e) => InterpolateCrossCell();
+            crossGrid.ProjectAnchorRequested += (s, e) => SetProjectAnchorFromLongitudinal();
         }
 
         private static DataGridView CreateGrid()
@@ -567,7 +568,7 @@ namespace Profiles.AutoCAD
                 ProjectAnchorIndex = crossGrid.ProjectAnchorIndex,
                 UseLongitudinalProjectBottom = longitudinalProjectBottomLinked,
                 UseLongitudinalWater = longitudinalWaterLinked,
-                DesignMode = SelectedDesignMode,
+                DesignMode = DesignModeForSave,
                 Points = points
             };
             ReadEarthworks(result);
@@ -607,7 +608,7 @@ namespace Profiles.AutoCAD
             loading = true;
             try
             {
-                var section = selectedSection >= 0 && selectedSection < sections.Count ? sections[selectedSection] : NewSection(1);
+                var section = selectedSection >= 0 && selectedSection < sections.Count ? CloneSection(sections[selectedSection]) : NewSection(1);
                 currentSectionStation = section.Station;
                 stationInputEdited = false;
                 sectionStation.Text = section.Station.HasValue ? StationCaption(section.Station.Value) : "";
@@ -621,9 +622,10 @@ namespace Profiles.AutoCAD
                 DisplayNumber(leftSlope, section.LeftSlope);
                 DisplayNumber(rightSlope, section.RightSlope);
                 DisplayNumber(centerOffset, section.CenterOffset);
-                SelectDesignMode(ProfileInterpolation.EffectiveDesignMode(section));
+                SelectDesignMode(section.DesignMode, ProfileInterpolation.EffectiveDesignMode(section));
                 crossGrid.LoadPoints(ToDistancePoints(section));
                 crossGrid.SetProjectAnchor(section.ProjectAnchorIndex, section.ProjectBottom);
+                UpdateProjectDisplayIndex(section, !section.ProjectBottom.HasValue);
                 LoadEarthworks(section);
                 RefreshProjectAnchorDisplay();
             }
@@ -842,7 +844,7 @@ namespace Profiles.AutoCAD
 
         private static CrossSection NewSection(int number) => new CrossSection
         {
-            Name = "Поперечник " + number, UsePointDistances = true, DesignMode = SectionDesignMode.None,
+            Name = "Поперечник " + number, UsePointDistances = true, DesignMode = SectionDesignMode.Automatic,
             Points = new List<SectionPoint>
             {
                 new SectionPoint { Role = SectionPointRole.LeftBank, DistanceFromPrevious = 0 },

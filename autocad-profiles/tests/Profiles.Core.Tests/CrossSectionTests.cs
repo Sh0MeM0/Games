@@ -103,6 +103,7 @@ public sealed class CrossSectionTests
     {
         var project = Trapezoid();
         var section = project.Sections[0];
+        section.DesignMode = SectionDesignMode.Trapezoid;
         switch (missing)
         {
             case "bottom": section.ProjectBottom = null; break;

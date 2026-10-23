@@ -33,6 +33,11 @@ namespace Profiles.AutoCAD
         }
 
         private SectionDesignMode SelectedDesignMode => designMode.SelectedItem is DesignChoice item ? item.Value : SectionDesignMode.None;
+        // The picker shows the current effective mode. Keep the raw Automatic
+        // mode until the user deliberately changes it, so a measured section
+        // without a project can accept its first shared design elevation later.
+        private bool automaticDesignMode = true;
+        private SectionDesignMode DesignModeForSave => automaticDesignMode ? SectionDesignMode.Automatic : SelectedDesignMode;
 
         private Control BuildCrossDesignPanel()
         {
@@ -40,6 +45,7 @@ namespace Profiles.AutoCAD
             designMode.Items.Add(new DesignChoice { Value = SectionDesignMode.Trapezoid, Name = "Трапеция" });
             designMode.Items.Add(new DesignChoice { Value = SectionDesignMode.Points, Name = "По проектным отметкам" });
             designMode.SelectedIndex = 0;
+            designMode.SelectionChangeCommitted += (s, e) => { automaticDesignMode = false; SetDirty(); QueueSharedCommit(); };
             designMode.SelectedIndexChanged += (s, e) =>
             {
                 RefreshProjectAnchorDisplay();
@@ -80,8 +86,10 @@ namespace Profiles.AutoCAD
             catch (Exception ex) { ShowError(ex.Message); }
         }
 
-        private void SelectDesignMode(SectionDesignMode mode)
+        private void SelectDesignMode(SectionDesignMode mode, SectionDesignMode? effectiveMode = null)
         {
+            automaticDesignMode = mode == SectionDesignMode.Automatic;
+            if (automaticDesignMode) mode = effectiveMode ?? SectionDesignMode.None;
             for (int index = 0; index < designMode.Items.Count; index++)
                 if (((DesignChoice)designMode.Items[index]).Value == mode) { designMode.SelectedIndex = index; return; }
             designMode.SelectedIndex = 0;
@@ -90,13 +98,58 @@ namespace Profiles.AutoCAD
         private void RefreshProjectAnchorDisplay()
         {
             bool trapezoid = SelectedDesignMode == SectionDesignMode.Trapezoid;
-            projectBottom.Enabled = bottomWidth.Enabled = leftSlope.Enabled = rightSlope.Enabled = centerOffset.Enabled = trapezoid;
+            // A skipped project mark must be enterable later without first
+            // finding a mode selector. Entering it explicitly enables a project.
+            projectBottom.Enabled = true;
+            bottomWidth.Enabled = leftSlope.Enabled = rightSlope.Enabled = centerOffset.Enabled = trapezoid;
             crossGrid.ManualDesignEnabled = SelectedDesignMode == SectionDesignMode.Points;
-            crossGrid.ProjectAnchorVisible = trapezoid;
+            crossGrid.ProjectAnchorVisible = SelectedDesignMode != SectionDesignMode.Points;
             double? bottom = null;
             try { bottom = ReadOptionalNumber(projectBottom, "Проектное дно"); }
             catch (ProfileValidationException) { }
             crossGrid.SetProjectAnchor(crossGrid.ProjectAnchorIndex, bottom);
+        }
+
+        private void ActivateProjectBottom(double? value, bool firstProject = false)
+        {
+            if (!value.HasValue || SelectedDesignMode == SectionDesignMode.Points) return;
+            if (SelectedDesignMode != SectionDesignMode.Trapezoid) SelectDesignMode(SectionDesignMode.Trapezoid);
+            if (!crossGrid.ProjectAnchorIndex.HasValue && firstProject)
+            {
+                var section = ReadCurrentSection();
+                ProfileInterpolation.EnsureProjectAnchor(section);
+                crossGrid.SetProjectAnchor(section.ProjectAnchorIndex, value);
+                DisplayNumber(centerOffset, section.CenterOffset);
+                UpdateProjectDisplayIndex(section, false);
+            }
+            RefreshProjectAnchorDisplay();
+        }
+
+        private void UpdateProjectDisplayIndex(CrossSection section, bool automaticCandidate)
+        {
+            if (section.ProjectAnchorIndex.HasValue || section.Points.Count == 0)
+            {
+                crossGrid.SetProjectDisplayIndex(null);
+                return;
+            }
+            int index;
+            try
+            {
+                var geometry = CloneSection(section);
+                geometry.DesignMode = SectionDesignMode.None;
+                var resolved = ProfileInterpolation.ResolveSection(geometry, ReadLongitudinal());
+                double center = automaticCandidate ? ProfileInterpolation.FindCenterOffset(resolved.Points) : section.CenterOffset;
+                index = Enumerable.Range(0, resolved.Points.Count)
+                    .OrderBy(i => Math.Abs(resolved.Points[i].Offset - center)).ThenBy(i => i).First();
+            }
+            catch (ProfileValidationException)
+            {
+                // Drafts with unknown intervals still need an editable scalar
+                // cell. Its index is only presentation and never a fake offset.
+                index = section.Points.FindIndex(point => point.Role == SectionPointRole.Bottom);
+                if (index < 0) index = section.Points.Count / 2;
+            }
+            crossGrid.SetProjectDisplayIndex(index);
         }
 
         private void SetProjectAnchorFromLongitudinal()

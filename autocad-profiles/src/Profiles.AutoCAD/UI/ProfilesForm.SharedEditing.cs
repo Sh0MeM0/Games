@@ -32,18 +32,35 @@ namespace Profiles.AutoCAD
             foreach (var input in new[] { sectionWater, projectBottom, bottomWidth, leftSlope, rightSlope })
                 input.Validated += (s, e) =>
                 {
-                    if (!loading && !synchronizingUi && input.Tag is NumberState state && state.Edited && currentSectionStation.HasValue)
+                    if (!loading && !synchronizingUi && input.Tag is NumberState state && state.Edited)
                     {
                         try
                         {
                             var field = input == sectionWater ? SharedProfileField.Water : input == projectBottom ? SharedProfileField.ProjectBottom :
                                 input == bottomWidth ? SharedProfileField.BottomWidth : input == leftSlope ? SharedProfileField.LeftSlope : SharedProfileField.RightSlope;
-                            RecordSharedValue(currentSectionStation.Value, field, ReadOptionalNumber(input, field.ToString()));
+                            double? value = ReadOptionalNumber(input, field.ToString());
+                            if (input == projectBottom)
+                            {
+                                ActivateProjectBottom(value, !state.Value.HasValue);
+                                DisplayNumber(projectBottom, value);
+                            }
+                            if (currentSectionStation.HasValue) RecordSharedValue(currentSectionStation.Value, field, value);
                         }
                         catch (ProfileValidationException ex) { SetStatus(ex.Message, true); }
                     }
                     QueueSharedCommit();
                 };
+            centerOffset.Validated += (s, e) =>
+            {
+                if (loading || synchronizingUi) return;
+                try
+                {
+                    UpdateProjectDisplayIndex(ReadCurrentSection(), false);
+                    RefreshProjectAnchorDisplay();
+                    QueueSharedCommit();
+                }
+                catch (ProfileValidationException ex) { SetStatus(ex.Message, true); }
+            };
             longGrid.CellEndEdit += (s, e) =>
             {
                 if (!loading && longEditChanged && longEditParsed)
@@ -55,6 +72,7 @@ namespace Profiles.AutoCAD
             {
                 if (loading || synchronizingUi) return;
                 DisplayNumber(projectBottom, e.Value);
+                ActivateProjectBottom(e.Value, sectionBeforeEditing == null || !sectionBeforeEditing.ProjectBottom.HasValue);
                 if (currentSectionStation.HasValue) RecordSharedValue(currentSectionStation.Value, SharedProfileField.ProjectBottom, e.Value);
                 SetDirty();
                 QueueSharedCommit();

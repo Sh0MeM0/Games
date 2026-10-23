@@ -136,7 +136,8 @@ public sealed class EarthworkRenderingTests
         var volume = Assert.Single(texts, text => text.Position.X >= 0 && text.Position.X <= 100 && Math.Abs(text.Position.Y - volumeLabel.Position.Y) < 1e-8);
         Assert.Equal("76.8", volume.Text);
         Assert.Equal(50, volume.Position.X, 8);
-        Assert.Contains(texts, text => text.Text == "Срезка = — (неполные данные)");
+        Assert.Contains(texts, text => text.Text == "Срезка = 76.8 м³");
+        Assert.Contains(texts, text => text.Text == "По рассчитанным участкам");
     }
 
     private static ProfileProject CutFillProject()

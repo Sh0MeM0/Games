@@ -263,15 +263,15 @@ public sealed class EarthworksRegressionTests
     }
 
     [Fact]
-    public void MeaningfulSectionWithUnknownStationMakesTotalIncompleteWithoutInventedPosition()
+    public void MeaningfulSectionWithUnknownStationWarnsButRetainsKnownSubtotalWithoutInventedPosition()
     {
         var first = Flat(); first.Station = 0;
         var unsited = Flat();
         var last = Flat(); last.Station = 10;
         var result = Earthworks.CalculateVolumes(VolumeProject(first, unsited, last));
-        Assert.Null(result.TotalCutVolume);
-        Assert.Null(result.TotalFillVolume);
-        Assert.Null(result.TotalSiltVolume);
+        Area(100, result.TotalCutVolume);
+        Area(0, result.TotalFillVolume);
+        Area(0, result.TotalSiltVolume);
         Assert.NotEmpty(result.Warnings);
         Assert.All(result.Intervals, interval =>
         {

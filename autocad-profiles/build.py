@@ -15,7 +15,7 @@ import zipfile
 from menu_package import build_classic_menu
 
 ROOT = Path(__file__).resolve().parent
-VERSION = '0.7.0'
+VERSION = '0.8.0'
 TARGETS = {'2020': ('23.1.0', 'R23.1'), '2021': ('24.0.0', 'R24.0'),
            '2022': ('24.1.51000', 'R24.1'), '2023': ('24.2.0', 'R24.2'),
            '2024': ('24.3.0', 'R24.3')}
@@ -30,7 +30,7 @@ def sha(path):
 def package_xml(bundle):
     package = ET.Element('ApplicationPackage', SchemaVersion='1.0', AutodeskProduct='AutoCAD',
         Name='Профиля', AppVersion=VERSION, Description='Продольные и поперечные профили',
-        Author='Sh0MeM0', ProductCode='{DB9B64C2-029F-4213-84A7-6F5494E0EDBE}',
+        Author='Sh0MeM0', ProductCode='{5A972638-EE7D-4BCD-92A7-03AC5C8CD184}',
         UpgradeCode='{25B26ECF-0C17-4968-BE99-4FC6E7F67A54}')
     ET.SubElement(package, 'CompanyDetails', Name='Sh0MeM0')
     # Like MDSTools, register a partial CUIX directly: a closed/absent ribbon

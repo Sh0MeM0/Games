@@ -94,11 +94,11 @@ namespace Profiles.AutoCAD
                             item.Destination = SavedSpace(database, transaction, legacy);
                         }
                         else if (cross && legacy != null)
-                            throw new ProfileValidationException("Для старого построения один раз выберите «Все поперечники» → «Перестроить на месте». Старое построение не изменено.");
+                            throw new ProfileValidationException("Для старого построения один раз выберите «Все поперечники» → «Перестроить все». Старое построение не изменено.");
                         else
                         {
                             string name = cross ? item.ProfileName + ": " + project.Sections.Single(section => string.Equals(section.SectionId, item.SectionId, StringComparison.OrdinalIgnoreCase)).Name : item.ProfileName;
-                            throw new ProfileValidationException("Для «" + name + "» ещё нет сохранённого построения. Сначала используйте «Построить / переместить» для выбранного элемента или всей группы. Существующие объекты не изменены.");
+                            throw new ProfileValidationException("Для «" + name + "» ещё нет сохранённого построения. Сначала используйте «Построить текущий» или «Построить все» для выбранного элемента или всей группы. Существующие объекты не изменены.");
                         }
                     }
                     else
@@ -117,7 +117,7 @@ namespace Profiles.AutoCAD
                     };
                 }
                 if (cross && !allSections && legacy != null)
-                    result.Warnings.Add("Старое общее построение сохранено целиком: его объекты нельзя безопасно отнести к отдельным поперечникам. Для перехода выберите «Все поперечники» → «Перестроить на месте».");
+                    result.Warnings.Add("Старое общее построение сохранено целиком: его объекты нельзя безопасно отнести к отдельным поперечникам. Для перехода выберите «Все поперечники» → «Перестроить все».");
 
                 var layers = (LayerTable)transaction.GetObject(database.LayerTableId, OpenMode.ForRead);
                 var layerIds = new Dictionary<string, ObjectId>(StringComparer.OrdinalIgnoreCase);
@@ -148,7 +148,7 @@ namespace Profiles.AutoCAD
         {
             ObjectId id = FindObject(database, output.SpaceHandle);
             if (id.IsNull || !(transaction.GetObject(id, OpenMode.ForRead) is BlockTableRecord))
-                throw new ProfileValidationException("Исходное пространство профиля удалено. Используйте «Построить / переместить» для новой точки вставки.");
+                throw new ProfileValidationException("Исходное пространство профиля удалено. Используйте «Построить текущий» или «Построить все» для новой точки вставки.");
             return id;
         }
 

@@ -64,7 +64,7 @@ public sealed class LongitudinalVolumePresentationTests
         var outside = Section(-10);
         outside.Points.Clear();
         var project = Project(0, 10, outside, Section(0), Section(10));
-        Assert.Null(Earthworks.CalculateVolumes(project).TotalCutVolume);
+        Assert.Equal(10, Earthworks.CalculateVolumes(project).TotalCutVolume);
         Assert.Contains(Texts(project), text => text.Text == "Срезка = 10.0 м³");
     }
 
@@ -72,8 +72,7 @@ public sealed class LongitudinalVolumePresentationTests
     [InlineData(-10, 10)]
     [InlineData(0, 20)]
     [InlineData(-10, 20)]
-    [InlineData(2, 8)]
-    public void IntervalsCrossingOrMissingDisplayedEndsNeverBecomeAFullTotal(double left, double right)
+    public void IntervalsCrossingDisplayedEndsAreNotClippedIntoInventedVolumes(double left, double right)
     {
         var project = Project(0, 10, Section(left), Section(right));
         var texts = Texts(project);
@@ -87,14 +86,15 @@ public sealed class LongitudinalVolumePresentationTests
     }
 
     [Fact]
-    public void DuplicateSectionOrUnassignedSurveyPreventsFalseTotals()
+    public void DuplicateSectionBlocksItsNeighborsWhileUnassignedSurveyAllowsKnownSubtotal()
     {
         var duplicate = Project(0, 10, Section(0), Section(5), Section(5), Section(10));
         Assert.Contains(Texts(duplicate), text => text.Text == "Срезка = — (неполные данные)");
         var unsited = Section(5); unsited.Station = null;
         var project = Project(0, 10, Section(0), unsited, Section(10));
         Assert.True(Earthworks.CalculateVolumes(project).HasUnassignedSections);
-        Assert.Contains(Texts(project), text => text.Text == "Срезка = — (неполные данные)");
+        Assert.Contains(Texts(project), text => text.Text == "Срезка = 10.0 м³");
+        Assert.Contains(Texts(project), text => text.Text == "По рассчитанным участкам");
         project.Sections.Remove(unsited);
         project.Sections.Add(new CrossSection());
         Assert.False(Earthworks.CalculateVolumes(project).HasUnassignedSections);

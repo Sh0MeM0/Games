@@ -248,7 +248,7 @@ public sealed class SectionDraftAndMigrationTests
     [InlineData("height")]
     [InlineData("anchor")]
     [InlineData("linked")]
-    public void UnsitedUiDraftWithActualInputStillBlocksWholeProjectTotals(string input)
+    public void UnsitedUiDraftWithActualInputWarnsAndPreservesCalculatedSubtotal(string input)
     {
         var section = EmptyUiSection();
         if (input == "distance") section.Points[1].DistanceFromPrevious = 5;
@@ -258,9 +258,10 @@ public sealed class SectionDraftAndMigrationTests
         if (input == "anchor") section.ProjectAnchorIndex = 1;
         if (input == "linked") section.UseLongitudinalWater = true;
         var result = Earthworks.CalculateVolumes(SectionsAround(section));
-        Assert.Null(result.TotalCutVolume);
-        Assert.Null(result.TotalFillVolume);
-        Assert.Null(result.TotalSiltVolume);
+        Assert.Equal(1000, result.TotalCutVolume);
+        Assert.Equal(0, result.TotalFillVolume);
+        Assert.Equal(0, result.TotalSiltVolume);
+        Assert.True(result.HasUnassignedSections);
         Assert.NotEmpty(result.Warnings);
     }
 

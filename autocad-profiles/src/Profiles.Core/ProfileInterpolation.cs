@@ -56,6 +56,34 @@ namespace Profiles.Core
         }
 
         /// <summary>
+        /// Suggested channel dimensions for a newly bound section. Each field has
+        /// independent anchors; outside them use the nearest known value rather
+        /// than extrapolating a width or slope. This does not change raw table cells.
+        /// </summary>
+        public static LongitudinalPoint SampleDesignParameters(IList<LongitudinalPoint> source, double station)
+        {
+            CheckLongitudinal(source);
+            ProfileValidation.Range(station, -1000000000, 1000000000, "Пикетаж");
+            return new LongitudinalPoint
+            {
+                Station = station,
+                BottomWidth = NearestOrBetween(source, point => point.BottomWidth, station),
+                LeftSlope = NearestOrBetween(source, point => point.LeftSlope, station),
+                RightSlope = NearestOrBetween(source, point => point.RightSlope, station)
+            };
+        }
+
+        private static double? NearestOrBetween(IList<LongitudinalPoint> source,
+            Func<LongitudinalPoint, double?> value, double station)
+        {
+            var known = source.Where(point => value(point).HasValue).ToList();
+            if (known.Count == 0) return null;
+            if (station <= known[0].Station) return value(known[0]);
+            if (station >= known[known.Count - 1].Station) return value(known[known.Count - 1]);
+            return ValueAt(known, point => point.Station, value, station);
+        }
+
+        /// <summary>
         /// Keeps longitudinal elevations as pending seeds. Surveyed bank/bottom
         /// distances must be supplied by the user before they become cross points.
         /// </summary>
@@ -84,7 +112,7 @@ namespace Profiles.Core
         {
             if (section == null) throw new ProfileValidationException("Поперечник не задан.");
             if (section.DesignMode != SectionDesignMode.Automatic) return section.DesignMode;
-            if (new[] { section.ProjectBottom, section.BottomWidth, section.LeftSlope, section.RightSlope }.Any(value => value.HasValue))
+            if (section.ProjectBottom.HasValue)
                 return SectionDesignMode.Trapezoid;
             return section.Points != null && section.Points.Any(point => point != null && point.Design.HasValue)
                 ? SectionDesignMode.Points : SectionDesignMode.None;
@@ -224,6 +252,63 @@ namespace Profiles.Core
                 index = end;
             }
             return centers.OrderBy(x => Math.Abs(x - middle)).ThenBy(x => x).First();
+        }
+
+        /// <summary>
+        /// Gives a newly enabled project an editable survey column. Existing user
+        /// anchors are retained. The true automatic bottom center is kept even
+        /// between measured points; only a coincident column becomes a real anchor.
+        /// Incomplete distances permit an anchor but leave its offset unresolved.
+        /// </summary>
+        public static void EnsureProjectAnchor(CrossSection section)
+        {
+            if (section == null || section.Points == null || section.Points.Any(point => point == null))
+                throw new ProfileValidationException("Поперечник или его точки отсутствуют.");
+            if (section.Points.Count == 0) return;
+            if (section.ProjectAnchorIndex.HasValue && (section.ProjectAnchorIndex.Value < 0 || section.ProjectAnchorIndex.Value >= section.Points.Count))
+                throw new ProfileValidationException("Выбранная проектная опорная точка отсутствует в поперечнике.");
+            var measured = section.Points.Select(point => new SectionPoint { Offset = point.Offset, Existing = point.Existing }).ToList();
+            bool distancesKnown = true;
+            if (section.UsePointDistances)
+            {
+                double offset = measured[0].Offset;
+                for (int index = 1; index < measured.Count; index++)
+                {
+                    double? distance = section.Points[index].DistanceFromPrevious;
+                    if (!distance.HasValue || !NumberParser.Finite(distance.Value) || distance.Value <= 0)
+                    { distancesKnown = false; break; }
+                    offset += distance.Value;
+                    if (!NumberParser.Finite(offset) || offset <= measured[index - 1].Offset)
+                    { distancesKnown = false; break; }
+                    measured[index].Offset = offset;
+                }
+            }
+            else
+                distancesKnown = measured.Select((point, index) => index == 0 || point.Offset > measured[index - 1].Offset).All(valid => valid);
+            if (!section.ProjectAnchorIndex.HasValue)
+            {
+                int anchor = -1;
+                if (distancesKnown && measured.Any(point => point.Existing.HasValue))
+                {
+                    double center = FindCenterOffset(measured);
+                    section.CenterOffset = center;
+                    anchor = measured.FindIndex(point => point.Offset == center);
+                    // The editor may display the scalar under its nearest column,
+                    // but that visual fallback must not move the real geometry.
+                    if (anchor < 0) return;
+                }
+                else
+                {
+                    anchor = section.Points.FindIndex(point => point.Role == SectionPointRole.Bottom);
+                    if (anchor < 0)
+                        anchor = section.Points.Select((point, index) => new { Point = point, Index = index })
+                            .Where(item => item.Point.Existing.HasValue).OrderBy(item => item.Point.Existing.Value)
+                            .ThenBy(item => item.Index).Select(item => item.Index).DefaultIfEmpty(-1).First();
+                }
+                if (anchor < 0) return;
+                section.ProjectAnchorIndex = anchor;
+            }
+            if (distancesKnown) section.CenterOffset = measured[section.ProjectAnchorIndex.Value].Offset;
         }
 
         private static double? ValueAt<T>(IList<T> points, Func<T, double> coordinate, Func<T, double?> value, double target)
