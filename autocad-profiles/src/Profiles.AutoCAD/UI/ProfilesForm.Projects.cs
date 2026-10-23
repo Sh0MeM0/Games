@@ -161,12 +161,13 @@ namespace Profiles.AutoCAD
             if (name == null) return;
             var project = new ProfileProject
             {
-                SchemaVersion = 3, ProjectId = Guid.NewGuid().ToString("N"), Name = name, Kind = activeKind, Template = SelectedTemplate,
+                SchemaVersion = 4, ProjectId = Guid.NewGuid().ToString("N"), Name = name, Kind = activeKind, Template = SelectedTemplate,
                 Settings = new ProfileSettings
                 {
-                    Title = activeKind == ProfileKind.Longitudinal ? "ПРОДОЛЬНЫЙ ПРОФИЛЬ" : "ПОПЕРЕЧНЫЕ ПРОФИЛИ",
-                    HorizontalScale = activeKind == ProfileKind.Longitudinal ? 1000 : 100,
-                    VerticalScale = 100, MetresPerDrawingUnit = 1, TextHeightMm = 2.5, TextWidthFactor = .85
+                    Title = "ПРОДОЛЬНЫЙ ПРОФИЛЬ",
+                    HorizontalScale = 1000, VerticalScale = 100,
+                    CrossHorizontalScale = 100, CrossVerticalScale = 100,
+                    MetresPerDrawingUnit = 1, TextHeightMm = 2.5, TextWidthFactor = .85
                 },
                 Sections = new List<CrossSection> { NewSection(1) }
             };

@@ -30,9 +30,11 @@ namespace Profiles.AutoCAD
             // The full plan and draft must be valid before opening/erasing anything.
             string serialized = ProjectFile.Serialize(project);
             var result = new InsertResult();
-            var dashScale = plan.Entities.OfType<DrawText>()
-                .Where(text => text.Height > 0).Select(text => text.Height)
-                .DefaultIfEmpty(1.0).Min();
+            // Fitted labels in narrow cells may be much smaller than the base
+            // text. They must not shrink all water/cleaned-profile dash lengths.
+            var effectiveSettings = ProfileScales.ForKind(project.Settings, project.Kind);
+            var dashScale = effectiveSettings.TextHeightMm * effectiveSettings.HorizontalScale /
+                (1000 * effectiveSettings.MetresPerDrawingUnit);
             // Keep the intended local dash length without changing global LTSCALE.
             if (database.Ltscale > 0 && !double.IsNaN(database.Ltscale) && !double.IsInfinity(database.Ltscale))
                 dashScale /= database.Ltscale;

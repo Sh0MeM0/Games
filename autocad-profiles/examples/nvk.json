@@ -1,6 +1,6 @@
 {
-  "SchemaVersion": 3,
-  "ProjectId": "ab0b9b7281114437ba44b0a39d542a13",
+  "SchemaVersion": 4,
+  "ProjectId": "67490a06943447fcb0d52ecb5bb5a835",
   "Name": "Учебные сети НВК",
   "Kind": "Longitudinal",
   "Template": "Nvk",
@@ -8,6 +8,8 @@
     "Title": "УЧЕБНЫЙ ПРИМЕР — СЕТИ НВК",
     "HorizontalScale": 500.0,
     "VerticalScale": 100.0,
+    "CrossHorizontalScale": null,
+    "CrossVerticalScale": null,
     "MetresPerDrawingUnit": 1.0,
     "Datum": 139.0,
     "TextHeightMm": 2.5,

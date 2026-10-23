@@ -9,7 +9,7 @@ namespace Profiles.Core
         internal static void Check(ProfileProject project, bool geometry = true)
         {
             if (project == null) Fail("Проект не задан.");
-            if (project.SchemaVersion != 3) Fail("Версия проекта не поддерживается: " + project.SchemaVersion + ". Требуется версия 3.");
+            if (project.SchemaVersion != 4) Fail("Версия проекта не поддерживается: " + project.SchemaVersion + ". Требуется версия 4.");
             if (!Guid.TryParseExact(project.ProjectId, "N", out var identity) && !Guid.TryParseExact(project.ProjectId, "D", out identity)) Fail("Некорректный идентификатор проекта.");
             Text(project.Name, "Название проекта", 200);
             if (!Enum.IsDefined(typeof(ProfileKind), project.Kind)) Fail("Неизвестный тип профиля.");
@@ -17,8 +17,7 @@ namespace Profiles.Core
             if (project.Settings == null || project.Longitudinal == null || project.Sections == null) Fail("В проекте отсутствуют настройки или списки точек.");
             ProfileSettings settings = project.Settings;
             Text(settings.Title, "Название профиля", 200, geometry);
-            Range(settings.HorizontalScale, 1, 1000000, "Горизонтальный масштаб");
-            Range(settings.VerticalScale, 1, 1000000, "Вертикальный масштаб");
+            ProfileScales.Validate(settings);
             Range(settings.MetresPerDrawingUnit, 0.000001, 1000000, "Метры в единице чертежа");
             Range(settings.TextHeightMm, 0.5, 20, "Высота текста, мм");
             Range(settings.TextWidthFactor, 0.1, 3, "Коэффициент ширины текста");

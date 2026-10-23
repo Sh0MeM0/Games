@@ -12,6 +12,8 @@ namespace Profiles.AutoCAD.UI
     internal sealed class ProfilePreview : Control
     {
         private DrawingPlan plan;
+        private Dictionary<DrawHatch, List<HatchStroke>> hatchStrokes = new Dictionary<DrawHatch, List<HatchStroke>>();
+        private string hatchPreviewNotice;
         private double minX, maxX, minY, maxY;
         private double zoom = 1;
         private PointF pan;
@@ -29,7 +31,33 @@ namespace Profiles.AutoCAD.UI
 
         public void SetPlan(DrawingPlan value)
         {
+            // Compute once in plan coordinates, before replacing a good preview.
+            // Zoom and pan must not change native HATCH's spacing or line phase.
+            var newStrokes = new Dictionary<DrawHatch, List<HatchStroke>>();
+            string notice = null;
+            int remainingStrokes = 250000;
+            if (value != null)
+                foreach (var hatch in value.Entities.OfType<DrawHatch>())
+                {
+                    try
+                    {
+                        if (remainingStrokes == 0) throw new ProfileValidationException("Лимит предпросмотра.");
+                        var clipped = HatchPatternGeometry.Clip(hatch.Boundary, hatch.PatternAngleDegrees,
+                            hatch.PatternSpacing, remainingStrokes);
+                        remainingStrokes -= clipped.Count;
+                        newStrokes[hatch] = clipped;
+                    }
+                    catch (ProfileValidationException)
+                    {
+                        // A large survey must not allocate an unbounded paint
+                        // cache or fail inside OnPaint. Native output is unchanged.
+                        notice = "Слишком плотная штриховка: часть областей не показана в предпросмотре.";
+                        break;
+                    }
+                }
             plan = value;
+            hatchStrokes = newStrokes;
+            hatchPreviewNotice = notice;
             stale = false;
             ComputeBounds();
             Fit();
@@ -128,32 +156,29 @@ namespace Profiles.AutoCAD.UI
                 using (var brush = new SolidBrush(Color.FromArgb(255, 243, 205))) e.Graphics.FillRectangle(brush, banner);
                 TextRenderer.DrawText(e.Graphics, message, Font, banner, Color.FromArgb(110, 75, 0), TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             }
+            if (hatchPreviewNotice != null)
+            {
+                var banner = new Rectangle(8, Math.Max(8, ClientSize.Height - 44), Math.Max(20, ClientSize.Width - 16), 36);
+                using (var brush = new SolidBrush(Color.FromArgb(255, 243, 205))) e.Graphics.FillRectangle(brush, banner);
+                TextRenderer.DrawText(e.Graphics, hatchPreviewNotice, Font, banner, Color.FromArgb(110, 75, 0),
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak);
+            }
         }
 
         private void DrawRegion(Graphics graphics, DrawHatch hatch, Color color)
         {
-            if (hatch.Boundary.Count < 3 || hatch.PatternSpacing <= 0) return;
+            if (!hatchStrokes.TryGetValue(hatch, out var strokes)) return;
             var state = graphics.Save();
             try
             {
                 var vertices = hatch.Boundary.Select(Project).ToArray();
                 using (var path = new GraphicsPath())
-                using (var pen = new Pen(color, .7F))
+                using (var pen = new Pen(color, (float)Math.Max(.1, Math.Min(.7, hatch.PatternSpacing * PreviewScale / 3))))
                 {
                     path.AddPolygon(vertices);
                     graphics.SetClip(path, CombineMode.Intersect);
-                    // Work in screen coordinates, so positive mathematical angles turn upwards.
-                    double angle = -hatch.PatternAngleDegrees * Math.PI / 180;
-                    double dx = Math.Cos(angle), dy = Math.Sin(angle), nx = -dy, ny = dx;
-                    double minAlong = vertices.Min(p => p.X * dx + p.Y * dy), maxAlong = vertices.Max(p => p.X * dx + p.Y * dy);
-                    double minAcross = vertices.Min(p => p.X * nx + p.Y * ny), maxAcross = vertices.Max(p => p.X * nx + p.Y * ny);
-                    // Avoid a pathological number of subpixel lines while zoomed far out.
-                    double spacing = Math.Max(2, hatch.PatternSpacing * PreviewScale);
-                    double first = Math.Floor(minAcross / spacing) * spacing;
-                    for (double across = first; across <= maxAcross; across += spacing)
-                        graphics.DrawLine(pen,
-                            (float)(minAlong * dx + across * nx), (float)(minAlong * dy + across * ny),
-                            (float)(maxAlong * dx + across * nx), (float)(maxAlong * dy + across * ny));
+                    foreach (var stroke in strokes)
+                        graphics.DrawLine(pen, Project(stroke.Start), Project(stroke.End));
                 }
             }
             finally { graphics.Restore(state); }

@@ -1,0 +1,85 @@
+{
+  "SchemaVersion": 4,
+  "ProjectId": "c10e3aa993e94f08ad73cacfc37f58b2",
+  "Name": "Учебный поперечник ПК1+20.00",
+  "Kind": "CrossSection",
+  "Template": "Reconstruction",
+  "Settings": {
+    "Title": "ПРОДОЛЬНЫЙ ПРОФИЛЬ",
+    "HorizontalScale": 1000.0,
+    "VerticalScale": 100.0,
+    "CrossHorizontalScale": 100.0,
+    "CrossVerticalScale": 100.0,
+    "MetresPerDrawingUnit": 1.0,
+    "Datum": 158.0,
+    "TextHeightMm": 2.5,
+    "TextWidthFactor": 0.85,
+    "ShowEmptyRows": false
+  },
+  "Longitudinal": [],
+  "Sections": [
+    {
+      "Name": "ПК1+20.00",
+      "DesignMode": "Trapezoid",
+      "UsePointDistances": false,
+      "ProjectAnchorIndex": null,
+      "UseLongitudinalProjectBottom": false,
+      "UseLongitudinalWater": false,
+      "SiltThickness": null,
+      "SiltLeft": null,
+      "SiltRight": null,
+      "LeftBank": null,
+      "RightBank": null,
+      "ExistingBottom": null,
+      "Station": 120.0,
+      "Water": 160.7,
+      "ProjectBottom": 159.1,
+      "BottomWidth": 1.0,
+      "LeftSlope": 1.5,
+      "RightSlope": 1.5,
+      "CenterOffset": 0.0,
+      "Points": [
+        {
+          "Role": "Regular",
+          "DistanceFromPrevious": null,
+          "UseLongitudinalElevation": false,
+          "Offset": -6.0,
+          "Existing": 161.28,
+          "Design": null
+        },
+        {
+          "Role": "Regular",
+          "DistanceFromPrevious": null,
+          "UseLongitudinalElevation": false,
+          "Offset": -3.0,
+          "Existing": 160.2,
+          "Design": null
+        },
+        {
+          "Role": "Regular",
+          "DistanceFromPrevious": null,
+          "UseLongitudinalElevation": false,
+          "Offset": 0.0,
+          "Existing": 160.2,
+          "Design": null
+        },
+        {
+          "Role": "Regular",
+          "DistanceFromPrevious": null,
+          "UseLongitudinalElevation": false,
+          "Offset": 3.0,
+          "Existing": 160.2,
+          "Design": null
+        },
+        {
+          "Role": "Regular",
+          "DistanceFromPrevious": null,
+          "UseLongitudinalElevation": false,
+          "Offset": 7.0,
+          "Existing": 162.14,
+          "Design": null
+        }
+      ]
+    }
+  ]
+}

@@ -1,2 +1,2 @@
-2065da82a27333c6cc4bc624cc2886818d39acfa9b6b90230c45d3a5a45568cb  Profiles-Setup-0.4.0.exe
-c890a20049f2103e3e1e1dd7a9e5d3c2e8feb795d8cf35edb6df4e9cce401ac3  Profiles-Bundle-0.4.0.zip
+110c155b1f07ddc5803f966f5b20248026906fd83c968c58f20776bbbf70bf99  Profiles-Setup-0.5.0.exe
+baaedf4d4ebbaf3f65e489f80518b93b2d1934bdf3ee9b583192212b5848b08c  Profiles-Bundle-0.5.0.zip

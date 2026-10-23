@@ -11,7 +11,7 @@ namespace Profiles.Core
 
     public sealed class ProfileProject
     {
-        public int SchemaVersion { get; set; } = 3;
+        public int SchemaVersion { get; set; } = 4;
         public string ProjectId { get; set; } = Guid.NewGuid().ToString("N");
         public string Name { get; set; } = "Проект";
         public ProfileKind Kind { get; set; }
@@ -26,6 +26,11 @@ namespace Profiles.Core
         public string Title { get; set; } = "ПРОДОЛЬНЫЙ ПРОФИЛЬ";
         public double HorizontalScale { get; set; } = 1000;
         public double VerticalScale { get; set; } = 100;
+        // The original pair belongs to the longitudinal profile. A null cross
+        // pair supports callers creating an old-style settings object; the UI
+        // and migration save explicit, independent cross scales.
+        public double? CrossHorizontalScale { get; set; }
+        public double? CrossVerticalScale { get; set; }
         public double MetresPerDrawingUnit { get; set; } = 1;
         public double? Datum { get; set; }
         public double TextHeightMm { get; set; } = 2.5;

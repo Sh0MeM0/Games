@@ -1,6 +1,6 @@
 {
-  "SchemaVersion": 3,
-  "ProjectId": "87829f09ed104f69b19ae78f9cb111cb",
+  "SchemaVersion": 4,
+  "ProjectId": "771540efb2ac4d638ba8d1d852439bca",
   "Name": "Учебный новый канал",
   "Kind": "Longitudinal",
   "Template": "NewChannel",
@@ -8,6 +8,8 @@
     "Title": "УЧЕБНЫЙ ПРИМЕР — НОВЫЙ КАНАЛ",
     "HorizontalScale": 1000.0,
     "VerticalScale": 100.0,
+    "CrossHorizontalScale": null,
+    "CrossVerticalScale": null,
     "MetresPerDrawingUnit": 1.0,
     "Datum": 139.0,
     "TextHeightMm": 2.5,

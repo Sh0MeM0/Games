@@ -45,6 +45,11 @@ namespace Profiles.AutoCAD.UI
         private readonly List<Action> pendingEditNotifications = new List<Action>();
         private bool manualDesignEnabled = true;
         private bool projectAnchorVisible = true;
+        private bool fittingPointColumns;
+        private int fittedPointWidth = -1;
+        private int fittedPointMinimum = -1;
+        private int fittedLabelWidth = -1;
+        private int fittedColumnCount = -1;
         private Font anchorFont;
 
         public event EventHandler PointsChanged;
@@ -91,18 +96,22 @@ namespace Profiles.AutoCAD.UI
             EnableHeadersVisualStyles = false;
             ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(234, 239, 244);
             ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
+            ColumnHeadersDefaultCellStyle.WrapMode = DataGridViewTriState.True;
             Columns.Add(new DataGridViewTextBoxColumn
             {
                 Name = "Parameter", HeaderText = "Параметр", Frozen = true, ReadOnly = true,
-                Width = 185, MinimumWidth = 150, SortMode = DataGridViewColumnSortMode.NotSortable
+                Width = 135, MinimumWidth = 125, SortMode = DataGridViewColumnSortMode.NotSortable
             });
             Columns[0].DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleLeft;
             Columns[0].DefaultCellStyle.BackColor = Color.FromArgb(247, 249, 251);
             Columns[0].DefaultCellStyle.Padding = new Padding(3, 0, 2, 0);
             Columns[0].DefaultCellStyle.WrapMode = DataGridViewTriState.True;
-            Rows.Add("Расстояние от предыдущей точки, м");
-            Rows.Add("Фактическая отметка, м");
-            Rows.Add("Проектная отметка, м");
+            Rows.Add("Интервал, м");
+            Rows.Add("Факт, м");
+            Rows.Add("Проект, м");
+            Rows[0].Cells[0].ToolTipText = "Измеренное расстояние от предыдущей точки, м. У первой точки предыдущего интервала нет; неизвестные расстояния оставьте пустыми.";
+            Rows[1].Cells[0].ToolTipText = "Фактическая отметка точки, м. Берега определяются по направлению течения.";
+            Rows[2].Cells[0].ToolTipText = "Проектная отметка, м: ручные точки проекта либо отметка проектного дна в выбранном опорном столбце трапеции.";
             foreach (DataGridViewRow row in Rows) row.Height = 30;
             Rows[2].DefaultCellStyle.ForeColor = Color.Firebrick;
 
@@ -117,6 +126,73 @@ namespace Profiles.AutoCAD.UI
             ContextMenuStrip.Items.Add("Вставить таблицу", null, (s, e) => RunAction(PasteTable));
             ContextMenuStrip.Opening += (s, e) => interpolate.Enabled = CanInterpolate();
             DataError += (s, e) => { e.ThrowException = false; e.Cancel = false; };
+            FitTenPointColumns();
+        }
+
+        /// <summary>Reserves room for ten point columns without creating points or changing an active edit.</summary>
+        public void FitTenPointColumns() => FitTenPointColumns(true);
+
+        private void FitTenPointColumns(bool force)
+        {
+            if (fittingPointColumns || loading || IsDisposed || Columns.Count == 0 || ClientSize.Width <= 0) return;
+            fittingPointColumns = true;
+            int previousOffset = HorizontalScrollingOffset;
+            SuspendLayout();
+            try
+            {
+                var numericPadding = new Padding(ScalePixels(2), 0, ScalePixels(13), 0);
+                if (DefaultCellStyle.Padding != numericPadding) DefaultCellStyle.Padding = numericPadding;
+                int labelWidth = Math.Max(ScalePixels(135), TextRenderer.MeasureText("Интервал, м", Font,
+                    Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width + ScalePixels(10));
+                int borderWidth = BorderStyle == BorderStyle.None ? 0 : ScalePixels(BorderStyle == BorderStyle.Fixed3D ? 4 : 2);
+                int scrollbarWidth = Controls.OfType<VScrollBar>().Where(bar => bar.Visible).Sum(bar => bar.Width);
+                int available = ClientSize.Width - labelWidth - borderWidth - scrollbarWidth - (RowHeadersVisible ? RowHeadersWidth : 0);
+                int minimum = Math.Max(ScalePixels(60), TextRenderer.MeasureText("-999.99", Font,
+                    Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width + DefaultCellStyle.Padding.Horizontal + ScalePixels(4));
+                int width = Math.Max(minimum, Math.Min(ScalePixels(120), Math.Max(0, available) / 10));
+                if (!force && fittedPointWidth == width && fittedPointMinimum == minimum &&
+                    fittedLabelWidth == labelWidth && fittedColumnCount == Columns.Count) return;
+
+                Columns[0].MinimumWidth = ScalePixels(125);
+                if (Columns[0].Width != labelWidth) Columns[0].Width = labelWidth;
+                for (int index = 1; index < Columns.Count; index++)
+                {
+                    Columns[index].MinimumWidth = minimum;
+                    if (Columns[index].Width != width) Columns[index].Width = width;
+                }
+                // Width changes can adjust the scroll position. Retain the user's
+                // horizontal offset; WinForms clamps it if the new range is shorter.
+                if (HorizontalScrollingOffset != previousOffset) HorizontalScrollingOffset = previousOffset;
+                fittedPointWidth = width;
+                fittedPointMinimum = minimum;
+                fittedLabelWidth = labelWidth;
+                fittedColumnCount = Columns.Count;
+            }
+            finally
+            {
+                ResumeLayout(true);
+                fittingPointColumns = false;
+            }
+        }
+
+        private int ScalePixels(int logicalPixels) => Math.Max(1, (int)Math.Round(logicalPixels * DeviceDpi / 96.0));
+
+        protected override void OnClientSizeChanged(EventArgs e)
+        {
+            base.OnClientSizeChanged(e);
+            FitTenPointColumns(false);
+        }
+
+        protected override void OnLayout(LayoutEventArgs e)
+        {
+            base.OnLayout(e);
+            FitTenPointColumns(false);
+        }
+
+        protected override void OnDpiChangedAfterParent(EventArgs e)
+        {
+            base.OnDpiChangedAfterParent(e);
+            FitTenPointColumns(false);
         }
 
         public void LoadPoints(IList<SectionPoint> source)
@@ -263,7 +339,7 @@ namespace Profiles.AutoCAD.UI
             {
                 Columns.Add(new DataGridViewTextBoxColumn
                 {
-                    Name = "Point" + index, ValueType = typeof(object), Width = 105, MinimumWidth = 75,
+                    Name = "Point" + index, ValueType = typeof(object), Width = 90, MinimumWidth = 60,
                     SortMode = DataGridViewColumnSortMode.NotSortable
                 });
                 for (int row = 0; row < 3; row++)
@@ -278,6 +354,7 @@ namespace Profiles.AutoCAD.UI
             UpdateHeaders();
             UpdateDesignMode();
             loading = false;
+            FitTenPointColumns();
             Invalidate();
         }
 
@@ -285,11 +362,16 @@ namespace Profiles.AutoCAD.UI
         {
             for (int index = 0; index < points.Count; index++)
             {
-                string name = points[index].Role == SectionPointRole.LeftBank ? "Левый берег" :
-                    points[index].Role == SectionPointRole.RightBank ? "Правый берег" :
-                    points[index].Role == SectionPointRole.Bottom ? "Дно" : "Точка " + (index + 1);
+                string name = points[index].Role == SectionPointRole.LeftBank ? "Л. берег" :
+                    points[index].Role == SectionPointRole.RightBank ? "П. берег" :
+                    points[index].Role == SectionPointRole.Bottom ? "Дно" : "Точка";
                 bool anchor = ProjectAnchorVisible && !ManualDesignEnabled && ProjectAnchorIndex == index;
-                Columns[index + 1].HeaderText = name + (anchor ? "\n▼ Проектное дно" : "\n№ " + (index + 1));
+                Columns[index + 1].HeaderText = name + (anchor ? "\n▼ Проект" : "\n№ " + (index + 1));
+                Columns[index + 1].ToolTipText = "Точка " + (index + 1) + ": " +
+                    (points[index].Role == SectionPointRole.LeftBank ? "левый берег по направлению течения" :
+                    points[index].Role == SectionPointRole.RightBank ? "правый берег по направлению течения" :
+                    points[index].Role == SectionPointRole.Bottom ? "фактическое дно" : "точка поперечника") +
+                    (anchor ? ". Опорный столбец проектного дна трапеции." : ".");
                 Columns[index + 1].HeaderCell.Style.ForeColor = anchor ? Color.Firebrick : Color.Black;
             }
         }
@@ -452,9 +534,9 @@ namespace Profiles.AutoCAD.UI
                 string.IsNullOrWhiteSpace(Convert.ToString(Rows[e.RowIndex].Cells[e.ColumnIndex].Value, CultureInfo.InvariantCulture)))
             {
                 e.Paint(e.ClipBounds, DataGridViewPaintParts.All);
-                int x = e.CellBounds.Right - 11, y = e.CellBounds.Top + e.CellBounds.Height / 2;
+                int x = e.CellBounds.Right - ScalePixels(9), y = e.CellBounds.Top + e.CellBounds.Height / 2;
                 using (var brush = new SolidBrush(Color.DimGray))
-                    e.Graphics.FillPolygon(brush, new[] { new Point(x - 4, y - 2), new Point(x + 4, y - 2), new Point(x, y + 3) });
+                    e.Graphics.FillPolygon(brush, new[] { new Point(x - ScalePixels(3), y - ScalePixels(2)), new Point(x + ScalePixels(3), y - ScalePixels(2)), new Point(x, y + ScalePixels(3)) });
                 e.Handled = true;
             }
             base.OnCellPainting(e);
@@ -469,7 +551,7 @@ namespace Profiles.AutoCAD.UI
         protected override void OnCellMouseClick(DataGridViewCellMouseEventArgs e)
         {
             base.OnCellMouseClick(e);
-            if (e.Button == MouseButtons.Left && e.ColumnIndex > 0 && e.RowIndex >= 0 && e.X >= Columns[e.ColumnIndex].Width - 20)
+            if (e.Button == MouseButtons.Left && e.ColumnIndex > 0 && e.RowIndex >= 0 && e.X >= Columns[e.ColumnIndex].Width - ScalePixels(18))
             {
                 CurrentCell = Rows[e.RowIndex].Cells[e.ColumnIndex];
                 if (CanInterpolate())
@@ -640,6 +722,7 @@ namespace Profiles.AutoCAD.UI
             anchorFont?.Dispose();
             anchorFont = null;
             base.OnFontChanged(e);
+            FitTenPointColumns(false);
         }
 
         protected override void OnCellToolTipTextNeeded(DataGridViewCellToolTipTextNeededEventArgs e)

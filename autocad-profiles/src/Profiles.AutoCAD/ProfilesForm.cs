@@ -97,9 +97,11 @@ namespace Profiles.AutoCAD
                 Kind = kind,
                 Settings = new ProfileSettings
                 {
-                    Title = kind == ProfileKind.Longitudinal ? "ПРОДОЛЬНЫЙ ПРОФИЛЬ" : "ПОПЕРЕЧНЫЕ ПРОФИЛИ",
-                    HorizontalScale = kind == ProfileKind.Longitudinal ? 1000 : 100,
+                    Title = "ПРОДОЛЬНЫЙ ПРОФИЛЬ",
+                    HorizontalScale = 1000,
                     VerticalScale = 100,
+                    CrossHorizontalScale = 100,
+                    CrossVerticalScale = 100,
                     MetresPerDrawingUnit = 1,
                     TextHeightMm = 2.5,
                     TextWidthFactor = 0.85
@@ -111,9 +113,8 @@ namespace Profiles.AutoCAD
             {
                 loading = true;
                 activeKind = kind;
+                DisplayActiveScales();
                 tabs.SelectedTab = kind == ProfileKind.Longitudinal ? longPage : crossPage;
-                if (title.Text == "ПРОДОЛЬНЫЙ ПРОФИЛЬ" || title.Text == "ПОПЕРЕЧНЫЕ ПРОФИЛИ")
-                    title.Text = kind == ProfileKind.Longitudinal ? "ПРОДОЛЬНЫЙ ПРОФИЛЬ" : "ПОПЕРЕЧНЫЕ ПРОФИЛИ";
                 UpdateModeCaption();
                 loading = false;
                 SetStatus(saveProjectToDrawing == null
@@ -199,16 +200,16 @@ namespace Profiles.AutoCAD
         private void BuildCrossPage()
         {
             var layout = crossLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Padding = new Padding(3) };
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 145));
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 215));
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 0));
             var left = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(4) };
             left.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             left.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             left.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             left.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             left.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            left.Controls.Add(Caption("Пикет · 6+50 = 650 м"), 0, 0);
+            left.Controls.Add(Caption("ПК · 6+50 = 650 м"), 0, 0);
             sectionStation.Dock = DockStyle.Top;
             left.Controls.Add(sectionStation, 0, 1);
             left.Controls.Add(Button("Обновить по ПК", RefreshStationSeed), 0, 2);
@@ -218,6 +219,8 @@ namespace Profiles.AutoCAD
             listButtons.Controls.Add(Button("+ после", () => InsertSection(true)));
             listButtons.Controls.Add(Button("Копия", CopySection));
             listButtons.Controls.Add(Button("−", RemoveSection));
+            foreach (Button button in listButtons.Controls)
+                button.MinimumSize = new Size(50, 26);
             left.Controls.Add(listButtons, 0, 4);
             layout.Controls.Add(left, 0, 0);
 
@@ -238,17 +241,20 @@ namespace Profiles.AutoCAD
             center.Controls.Add(Note("Пустая отметка: ▼ → интерполяция · Красная опорная ячейка: проектное дно · Ctrl+V: Excel"), 0, 5);
             layout.Controls.Add(center, 1, 0);
             earthworksPanel = BuildEarthworksPanel();
+            earthworksPanel.Visible = showEarthworks.Checked;
             layout.Controls.Add(earthworksPanel, 2, 0);
             showEarthworks.CheckedChanged += (s, e) =>
             {
                 earthworksPanel.Visible = showEarthworks.Checked;
-                crossLayout.ColumnStyles[2].Width = showEarthworks.Checked ? 215 : 0;
+                crossLayout.ColumnStyles[2].Width = showEarthworks.Checked ? (float)(215 * DeviceDpi / 96.0) : 0;
+                crossGrid.FitTenPointColumns();
             };
             crossPage.Controls.Add(layout);
             tips.SetToolTip(sectionStation, "Выберите или введите пикет и нажмите Enter. 6+50 означает 650 м, число 6 означает 6 м. Пикеты сортируются численно. Расстояния поперечника вводятся по съёмке.");
             tips.SetToolTip(leftSlope, "Заложение — горизонталь / вертикаль: для откоса 1:1,5 введите 1,5.");
             tips.SetToolTip(rightSlope, "Правый откос может отличаться от левого. Требуется положительное число.");
             tips.SetToolTip(sectionWater, "Урез общий для этого пикета: изменение переносится в продольный профиль и другие поперечники на том же ПК.");
+            tips.SetToolTip(showEarthworks, "Показать параметры снятия ила и рассчитанные площади. Панель изначально скрыта, чтобы в таблице помещалось десять точек.");
         }
 
         private void BuildPreviewPage()
@@ -454,7 +460,7 @@ namespace Profiles.AutoCAD
                 var next = e.TabPage == longPage ? ProfileKind.Longitudinal : ProfileKind.CrossSection;
                 if (next != activeKind)
                 {
-                    activeKind = next;
+                    if (!TrySwitchProfileKind(next)) return;
                     SetDirty();
                 }
                 UpdateModeCaption();
@@ -469,11 +475,14 @@ namespace Profiles.AutoCAD
 
         private ProfileSettings ReadSettings()
         {
+            CaptureActiveScales();
             return new ProfileSettings
             {
                 Title = title.Text.Trim(),
-                HorizontalScale = ReadRequiredNumber(horizontal, "Горизонтальный масштаб"),
-                VerticalScale = ReadRequiredNumber(vertical, "Вертикальный масштаб"),
+                HorizontalScale = scaleState.HorizontalScale,
+                VerticalScale = scaleState.VerticalScale,
+                CrossHorizontalScale = scaleState.CrossHorizontalScale,
+                CrossVerticalScale = scaleState.CrossVerticalScale,
                 Datum = ReadOptionalNumber(datum, "Ноль профиля"),
                 MetresPerDrawingUnit = ReadRequiredNumber(metres, "Метров в единице чертежа"),
                 TextHeightMm = ReadRequiredNumber(textHeight, "Высота текста"),
@@ -688,7 +697,7 @@ namespace Profiles.AutoCAD
             CommitSection();
             var project = new ProfileProject
             {
-                SchemaVersion = 3,
+                SchemaVersion = 4,
                 ProjectId = currentProjectId,
                 Name = currentProjectName,
                 Template = SelectedTemplate,
@@ -715,8 +724,7 @@ namespace Profiles.AutoCAD
                 SelectTemplate(project.Template);
                 var settings = project.Settings ?? new ProfileSettings();
                 title.Text = settings.Title ?? "";
-                DisplayNumber(horizontal, settings.HorizontalScale);
-                DisplayNumber(vertical, settings.VerticalScale);
+                LoadProfileScales(settings);
                 DisplayNumber(datum, settings.Datum);
                 DisplayNumber(metres, settings.MetresPerDrawingUnit);
                 DisplayNumber(textHeight, settings.TextHeightMm);

@@ -117,10 +117,11 @@ namespace Profiles.Core
                     if (!(root is JObject) || root["SchemaVersion"]?.Type != JTokenType.Integer)
                         throw new ProfileValidationException("В проекте отсутствует целочисленная SchemaVersion.");
                     int version = root["SchemaVersion"].Value<int>();
-                    if (version != 1 && version != 2 && version != 3)
-                        throw new ProfileValidationException("Версия проекта не поддерживается. Поддерживаются SchemaVersion = 1, 2 и 3; обновите модуль или используйте совместимый файл.");
+                    if (version < 1 || version > 4)
+                        throw new ProfileValidationException("Версия проекта не поддерживается. Поддерживаются SchemaVersion = 1, 2, 3 и 4; обновите модуль или используйте совместимый файл.");
                     if (version == 1) UpgradeLegacy((JObject)root);
                     if (version <= 2) UpgradeVersionTwo((JObject)root);
+                    if (version <= 3) UpgradeVersionThree((JObject)root);
                     ValidateToken(root, typeof(ProfileProject), "Проект");
                     var project = root.ToObject<ProfileProject>(JsonSerializer.Create(Settings()));
                     ProfileValidation.Check(project, geometry: false);
@@ -197,6 +198,20 @@ namespace Profiles.Core
                         }
                 }
             root["SchemaVersion"] = 3;
+        }
+
+        private static void UpgradeVersionThree(JObject root)
+        {
+            if (root["Settings"] is JObject settings)
+            {
+                foreach (string name in new[] { "CrossHorizontalScale", "CrossVerticalScale" })
+                    if (settings.Property(name) != null) Invalid("Настройки", "поле версии 4 указано в старой версии файла");
+                // Copy tokens rather than converting them: a damaged/missing old
+                // scale must still fail strict validation, never acquire a default.
+                settings["CrossHorizontalScale"] = settings["HorizontalScale"]?.DeepClone() ?? JValue.CreateNull();
+                settings["CrossVerticalScale"] = settings["VerticalScale"]?.DeepClone() ?? JValue.CreateNull();
+            }
+            root["SchemaVersion"] = 4;
         }
 
         private static JsonSerializerSettings Settings()

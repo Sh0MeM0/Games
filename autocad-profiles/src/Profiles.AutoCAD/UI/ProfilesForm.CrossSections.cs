@@ -11,7 +11,7 @@ namespace Profiles.AutoCAD
     public sealed partial class ProfilesForm
     {
         private readonly ComboBox designMode = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 175, Margin = new Padding(2, 3, 6, 3) };
-        private readonly CheckBox showEarthworks = new CheckBox { Text = "Ил / площади", AutoSize = true, Checked = true, Margin = new Padding(8, 5, 2, 2) };
+        private readonly CheckBox showEarthworks = new CheckBox { Text = "Ил / площади", AutoSize = true, Checked = false, Margin = new Padding(8, 5, 2, 2) };
         private TableLayoutPanel crossLayout;
         private Control earthworksPanel;
         private readonly TextBox siltThickness = Input();

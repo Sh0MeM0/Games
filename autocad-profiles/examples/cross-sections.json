@@ -1,6 +1,6 @@
 {
-  "SchemaVersion": 3,
-  "ProjectId": "51c8841b848e412880155d83aa783c61",
+  "SchemaVersion": 4,
+  "ProjectId": "ea73fdc597f449058cdcfd525c6d75ad",
   "Name": "Учебные поперечники",
   "Kind": "CrossSection",
   "Template": "Reconstruction",
@@ -8,6 +8,8 @@
     "Title": "УЧЕБНЫЕ ПОПЕРЕЧНЫЕ ПРОФИЛИ КАНАЛА",
     "HorizontalScale": 100.0,
     "VerticalScale": 100.0,
+    "CrossHorizontalScale": null,
+    "CrossVerticalScale": null,
     "MetresPerDrawingUnit": 1.0,
     "Datum": 139.0,
     "TextHeightMm": 2.5,

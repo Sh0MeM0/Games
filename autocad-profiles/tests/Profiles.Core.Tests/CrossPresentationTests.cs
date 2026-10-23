@@ -46,7 +46,7 @@ public sealed class CrossPresentationTests
     }
 
     [Fact]
-    public void WaterLeaderPointsToWaterAndAreaLeadersPointInsideTheirOwnRegions()
+    public void WaterLabelIsAboveWaterWithoutLeaderAndAreaLeadersPointInsideTheirOwnRegions()
     {
         var project = Cross(new() { Offset = -2, Existing = 10, Design = 8 }, new() { Offset = 0, Existing = 10, Design = 10 }, new() { Offset = 2, Existing = 10, Design = 12 });
         var section = project.Sections[0];
@@ -57,9 +57,9 @@ public sealed class CrossPresentationTests
         section.SiltRight = 2;
         var plan = ProfileEngine.Build(project);
         var water = Assert.Single(Curves(plan, "PROF_WATER"));
-        var waterLeader = Assert.Single(Curves(plan, "PROF_LEADER"), line => line.ColorIndex == 5);
-        Assert.Equal(water.Points[0].Y, waterLeader.Points[0].Y, 8);
-        Assert.InRange(waterLeader.Points[0].X, water.Points[0].X, water.Points.Last().X);
+        var waterLabel = Assert.Single(plan.Entities.OfType<DrawText>(), text => text.Text == "УР.ВОД.11.00");
+        Assert.True(waterLabel.Position.Y > water.Points[0].Y);
+        Assert.DoesNotContain(Curves(plan, "PROF_LEADER"), line => line.ColorIndex == 5);
         foreach (short color in new short[] { 1, 3, 30 })
         {
             var regions = plan.Entities.OfType<DrawHatch>().Where(hatch => hatch.ColorIndex == color).ToList();

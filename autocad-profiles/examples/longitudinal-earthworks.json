@@ -1,6 +1,6 @@
 {
-  "SchemaVersion": 3,
-  "ProjectId": "529be9f7fd1148b580aac2211718cc84",
+  "SchemaVersion": 4,
+  "ProjectId": "d105952c65194877b6ae598573129c8c",
   "Name": "Продольный профиль с объёмами",
   "Kind": "Longitudinal",
   "Template": "Reconstruction",
@@ -8,6 +8,8 @@
     "Title": "УЧЕБНЫЙ ПРИМЕР — ЗЕМЛЯНЫЕ РАБОТЫ",
     "HorizontalScale": 1000.0,
     "VerticalScale": 100.0,
+    "CrossHorizontalScale": null,
+    "CrossVerticalScale": null,
     "MetresPerDrawingUnit": 1.0,
     "Datum": 139.0,
     "TextHeightMm": 2.5,

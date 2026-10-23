@@ -28,10 +28,10 @@ namespace Profiles.AutoCAD
                 minimum = Math.Min(minimum, normalDistance);
                 maximum = Math.Max(maximum, normalDistance);
             }
-            // EvaluateHatch(true) has the same native 100,000-line guard. Check
-            // before invoking it so very dense inputs produce a useful message.
-            if ((maximum - minimum) / region.PatternSpacing > 100000)
-                throw new ProfileValidationException("Штриховка площади слишком плотная (более 100000 линий). Увеличьте знаменатель масштаба профиля.");
+            // Use the same bounded density as preview/export, below AutoCAD's
+            // own 100,000-line evaluation limit.
+            if ((maximum - minimum) / region.PatternSpacing > HatchPatternGeometry.MaximumPatternLines)
+                throw new ProfileValidationException("Штриховка площади слишком плотная для отображения.");
 
             try
             {
@@ -47,7 +47,6 @@ namespace Profiles.AutoCAD
                 if (planeAngle < 0) planeAngle += 2 * Math.PI;
                 hatch.Normal = normal;
                 hatch.Elevation = planeOrigin.Z;
-                hatch.Origin = new Point2d(planeOrigin.X, planeOrigin.Y);
                 hatch.Associative = false;
                 hatch.HatchStyle = HatchStyle.Normal;
                 hatch.SetHatchPattern(HatchPatternType.UserDefined, "_USER");
@@ -57,6 +56,9 @@ namespace Profiles.AutoCAD
                 // Refresh the native pattern definition after changing its angle
                 // and spacing; this never changes drawing-wide hatch variables.
                 hatch.SetHatchPattern(HatchPatternType.UserDefined, "_USER");
+                // Set the final origin after refreshing the pattern. All regions
+                // share profile-local (0,0), identical to preview/export clipping.
+                hatch.Origin = new Point2d(planeOrigin.X, planeOrigin.Y);
                 var vertices = new Point2dCollection();
                 var bulges = new DoubleCollection();
                 foreach (var point in boundary)

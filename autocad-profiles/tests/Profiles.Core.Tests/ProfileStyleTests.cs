@@ -53,7 +53,7 @@ public sealed class ProfileStyleTests
         CheckLine(plan, "PROF_WATER", 5, true);
         Assert.Empty(plan.Entities.OfType<DrawCircle>());
         Assert.Equal(2, plan.Entities.OfType<DrawText>().Count(text => text.Text == "1:0.5" && text.ColorIndex == 1));
-        Assert.Contains(plan.Entities.OfType<DrawText>(), text => text.Text.StartsWith("УРОВЕНЬ ВОДЫ 13.00") && text.ColorIndex == 5);
+        Assert.Contains(plan.Entities.OfType<DrawText>(), text => text.Text == "УР.ВОД.13.00" && text.ColorIndex == 5);
     }
 
     [Fact]

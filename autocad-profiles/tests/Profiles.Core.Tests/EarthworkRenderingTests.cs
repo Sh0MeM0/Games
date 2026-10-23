@@ -100,19 +100,21 @@ public sealed class EarthworkRenderingTests
     [Theory]
     [InlineData("ПК 0+25.00")]
     [InlineData("Мост")]
-    public void CrossIdentifierIsCompactAtTheLeftAboveDatumWithoutGenericHeadingOrScales(string name)
+    public void CrossIdentifierAndScalesAreCompactAtTheLeftAboveDatumWithoutGenericHeading(string name)
     {
         var project = CutFillProject();
         project.Sections[0].Name = name;
         project.Sections[0].Station = 25;
         var plan = ProfileEngine.Build(project);
         var texts = plan.Entities.OfType<DrawText>().ToList();
-        var identifier = Assert.Single(texts, text => text.Text == "0+25.00");
+        var identifier = Assert.Single(texts, text => text.Text == "ПК0+25.00");
         var datum = Assert.Single(texts, text => text.Text.StartsWith("УСЛ. ОТМ."));
         Assert.Equal(datum.Position.X, identifier.Position.X);
-        Assert.Equal(6, identifier.Position.Y - datum.Position.Y, 8);
+        Assert.Equal(18, identifier.Position.Y - datum.Position.Y, 8);
         Assert.True(identifier.Position.X < 0);
-        Assert.DoesNotContain(texts, text => text.Text.Contains("ПК") || text.Text.Contains(project.Settings.Title) || text.Text.StartsWith("ГОР.") || text.Text.StartsWith("ВЕРТ."));
+        Assert.DoesNotContain(texts, text => text.Text.Contains(project.Settings.Title));
+        Assert.Contains(texts, text => text.Text == "ГОР.1:1000");
+        Assert.Contains(texts, text => text.Text == "ВЕРТ.1:100");
     }
 
     [Fact]

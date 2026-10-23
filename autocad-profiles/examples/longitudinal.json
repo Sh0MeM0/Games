@@ -1,6 +1,6 @@
 {
-  "SchemaVersion": 3,
-  "ProjectId": "e7c6e44a22d247b7a576582593c78f47",
+  "SchemaVersion": 4,
+  "ProjectId": "63aba4e05a3949bb9eab6ad3f0837743",
   "Name": "Учебный канал — подчистка",
   "Kind": "Longitudinal",
   "Template": "Reconstruction",
@@ -8,6 +8,8 @@
     "Title": "УЧЕБНЫЙ ПРИМЕР — РЕКОНСТРУКЦИЯ КАНАЛА",
     "HorizontalScale": 1000.0,
     "VerticalScale": 100.0,
+    "CrossHorizontalScale": null,
+    "CrossVerticalScale": null,
     "MetresPerDrawingUnit": 1.0,
     "Datum": 139.0,
     "TextHeightMm": 2.5,
