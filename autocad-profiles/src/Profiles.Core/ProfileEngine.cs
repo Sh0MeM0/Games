@@ -192,7 +192,26 @@ namespace Profiles.Core
             private readonly ProfileSettings settings;
             private readonly DrawingPlan plan;
             private readonly ProfileTemplate template;
-            private readonly List<Tuple<double, double, double, double>> calloutBoxes = new List<Tuple<double, double, double, double>>();
+            // Keep rotated text bounds for routing: their axis-aligned envelopes can
+            // cover empty space and even the interior of a thin earthwork region.
+            private readonly List<AnnotationBox> calloutBoxes = new List<AnnotationBox>();
+
+            private sealed class AnnotationBox
+            {
+                internal readonly Tuple<double, double, double, double> Bounds;
+                private readonly Point2 center;
+                private readonly double angle, width, height;
+                internal AnnotationBox(Tuple<double, double, double, double> bounds)
+                    : this(bounds, new Point2(bounds.Item1 + bounds.Item3 / 2, bounds.Item2 + bounds.Item4 / 2), 0, bounds.Item3, bounds.Item4) { }
+                internal AnnotationBox(Tuple<double, double, double, double> bounds, Point2 center, double rotation, double width, double height)
+                { Bounds = bounds; this.center = center; angle = -rotation * Math.PI / 180; this.width = width; this.height = height; }
+                internal bool Meets(Point2 a, Point2 b)
+                {
+                    Func<Point2, Point2> local = p => new Point2((p.X - center.X) * Math.Cos(angle) - (p.Y - center.Y) * Math.Sin(angle),
+                        (p.X - center.X) * Math.Sin(angle) + (p.Y - center.Y) * Math.Cos(angle));
+                    return SegmentMeetsBox(local(a), local(b), Tuple.Create(-width / 2, -height / 2, width, height));
+                }
+            }
             internal double Paper { get; }
             internal double Layout { get { return Paper * Math.Max(1, settings.TextHeightMm / 2.5); } }
             private double TextHeight { get { return settings.TextHeightMm * Paper; } }
@@ -586,7 +605,7 @@ namespace Profiles.Core
                 Text(-labels + 2 * Layout, 15 * Layout, "ГОР.1:" + settings.HorizontalScale.ToString("0.###", CultureInfo.InvariantCulture), alignment: TextAlignment.Left, width: labels - 2 * Layout);
                 Text(-labels + 2 * Layout, 9 * Layout, "ВЕРТ.1:" + settings.VerticalScale.ToString("0.###", CultureInfo.InvariantCulture), alignment: TextAlignment.Left, width: labels - 2 * Layout);
                 Text(-labels + 2 * Layout, 3 * Layout, "УСЛ. ОТМ. " + F(plan.Datum), alignment: TextAlignment.Left, width: labels - 2 * Layout);
-                calloutBoxes.Add(Tuple.Create(-labels, 1 * Layout, labels, 23 * Layout));
+                calloutBoxes.Add(new AnnotationBox(Tuple.Create(-labels, 1 * Layout, labels, 23 * Layout)));
                 var callouts = new List<SectionCallout>
                 {
                     AreaCallout("F срезки = " + Quantity(earthworks.CutArea) + " м²", earthworks.CutRegions, transform, 1),
@@ -711,6 +730,7 @@ namespace Profiles.Core
             {
                 internal string Text;
                 internal Point2? Target;
+                internal List<List<Point2>> Regions;
                 internal short Color;
             }
 
@@ -724,7 +744,11 @@ namespace Profiles.Core
             private SectionCallout AreaCallout(string text, List<List<Point2>> regions, Func<Point2, Point2> transform, short color)
             {
                 var region = regions.OrderByDescending(PolygonArea).FirstOrDefault();
-                return new SectionCallout { Text = text, Color = color, Target = region == null ? (Point2?)null : transform(InteriorPoint(region)) };
+                return new SectionCallout
+                {
+                    Text = text, Color = color, Target = region == null ? (Point2?)null : transform(InteriorPoint(region)),
+                    Regions = regions.OrderByDescending(PolygonArea).Select(points => points.Select(transform).ToList()).ToList()
+                };
             }
 
             private static double PolygonArea(List<Point2> polygon)
@@ -770,12 +794,55 @@ namespace Profiles.Core
                 return best;
             }
 
+            private IEnumerable<Point2> VisibleInteriorPoints(List<Point2> polygon)
+            {
+                // Split at both region vertices and annotation edges, so a small free
+                // part near a bank is considered even when the midpoint is covered.
+                double left = polygon.Min(p => p.X), right = polygon.Max(p => p.X);
+                var xs = polygon.Select(p => p.X).Concat(calloutBoxes.SelectMany(box => new[] { box.Bounds.Item1, box.Bounds.Item1 + box.Bounds.Item3 }))
+                    .Where(x => x >= left && x <= right).Distinct().OrderBy(x => x).ToList();
+                var candidates = new List<Tuple<Point2, double>>();
+                for (int index = 1; index < xs.Count; index++)
+                {
+                    double x = (xs[index - 1] + xs[index]) / 2;
+                    var crossings = new List<double>();
+                    for (int edge = 0; edge < polygon.Count; edge++)
+                    {
+                        var a = polygon[edge]; var b = polygon[(edge + 1) % polygon.Count];
+                        if ((a.X < x && b.X > x) || (b.X < x && a.X > x))
+                            crossings.Add(a.Y + (b.Y - a.Y) * (x - a.X) / (b.X - a.X));
+                    }
+                    crossings.Sort();
+                    for (int crossing = 1; crossing < crossings.Count; crossing += 2)
+                    {
+                        double bottom = crossings[crossing - 1], top = crossings[crossing];
+                        var ys = new[] { bottom, top }.Concat(calloutBoxes.SelectMany(box => new[] { box.Bounds.Item2, box.Bounds.Item2 + box.Bounds.Item4 }))
+                            .Where(y => y >= bottom && y <= top).Distinct().OrderBy(y => y).ToList();
+                        for (int row = 1; row < ys.Count; row++)
+                        {
+                            var point = new Point2(x, (ys[row - 1] + ys[row]) / 2);
+                            if (!calloutBoxes.Any(box => box.Meets(point, point)))
+                                candidates.Add(Tuple.Create(point, (xs[index] - xs[index - 1]) * (ys[row] - ys[row - 1])));
+                        }
+                    }
+                }
+                return candidates.OrderByDescending(candidate => candidate.Item2).Select(candidate => candidate.Item1);
+            }
+
             private void SectionCallouts(List<SectionCallout> callouts, double width, double highest, List<List<Point2>> existing, double first, double? water)
             {
                 int missing = 0;
                 foreach (var note in callouts.OrderBy(note => note.Target.HasValue ? note.Target.Value.X : width / 2))
                 {
-                    double labelWidth = note.Text.Length * TextHeight * .65 * settings.TextWidthFactor + 2 * Layout;
+                    // A dimension/slope caption can cover the preferred region midpoint.
+                    // Moving the label cannot unblock that endpoint. Choose another
+                    // interior point in the same earthwork area before routing its leader.
+                    if (note.Target.HasValue && calloutBoxes.Any(box => box.Meets(note.Target.Value, note.Target.Value)))
+                    {
+                        var alternatives = note.Regions.SelectMany(VisibleInteriorPoints).ToList();
+                        if (alternatives.Count > 0) note.Target = alternatives[0];
+                    }
+                    double labelWidth = InlineWidth(note.Text) + 2 * Layout;
                     double targetX = note.Target.HasValue ? note.Target.Value.X : width / 2;
                     double top = note.Target.HasValue ? note.Target.Value.Y : highest;
                     if (note.Target.HasValue)
@@ -818,7 +885,7 @@ namespace Profiles.Core
                     // Large configured text can leave no room beside a low
                     // slope. Keep its full rotated bounds above the table and
                     // existing graph/annotations instead of drawing into rows.
-                    double upper = Math.Max(Math.Max(a.Y, b.Y), calloutBoxes.Select(box => box.Item2 + box.Item4).DefaultIfEmpty(0).Max());
+                    double upper = Math.Max(Math.Max(a.Y, b.Y), calloutBoxes.Select(box => box.Bounds.Item2 + box.Bounds.Item4).DefaultIfEmpty(0).Max());
                     upper = Math.Max(upper, plan.Entities.OfType<DrawPolyline>().Where(line => line.Layer != "PROF_GRID" && line.Layer != "PROF_ORD")
                         .SelectMany(line => line.Points).Select(point => point.Y).DefaultIfEmpty(0).Max());
                     double halfHeight = InlineBounds(value, new Point2(0, 0), rotation).Item4 / 2;
@@ -865,7 +932,7 @@ namespace Profiles.Core
                     TextHeight = TextHeight, TextWidthFactor = settings.TextWidthFactor,
                     MeasurementFactor = settings.MetresPerDrawingUnit, DecimalPlaces = 2
                 });
-                calloutBoxes.Add(InlineBounds(F(bottom.Item2.X - bottom.Item1.X), new Point2((left.X + right.X) / 2, y + .7 * TextHeight), 0));
+                calloutBoxes.Add(new AnnotationBox(InlineBounds(F(bottom.Item2.X - bottom.Item1.X), new Point2((left.X + right.X) / 2, y + .7 * TextHeight), 0)));
             }
 
             private double InlineWidth(string value) { return value.Length * TextHeight * .75 * settings.TextWidthFactor; }
@@ -880,13 +947,13 @@ namespace Profiles.Core
 
             private void InlineLabel(string value, Point2 center, double rotation, short color)
             {
-                calloutBoxes.Add(InlineBounds(value, center, rotation));
+                calloutBoxes.Add(new AnnotationBox(InlineBounds(value, center, rotation), center, rotation, InlineWidth(value), TextHeight * 1.3));
                 Text(center.X, center.Y, value, rotation, color);
             }
 
             private bool InlineLabelFits(string value, Point2 center, double rotation)
             {
-                if (calloutBoxes.Any(box => RectanglesOverlap(InlineBounds(value, center, rotation), box))) return false;
+                if (calloutBoxes.Any(box => RectanglesOverlap(InlineBounds(value, center, rotation), box.Bounds))) return false;
                 double angle = -rotation * Math.PI / 180;
                 Func<Point2, Point2> local = point => new Point2((point.X - center.X) * Math.Cos(angle) - (point.Y - center.Y) * Math.Sin(angle),
                     (point.X - center.X) * Math.Sin(angle) + (point.Y - center.Y) * Math.Cos(angle));
@@ -932,30 +999,47 @@ namespace Profiles.Core
                 for (int horizontal = -24; horizontal <= 24; horizontal++)
                     for (int vertical = -3; vertical <= 3; vertical++)
                         candidates.Add(new Point2(preferredX + horizontal * 2 * Layout, preferredY + vertical * 2 * Layout));
-                var placement = candidates.Where(point => point.Y >= Math.Max(2 * Layout, preferredY - Layout))
-                    .OrderBy(point => 5 * Math.Abs(point.Y - preferredY) + .05 * Math.Abs(point.X - preferredX) +
-                        (target.HasValue ? .6 * Math.Min(Math.Abs(target.Value.X - point.X), Math.Abs(target.Value.X - point.X - width)) : Math.Abs(point.X - preferredX)))
-                    .FirstOrDefault(point => LeaderFits(point.X, point.Y, width, labelHeight, target));
+                // Prefer short leaders in drawing units. The old 100:1 preference
+                // for horizontal over vertical moves sent labels far sideways even
+                // when one extra row directly above the region was free.
+                var nearby = candidates.Where(point => point.Y >= Math.Max(2 * Layout, preferredY - Layout))
+                    .OrderBy(point =>
+                    {
+                        double dx = target.HasValue ? Math.Min(Math.Abs(target.Value.X - point.X), Math.Abs(target.Value.X - point.X - width)) : point.X - preferredX;
+                        double dy = point.Y - (target.HasValue ? target.Value.Y : preferredY);
+                        return Math.Sqrt(dx * dx + dy * dy) + .1 * Math.Abs(point.X - preferredX) + 1.5 * Math.Abs(point.Y - preferredY);
+                    }).ToList();
+                var placement = nearby.FirstOrDefault(point => LeaderFits(point.X, point.Y, width, labelHeight, target));
                 if (placement.Y >= 2 * Layout)
                 { x = placement.X; y = placement.Y; }
                 else
                 {
-                    // Dense profiles can exhaust nearby positions; move outside all annotations.
-                    x = Math.Max(preferredX, calloutBoxes.Select(box => box.Item1 + box.Item3).DefaultIfEmpty(preferredX).Max() + 4 * Layout);
-                    y = Math.Max(y, 2 * Layout);
-                    for (int attempt = 0; attempt < 32 && !LeaderFits(x, y, width, labelHeight, target); attempt++)
-                    { x += width + 4 * Layout; y += 6 * Layout; }
-                    if (!LeaderFits(x, y, width, labelHeight, target))
-                        plan.Warnings.Add("Для выноски «" + value + "» недостаточно свободного места: проверьте её положение после построения.");
+                    // If every possible source point is covered by an annotation,
+                    // moving the destination farther away can never clear the route.
+                    // Still keep the caption local and legible, flagging only its route.
+                    placement = nearby.FirstOrDefault(point => LeaderFits(point.X, point.Y, width, labelHeight, null));
+                    if (placement.Y >= 2 * Layout) { x = placement.X; y = placement.Y; }
+                    else
+                    {
+                        x = preferredX;
+                        double upper = calloutBoxes.Select(box => box.Bounds.Item2 + box.Bounds.Item4).DefaultIfEmpty(preferredY).Max();
+                        upper = Math.Max(upper, plan.Entities.OfType<DrawPolyline>().SelectMany(line => line.Points).Select(point => point.Y).DefaultIfEmpty(preferredY).Max());
+                        y = Math.Max(preferredY, upper + labelHeight + 2 * Layout);
+                    }
                 }
-                calloutBoxes.Add(Tuple.Create(x, y + 2 * Layout - labelHeight / 2, width, labelHeight));
+                calloutBoxes.Add(new AnnotationBox(Tuple.Create(x, y + 2 * Layout - labelHeight / 2, width, labelHeight)));
                 if (target.HasValue)
                 {
                     bool connectRight = target.Value.X >= x + width / 2;
                     var elbow = new Point2(connectRight ? x + width : x, y);
                     var landing = new Point2(connectRight ? x : x + width, y);
                     var ownText = Tuple.Create(x, y + 2 * Layout - labelHeight / 2, width, labelHeight);
-                    var route = LeaderRoute(target.Value, elbow, ownText) ?? new List<Point2> { target.Value, elbow };
+                    var route = LeaderRoute(target.Value, elbow, ownText);
+                    if (route == null)
+                    {
+                        plan.Warnings.Add("Выноска «" + value + "» пересекает подпись у области: проверьте её положение после построения.");
+                        route = new List<Point2> { target.Value, elbow };
+                    }
                     route.Add(landing);
                     Curve(route, "PROF_LEADER", color, 0.18);
                 }
@@ -965,7 +1049,7 @@ namespace Profiles.Core
             private bool LeaderFits(double x, double y, double width, double height, Point2? target)
             {
                 var label = Tuple.Create(x - Layout, y + 2 * Layout - height / 2 - .7 * Layout, width + 2 * Layout, height + 1.4 * Layout);
-                if (calloutBoxes.Any(box => RectanglesOverlap(label, box))) return false;
+                if (calloutBoxes.Any(box => RectanglesOverlap(label, box.Bounds))) return false;
                 foreach (var curve in plan.Entities.OfType<DrawPolyline>().Where(line =>
                     line.Layer == "PROF_EXISTING" || line.Layer == "PROF_PROJECT" || line.Layer == "PROF_CLEANED" || line.Layer == "PROF_WATER" || line.Layer == "PROF_LEADER"))
                     for (int index = 1; index < curve.Points.Count; index++)
@@ -974,22 +1058,23 @@ namespace Profiles.Core
                 var elbow = new Point2(target.Value.X >= x + width / 2 ? x + width : x, y);
                 var landing = new Point2(target.Value.X >= x + width / 2 ? x : x + width, y);
                 var ownText = Tuple.Create(x, y + 2 * Layout - height / 2, width, height);
-                if (calloutBoxes.Any(box => SegmentMeetsBox(elbow, landing, box))) return false;
+                if (calloutBoxes.Any(box => box.Meets(elbow, landing))) return false;
                 return LeaderRoute(target.Value, elbow, ownText) != null;
             }
 
             private List<Point2> LeaderRoute(Point2 target, Point2 elbow, Tuple<double, double, double, double> ownText)
             {
-                var obstacles = calloutBoxes.Concat(new[] { ownText }).ToList();
-                Func<Point2, Point2, bool> clear = (a, b) => !obstacles.Any(box => SegmentMeetsBox(a, b, box));
+                var obstacles = calloutBoxes.Concat(new[] { new AnnotationBox(ownText) }).ToList();
+                Func<Point2, Point2, bool> clear = (a, b) => !obstacles.Any(box => box.Meets(a, b));
                 if (clear(target, elbow)) return new List<Point2> { target, elbow };
                 var routes = new List<List<Point2>>
                 {
                     new List<Point2> { target, new Point2(elbow.X, target.Y), elbow },
                     new List<Point2> { target, new Point2(target.X, elbow.Y), elbow }
                 };
-                foreach (var box in obstacles)
+                foreach (var obstacle in obstacles)
                 {
+                    var box = obstacle.Bounds;
                     foreach (double x in new[] { box.Item1 - Layout, box.Item1 + box.Item3 + Layout })
                     {
                         // A short diagonal via a free corner keeps a crowded

@@ -41,6 +41,9 @@ namespace Profiles.AutoCAD.UI
         private readonly ToolStripMenuItem renamePoint;
         private readonly ToolStripMenuItem roleMenu;
         private readonly Dictionary<SectionPointRole, ToolStripMenuItem> roleItems = new Dictionary<SectionPointRole, ToolStripMenuItem>();
+        private readonly System.ComponentModel.IContainer menuComponents = new System.ComponentModel.Container();
+        private readonly ContextMenuStrip headerRoleMenu;
+        private readonly Dictionary<SectionPointRole, ToolStripMenuItem> headerRoleItems = new Dictionary<SectionPointRole, ToolStripMenuItem>();
         private bool loading;
         private bool batchingChanges;
         private bool programmaticManual;
@@ -128,6 +131,9 @@ namespace Profiles.AutoCAD.UI
             Rows[2].DefaultCellStyle.ForeColor = Color.Firebrick;
 
             ContextMenuStrip = new ContextMenuStrip();
+            headerRoleMenu = new ContextMenuStrip();
+            menuComponents.Add(ContextMenuStrip);
+            menuComponents.Add(headerRoleMenu);
             interpolate = new ToolStripMenuItem("Интерполировать", null, (s, e) => RequestInterpolation());
             ContextMenuStrip.Items.Add(interpolate);
             ContextMenuStrip.Items.Add(new ToolStripSeparator());
@@ -144,7 +150,12 @@ namespace Profiles.AutoCAD.UI
                 var menuItem = new ToolStripMenuItem(RoleCaption(role), null, (s, e) => RunAction(() => AssignSelectedRole(assignedRole)));
                 roleItems.Add(role, menuItem);
                 roleMenu.DropDownItems.Add(menuItem);
+                var headerItem = new ToolStripMenuItem(RoleCaption(role), null, (s, e) => RunAction(() => AssignSelectedRole(assignedRole)));
+                headerRoleItems.Add(role, headerItem);
+                headerRoleMenu.Items.Add(headerItem);
             }
+            headerRoleMenu.Items.Add(new ToolStripSeparator());
+            headerRoleMenu.Items.Add("Название точки…", null, (s, e) => RunAction(RenameSelectedPoint));
             ContextMenuStrip.Items.Add(roleMenu);
             ContextMenuStrip.Items.Add(new ToolStripSeparator());
             ContextMenuStrip.Items.Add("Вставить таблицу", null, (s, e) => RunAction(PasteTable));
@@ -735,21 +746,16 @@ namespace Profiles.AutoCAD.UI
                 ReadPoints();
                 CurrentCell = Rows[1].Cells[e.ColumnIndex];
                 int selected = e.ColumnIndex - 1;
-                var menu = new ContextMenuStrip();
-                foreach (SectionPointRole role in new[] { SectionPointRole.LeftBank, SectionPointRole.Bottom, SectionPointRole.RightBank, SectionPointRole.Regular })
+                foreach (var entry in headerRoleItems)
                 {
-                    var assignedRole = role;
-                    int previous = role == SectionPointRole.Regular ? -1 : points.FindIndex(point => point.Role == role);
-                    var item = new ToolStripMenuItem(RoleCaption(role) + (previous >= 0 && previous != selected ? " — перенести с № " + (previous + 1) : ""),
-                        null, (s, args) => RunAction(() => AssignSelectedRole(assignedRole)))
-                    { Checked = points[selected].Role == role };
-                    menu.Items.Add(item);
+                    int previous = entry.Key == SectionPointRole.Regular ? -1 : points.FindIndex(point => point.Role == entry.Key);
+                    entry.Value.Text = RoleCaption(entry.Key) + (previous >= 0 && previous != selected ? " — перенести с № " + (previous + 1) : "");
+                    entry.Value.Checked = points[selected].Role == entry.Key;
                 }
-                menu.Items.Add(new ToolStripSeparator());
-                menu.Items.Add("Название точки…", null, (s, args) => RunAction(RenameSelectedPoint));
-                menu.Closed += (s, args) => menu.Dispose();
+                // WinForms still uses the popup after raising Closed. Keep it alive for
+                // repeated clicks and dispose it with the grid, never inside Closed.
                 var bounds = GetCellDisplayRectangle(e.ColumnIndex, -1, true);
-                menu.Show(this, new Point(bounds.Left, bounds.Bottom));
+                headerRoleMenu.Show(this, new Point(bounds.Left, bounds.Bottom));
             });
         }
 
@@ -918,6 +924,7 @@ namespace Profiles.AutoCAD.UI
             if (disposing)
             {
                 if (editingBox != null) editingBox.TextChanged -= EditorTextChanged;
+                menuComponents.Dispose();
                 anchorFont?.Dispose();
             }
             base.Dispose(disposing);
