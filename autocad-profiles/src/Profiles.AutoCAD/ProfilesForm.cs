@@ -29,7 +29,7 @@ namespace Profiles.AutoCAD
         private readonly TextBox textHeight = Input();
         private readonly TextBox textWidth = Input();
         private readonly TextBox sectionName = Input();
-        private readonly ComboBox sectionStation = new ComboBox { Width = 135, DropDownStyle = ComboBoxStyle.DropDown, Margin = new Padding(2, 3, 5, 3) };
+        private readonly ComboBox sectionStation = new ComboBox { Width = Px(135), DropDownStyle = ComboBoxStyle.DropDown, Margin = new Padding(2, 3, 5, 3) };
         private readonly TextBox sectionWater = Input();
         private readonly TextBox projectBottom = Input();
         private readonly TextBox bottomWidth = Input();
@@ -41,6 +41,8 @@ namespace Profiles.AutoCAD
         private readonly UI.ProfilePreview preview = new UI.ProfilePreview { Dock = DockStyle.Fill };
         private readonly TextBox previewNotes = new TextBox { Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, BackColor = Color.FromArgb(248, 249, 251) };
         private readonly ToolTip tips = new ToolTip { AutoPopDelay = 12000 };
+        private readonly System.ComponentModel.Container ownedComponents = new System.ComponentModel.Container();
+        private Font boldFont;
         private readonly List<CrossSection> sections = new List<CrossSection>();
         private ProfileKind activeKind;
         private int selectedSection = -1;
@@ -57,14 +59,17 @@ namespace Profiles.AutoCAD
 
         public ProfilesForm(ProfileKind kind, ProfileProject initialProject) : this(kind, initialProject, null, null) { }
 
-        public ProfilesForm(ProfileKind kind, ProfileProject initialProject, IReadOnlyList<ProfileProject> availableProjects, Action<ProfileProject> saveProjectToDrawing, string selectedSectionId = null)
+        public ProfilesForm(ProfileKind kind, ProfileProject initialProject, IReadOnlyList<ProfileProject> availableProjects, Action<ProfileProject> saveProjectToDrawing,
+            string selectedSectionId = null, Action<string> deleteProjectFromDrawing = null)
         {
             this.saveProjectToDrawing = saveProjectToDrawing;
+            this.deleteProjectFromDrawing = deleteProjectFromDrawing;
             Text = "Профиля — данные и построение";
             StartPosition = FormStartPosition.CenterParent;
-            MinimumSize = new Size(1060, 700);
-            Size = new Size(1540, 940);
-            Font = new Font("Segoe UI", 8.5F);
+            MinimumSize = new Size(Px(1060), Px(700));
+            Size = new Size(Px(1540), Px(940));
+            // The standard Windows UI size; 8.5 pt was hard to read.
+            Font = new Font("Segoe UI", 9F);
             AutoScaleMode = AutoScaleMode.Dpi;
             ShowInTaskbar = false;
             KeyPreview = true;
@@ -90,7 +95,10 @@ namespace Profiles.AutoCAD
             {
                 if (e.Control && e.KeyCode == Keys.S) { e.SuppressKeyPress = true; SaveDraftExplicit(); }
                 else if (e.Control && e.KeyCode == Keys.O) { e.SuppressKeyPress = true; OpenProject(); }
+                else if (e.KeyCode == Keys.F1 && e.Modifiers == Keys.None) { e.SuppressKeyPress = true; ShowHelp(); }
+                else if (e.KeyCode == Keys.F5 && e.Modifiers == Keys.None) { e.SuppressKeyPress = true; RefreshPreview(true); }
             };
+            HelpRequested += (s, e) => { e.Handled = true; ShowHelp(); };
             LoadProject(initialProject ?? new ProfileProject
             {
                 Kind = kind,
@@ -131,7 +139,7 @@ namespace Profiles.AutoCAD
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, Px(34)));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             Controls.Add(root);
             root.Controls.Add(BuildProjectBar(), 0, 0);
@@ -140,15 +148,29 @@ namespace Profiles.AutoCAD
             toolbar.Controls.Add(Button("Импорт JSON…", OpenProject));
             toolbar.Controls.Add(Button("Экспорт JSON…", SaveProject));
             toolbar.Controls.Add(autoSaveJson);
-            toolbar.Controls.Add(Button("Загрузить пример", LoadExample));
+            var example = Button("Загрузить пример", LoadExample);
+            toolbar.Controls.Add(example);
+            var help = Button("Справка (F1)", ShowHelp);
+            toolbar.Controls.Add(help);
+            toolbar.Controls.Add(new Label
+            {
+                Text = "Порядок: ① проект и тип → ② данные в таблице → ③ «Проверить» (F5) → ④ «Построить»",
+                AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding(10, 9, 6, 4)
+            });
             toolbar.Controls.Add(modeCaption);
             root.Controls.Add(toolbar, 0, 1);
+            tips.SetToolTip(example, "Создать отдельный демонстрационный проект. Ваши данные не меняются; лишний пример можно удалить кнопкой «Удалить проект…».");
+            tips.SetToolTip(help, "Краткая инструкция, горячие клавиши и папка с полным руководством.");
 
             var common = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 8, RowCount = 2, Padding = new Padding(0, 0, 0, 8) };
             for (int i = 0; i < 8; i++) common.ColumnStyles.Add(new ColumnStyle(i == 1 ? SizeType.Percent : SizeType.AutoSize, i == 1 ? 100 : 0));
             common.Controls.Add(titleCaption, 0, 0);
             common.Controls.Add(title, 1, 0);
             common.SetColumnSpan(title, 7);
+            title.AccessibleName = "Название профиля";
+            horizontal.AccessibleName = "Масштаб по горизонтали";
+            vertical.AccessibleName = "Масштаб по вертикали";
+            datum.AccessibleName = "Ноль профиля, метры";
             common.Controls.Add(Caption("Масштаб по горизонтали 1:"), 0, 1);
             common.Controls.Add(horizontal, 1, 1);
             horizontal.Dock = DockStyle.Left;
@@ -174,15 +196,18 @@ namespace Profiles.AutoCAD
             var close = Button("Закрыть", () => Close());
             close.DialogResult = DialogResult.None;
             footer.Controls.Add(close);
+            tips.SetToolTip(close, "Закрыть окно (Esc). Корректные данные сохраняются в DWG автоматически.");
             var draw = buildButton = Button("Построить / переместить", () => Draw(false));
             var rebuild = rebuildButton = Button("Перестроить на месте", () => Draw(true));
             tips.SetToolTip(draw, "Построить выбранный тип профиля текущего проекта в указанной точке. Если он уже построен, прежний результат этого проекта заменяется.");
             tips.SetToolTip(rebuild, "Заменить ранее построенный профиль этого проекта и типа, сохранив точку вставки и ориентацию.");
-            draw.Font = new Font(Font, FontStyle.Bold);
+            draw.Font = BoldFont;
             draw.BackColor = Color.FromArgb(222, 236, 247);
             footer.Controls.Add(draw);
             footer.Controls.Add(rebuild);
-            footer.Controls.Add(Button("Проверить и показать", () => RefreshPreview(true)));
+            var check = Button("Проверить и показать (F5)", () => RefreshPreview(true));
+            tips.SetToolTip(check, "Проверить данные и открыть предпросмотр того, что будет построено в AutoCAD.");
+            footer.Controls.Add(check);
             footer.Controls.Add(BuildScopeControl());
             root.Controls.Add(footer, 0, 6);
             CancelButton = close;
@@ -203,7 +228,7 @@ namespace Profiles.AutoCAD
         private void BuildCrossPage()
         {
             var layout = crossLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 1, Padding = new Padding(3) };
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 145));
+            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, Px(150)));
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 0));
             var left = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(4) };
@@ -223,7 +248,7 @@ namespace Profiles.AutoCAD
             listButtons.Controls.Add(Button("Копия", CopySection));
             listButtons.Controls.Add(Button("−", RemoveSection));
             foreach (Button button in listButtons.Controls)
-                button.MinimumSize = new Size(50, 26);
+                button.MinimumSize = new Size(Px(50), Px(26));
             left.Controls.Add(listButtons, 0, 4);
             layout.Controls.Add(left, 0, 0);
 
@@ -234,6 +259,8 @@ namespace Profiles.AutoCAD
             center.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             center.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             center.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            // Section names such as «Поперечник 12 — копия» did not fit the numeric width.
+            sectionName.Width = Px(200);
             var header = (FlowLayoutPanel)Fields("Профиль", sectionName, "Вода, м", sectionWater);
             header.Controls.Add(showEarthworks);
             center.Controls.Add(header, 0, 0);
@@ -265,7 +292,7 @@ namespace Profiles.AutoCAD
             var layout = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 1 };
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 78));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, Px(78)));
             var bar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, Padding = new Padding(6) };
             bar.Controls.Add(Button("Обновить", () => RefreshPreview(false)));
             bar.Controls.Add(Button("Вписать", preview.Fit));
@@ -301,7 +328,7 @@ namespace Profiles.AutoCAD
                 "После закрытия окна сохраните сам чертёж AutoCAD, чтобы данные остались после перезапуска.\n" +
                 "JSON можно импортировать/экспортировать; автозапись JSON включается отдельно.\n" +
                 "Площади земляных работ рассчитываются по измеренным поперечникам. Проверяйте полноту съёмки и проектные границы.");
-            explanation.MaximumSize = new Size(950, 0);
+            explanation.MaximumSize = new Size(Px(950), 0);
             layout.Controls.Add(explanation, 0, 4);
             layout.SetColumnSpan(explanation, 2);
             formatPage.Controls.Add(layout);
@@ -363,8 +390,8 @@ namespace Profiles.AutoCAD
                 BorderStyle = BorderStyle.FixedSingle,
                 SelectionMode = DataGridViewSelectionMode.CellSelect,
                 MultiSelect = true,
-                RowHeadersWidth = 42,
-                ColumnHeadersHeight = 38,
+                RowHeadersWidth = Px(42),
+                ColumnHeadersHeight = Px(38),
                 ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
                 ClipboardCopyMode = DataGridViewClipboardCopyMode.EnableWithoutHeaderText,
                 EditMode = DataGridViewEditMode.EditOnKeystrokeOrF2
@@ -386,7 +413,7 @@ namespace Profiles.AutoCAD
             grid.Columns.Add(new DataGridViewTextBoxColumn
             {
                 Name = name, HeaderText = header, ToolTipText = tooltip,
-                Width = width, MinimumWidth = 70, SortMode = DataGridViewColumnSortMode.NotSortable,
+                Width = Px(width), MinimumWidth = Px(70), SortMode = DataGridViewColumnSortMode.NotSortable,
                 ValueType = typeof(string)
             });
         }
@@ -401,6 +428,8 @@ namespace Profiles.AutoCAD
             bar.Controls.Add(Button("Взять из чертежа…", () => RequestDrawingCapture(ProfileKind.Longitudinal)));
             bar.Controls.Add(new Label { Text = "Ctrl+V — Excel · Ctrl+C — копировать", AutoSize = true, Margin = new Padding(6, 6, 0, 0) });
             var menu = new ContextMenuStrip();
+            // A grid does not dispose its context menu; the form owns it.
+            ownedComponents.Add(menu);
             menu.Items.Add("Вставить строку до", null, (s, e) => InsertLongitudinalRow(false));
             menu.Items.Add("Вставить строку после", null, (s, e) => InsertLongitudinalRow(true));
             menu.Items.Add(new ToolStripSeparator());
@@ -829,7 +858,8 @@ namespace Profiles.AutoCAD
 
         private void SetStatus(string message, bool warning = false)
         {
-            status.Text = message;
+            // A sign as well as a colour: warnings stay recognisable without colour vision.
+            status.Text = warning ? "⚠ " + message : message;
             status.ForeColor = warning ? Color.DarkOrange : Color.FromArgb(45, 70, 90);
             tips.SetToolTip(status, message);
         }
@@ -858,7 +888,21 @@ namespace Profiles.AutoCAD
             return ProfileInterpolation.CloneSection(value);
         }
 
-        private static TextBox Input() => new TextBox { Width = 82, Margin = new Padding(2, 3, 6, 3) };
+        private static TextBox Input() => new TextBox { Width = Px(82), Margin = new Padding(2, 3, 6, 3) };
+
+        // AutoCAD is system-DPI aware: fonts grow with the Windows scale while
+        // fixed pixel sizes do not. Every hard-coded layout size uses Px().
+        private static readonly float UiScale = SystemUiScale();
+
+        private static float SystemUiScale()
+        {
+            try { using (var graphics = Graphics.FromHwnd(IntPtr.Zero)) return graphics.DpiX > 0 ? graphics.DpiX / 96F : 1F; }
+            catch (Exception) { return 1F; }
+        }
+
+        internal static int Px(int pixels) => (int)Math.Round(pixels * UiScale);
+
+        private Font BoldFont => boldFont ?? (boldFont = new Font(Font, FontStyle.Bold));
 
         private static Label Caption(string text) => new Label { Text = text, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(2, 4, 4, 4) };
 
@@ -866,7 +910,7 @@ namespace Profiles.AutoCAD
 
         private static Button Button(string text, Action action)
         {
-            var button = new Button { Text = text, AutoSize = true, MinimumSize = new Size(text.Length < 3 ? 30 : 65, 26), Padding = new Padding(3, 1, 3, 1), Margin = new Padding(2) };
+            var button = new Button { Text = text, AutoSize = true, MinimumSize = new Size(Px(text.Length < 3 ? 30 : 65), Px(26)), Padding = new Padding(3, 1, 3, 1), Margin = new Padding(2) };
             button.Click += (s, e) => action();
             return button;
         }
@@ -878,7 +922,9 @@ namespace Profiles.AutoCAD
             {
                 var group = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
                 group.Controls.Add(Caption((string)values[i]));
-                group.Controls.Add((Control)values[i + 1]);
+                var input = (Control)values[i + 1];
+                if (string.IsNullOrEmpty(input.AccessibleName)) input.AccessibleName = ((string)values[i]).TrimEnd(':', ' ');
+                group.Controls.Add(input);
                 panel.Controls.Add(group);
             }
             return panel;
@@ -889,11 +935,14 @@ namespace Profiles.AutoCAD
             if (disposing)
             {
                 tips.Dispose();
+                ownedComponents.Dispose();
                 autoSaveTimer.Dispose();
                 interpolationTimer.Dispose();
                 interpolationFont?.Dispose();
             }
             base.Dispose(disposing);
+            // Labels and buttons share this font; release it after the controls.
+            if (disposing) boldFont?.Dispose();
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)

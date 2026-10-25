@@ -34,6 +34,28 @@ public sealed class OutputMetadataTests
     }
 
     [Fact]
+    public void DeletingAProjectSelectsEveryOutputRecordOfThatProjectOnly()
+    {
+        const string otherProject = "66666666666666666666666666666666";
+        var own = new[]
+        {
+            OutputMetadata.OutputKey(Project, ProfileKind.Longitudinal),
+            OutputMetadata.OutputKey(Project, ProfileKind.CrossSection),
+            OutputMetadata.OutputKey(Project, ProfileKind.Longitudinal, Profile),
+            OutputMetadata.OutputKey(Project, ProfileKind.CrossSection, Profile, Section)
+        };
+        foreach (string key in own)
+        {
+            Assert.True(OutputMetadata.BelongsToProject(key, Project));
+            Assert.True(OutputMetadata.BelongsToProject(key, Project.ToUpperInvariant()));
+            Assert.False(OutputMetadata.BelongsToProject(key, otherProject));
+        }
+        Assert.False(OutputMetadata.BelongsToProject(OutputMetadata.OutputKey(otherProject, ProfileKind.CrossSection, Profile, Section), Project));
+        Assert.Throws<ProfileValidationException>(() => OutputMetadata.BelongsToProject("HEADER", Project));
+        Assert.Throws<ProfileValidationException>(() => OutputMetadata.BelongsToProject(own[0], "not-a-project"));
+    }
+
+    [Fact]
     public void SelectedCrossScopeCannotEraseLegacyBatchAnotherSectionOrAnotherProfile()
     {
         var selected = Output(ProfileKind.CrossSection, Profile, Section);

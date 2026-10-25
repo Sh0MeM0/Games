@@ -125,6 +125,45 @@ namespace Profiles.AutoCAD
             WritePayload(root, ActiveName, project.ProjectId, transaction);
         }
 
+        /// <summary>
+        /// Removes one project with all its placement records. Objects already
+        /// drawn stay in the DWG as ordinary geometry and are never erased here.
+        /// </summary>
+        internal static void Delete(Database database, string projectId)
+        {
+            ProjectId(projectId);
+            using (var transaction = database.TransactionManager.StartTransaction())
+            {
+                var root = Root(database, transaction, false);
+                if (root == null) { transaction.Commit(); return; }
+                // Validate the whole catalog first: corrupt data is never rewritten.
+                var catalog = Read(database, transaction);
+                RemoveRecord(Child(root, ProjectsName, transaction), projectId, transaction);
+                var outputs = Child(root, OutputsName, transaction);
+                var stale = new List<string>();
+                foreach (DBDictionaryEntry entry in outputs)
+                    if (BelongsToProject(entry.Key, projectId)) stale.Add(entry.Key);
+                foreach (string key in stale) RemoveRecord(outputs, key, transaction);
+                if (string.Equals(catalog.LastActiveProjectId, projectId, StringComparison.OrdinalIgnoreCase))
+                {
+                    string remaining = catalog.Projects.Select(project => project.ProjectId)
+                        .FirstOrDefault(id => !string.Equals(id, projectId, StringComparison.OrdinalIgnoreCase));
+                    if (remaining != null) WritePayload(root, ActiveName, remaining, transaction);
+                    else RemoveRecord(root, ActiveName, transaction);
+                }
+                transaction.Commit();
+            }
+        }
+
+        private static void RemoveRecord(DBDictionary dictionary, string key, Transaction transaction)
+        {
+            if (!dictionary.Contains(key)) return;
+            var record = transaction.GetObject(dictionary.GetAt(key), OpenMode.ForWrite);
+            if (!dictionary.IsWriteEnabled) dictionary.UpgradeOpen();
+            dictionary.Remove(key);
+            record.Erase();
+        }
+
         internal static string DrawingId(Database database, Transaction transaction)
         {
             return Header(Root(database, transaction, true), transaction).DrawingId;

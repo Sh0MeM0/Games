@@ -67,9 +67,13 @@ namespace Profiles.AutoCAD
             loading = true;
             try
             {
+                // The session list replaces the catalog read when the command
+                // started: a project deleted in the editor must not come back.
+                var current = Project;
+                projects.Clear();
                 foreach (var item in state.Projects)
-                    if (!string.Equals(item.ProjectId, currentProjectId, StringComparison.OrdinalIgnoreCase)) RegisterProject(item);
-                if (Project != null) RegisterProject(Project);
+                    RegisterProject(current != null && string.Equals(item.ProjectId, current.ProjectId, StringComparison.OrdinalIgnoreCase) ? current : item);
+                if (current != null) RegisterProject(current);
                 jsonPaths.Clear();
                 foreach (var entry in state.JsonPaths) jsonPaths[entry.Key] = entry.Value;
                 jsonAutoSaveProjects.Clear();

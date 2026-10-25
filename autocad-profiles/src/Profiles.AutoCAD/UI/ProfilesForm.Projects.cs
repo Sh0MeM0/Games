@@ -10,8 +10,8 @@ namespace Profiles.AutoCAD
 {
     public sealed partial class ProfilesForm
     {
-        private readonly ComboBox projectPicker = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 240, Margin = new Padding(2, 3, 6, 3) };
-        private readonly ComboBox templatePicker = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 170, Margin = new Padding(2, 3, 6, 3) };
+        private readonly ComboBox projectPicker = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = Px(240), Margin = new Padding(2, 3, 6, 3) };
+        private readonly ComboBox templatePicker = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = Px(170), Margin = new Padding(2, 3, 6, 3) };
         private readonly CheckBox autoSaveJson = new CheckBox { Text = "Автосохранять JSON", AutoSize = true, Enabled = false, Margin = new Padding(8, 9, 8, 4) };
         private readonly Timer autoSaveTimer = new Timer { Interval = 700 };
         private readonly List<ProfileProject> projects = new List<ProfileProject>();
@@ -20,6 +20,7 @@ namespace Profiles.AutoCAD
         private readonly Dictionary<string, string> lastWrittenJson = new Dictionary<string, string>();
         private readonly HashSet<string> memoryOnlyProjects = new HashSet<string>();
         private readonly Action<ProfileProject> saveProjectToDrawing;
+        private readonly Action<string> deleteProjectFromDrawing;
         private string currentProjectId;
         private string currentProjectName;
         private bool saving;
@@ -53,9 +54,14 @@ namespace Profiles.AutoCAD
             var save = Button("Сохранить в DWG", SaveDraftExplicit);
             save.Enabled = saveProjectToDrawing != null;
             bar.Controls.Add(save);
+            var delete = Button("Удалить проект…", DeleteProject);
+            bar.Controls.Add(delete);
+            projectPicker.AccessibleName = "Проект в чертеже";
+            templatePicker.AccessibleName = "Тип профиля";
+            tips.SetToolTip(delete, "Удалить текущий проект (все его вкладки и поперечники) из чертежа. Уже построенные объекты остаются в DWG как обычные линии и тексты.");
             tips.SetToolTip(projectPicker, "Независимые наборы исходных данных. Каждый проект может иметь продольный профиль и набор поперечников.");
             tips.SetToolTip(templatePicker, "Выбор другого типа создаёт новую пустую вкладку профиля. Данные исходной вкладки сохраняются; их можно открыть снова.");
-            tips.SetToolTip(save, "Данные записываются в текущий чертёж. После закрытия окна сохраните сам DWG, чтобы оставить изменения на диске.");
+            tips.SetToolTip(save, "Данные записываются в текущий чертёж (Ctrl+S). После закрытия окна сохраните сам DWG, чтобы оставить изменения на диске.");
             tips.SetToolTip(autoSaveJson, "По умолчанию JSON не переписывается автоматически. Сначала импортируйте или экспортируйте файл, затем включите эту опцию явно.");
             return bar;
         }
@@ -155,21 +161,51 @@ namespace Profiles.AutoCAD
             if (!TrySaveCurrent(true)) return;
             string name = AskProjectName("Новый проект", UniqueProjectName("Проект"));
             if (name == null) return;
-            var project = new ProfileProject
-            {
-                ProjectId = Guid.NewGuid().ToString("N"), Name = name, Kind = activeKind, Template = SelectedTemplate,
-                Settings = new ProfileSettings
-                {
-                    Title = "ПРОДОЛЬНЫЙ ПРОФИЛЬ",
-                    HorizontalScale = 1000, VerticalScale = 100,
-                    CrossHorizontalScale = 100, CrossVerticalScale = 100,
-                    MetresPerDrawingUnit = 1, TextHeightMm = 2.5, TextWidthFactor = .85
-                },
-                Sections = new List<CrossSection> { NewSection(1) }
-            };
-            LoadProject(project);
+            LoadProject(BlankProject(name));
             SetDirty();
             TrySaveCurrent(true);
+        }
+
+        private ProfileProject BlankProject(string name) => new ProfileProject
+        {
+            ProjectId = Guid.NewGuid().ToString("N"), Name = name, Kind = activeKind, Template = SelectedTemplate,
+            Settings = new ProfileSettings
+            {
+                Title = "ПРОДОЛЬНЫЙ ПРОФИЛЬ",
+                HorizontalScale = 1000, VerticalScale = 100,
+                CrossHorizontalScale = 100, CrossVerticalScale = 100,
+                MetresPerDrawingUnit = 1, TextHeightMm = 2.5, TextWidthFactor = .85
+            },
+            Sections = new List<CrossSection> { NewSection(1) }
+        };
+
+        private void DeleteProject()
+        {
+            if (currentProjectId == null) return;
+            string deletedId = currentProjectId, deletedName = currentProjectName ?? "Проект";
+            if (MessageBox.Show(this,
+                "Удалить проект «" + deletedName + "»" + (deleteProjectFromDrawing != null ? " из чертежа" : "") + "?\n\n" +
+                "Будут удалены его исходные данные: все вкладки профилей, таблицы и поперечники. " +
+                "Уже построенные линии и тексты останутся в чертеже как обычные объекты — при необходимости удалите их вручную.\n\n" +
+                "Если проект может понадобиться, сначала нажмите «Отмена» и экспортируйте его в JSON.",
+                "Удаление проекта", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+            autoSaveTimer.Stop();
+            interpolationTimer.Stop();
+            try { deleteProjectFromDrawing?.Invoke(deletedId); }
+            catch (Exception ex) { ShowError("Проект не удалён: " + ex.Message); return; }
+            projects.RemoveAll(project => string.Equals(project.ProjectId, deletedId, StringComparison.OrdinalIgnoreCase));
+            jsonPaths.Remove(deletedId);
+            jsonAutoSaveProjects.Remove(deletedId);
+            lastWrittenJson.Remove(deletedId);
+            memoryOnlyProjects.Remove(deletedId);
+            foreach (string key in profileSectionSelections.Keys.Where(key => key.StartsWith(deletedId + ":", StringComparison.OrdinalIgnoreCase)).ToList())
+                profileSectionSelections.Remove(key);
+            var next = projects.FirstOrDefault();
+            // The deleted editor contents must not be autosaved back: load the
+            // next project (or an empty one) without reading the old buffer.
+            LoadProject(next != null ? ProjectFile.Clone(next) : BlankProject(UniqueProjectName("Проект")));
+            SetStatus("Проект «" + deletedName + "» удалён. Открыт проект «" + currentProjectName + "»." +
+                (deleteProjectFromDrawing != null ? " Сохраните DWG, чтобы удаление сохранилось на диске." : ""));
         }
 
         private void RenameProject()
@@ -194,22 +230,32 @@ namespace Profiles.AutoCAD
             {
                 Text = caption, Font = Font, StartPosition = FormStartPosition.CenterParent,
                 FormBorderStyle = FormBorderStyle.FixedDialog, MinimizeBox = false, MaximizeBox = false,
-                ShowInTaskbar = false, ClientSize = new Size(440, 125), AutoScaleMode = AutoScaleMode.Dpi
+                ShowInTaskbar = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink
             })
             {
-                var input = new TextBox { Text = initial, Left = 16, Top = 40, Width = 405, MaxLength = maximumLength };
-                dialog.Controls.Add(new Label { Text = fieldCaption, AutoSize = true, Left = 16, Top = 15 });
-                dialog.Controls.Add(input);
-                var ok = new Button { Text = "Сохранить", DialogResult = DialogResult.None, Left = 225, Top = 80, Width = 95 };
+                // Auto-sized layout: absolute positions overlapped at 125–150 % Windows scaling.
+                var layout = new TableLayoutPanel { AutoSize = true, ColumnCount = 1, RowCount = 4, Padding = new Padding(Px(12)) };
+                var input = new TextBox { Text = initial, Width = Px(400), MaxLength = maximumLength, AccessibleName = fieldCaption };
+                var error = new Label { AutoSize = true, ForeColor = Color.Firebrick, MaximumSize = new Size(Px(400), 0) };
+                var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Margin = new Padding(0, Px(6), 0, 0) };
+                var cancel = new Button { Text = "Отмена", DialogResult = DialogResult.Cancel, AutoSize = true, MinimumSize = new Size(Px(90), 0) };
+                var ok = new Button { Text = "Сохранить", AutoSize = true, MinimumSize = new Size(Px(90), 0) };
                 ok.Click += (s, e) =>
                 {
                     if (string.IsNullOrWhiteSpace(input.Text) || input.Text.Any(char.IsControl))
-                    { MessageBox.Show(dialog, "Введите название без управляющих символов.", caption); return; }
+                    { error.Text = "Введите название без управляющих символов."; input.Focus(); return; }
                     dialog.DialogResult = DialogResult.OK;
                 };
-                var cancel = new Button { Text = "Отмена", DialogResult = DialogResult.Cancel, Left = 330, Top = 80, Width = 90 };
-                dialog.Controls.Add(ok); dialog.Controls.Add(cancel); dialog.AcceptButton = ok; dialog.CancelButton = cancel;
-                input.SelectAll();
+                buttons.Controls.Add(cancel);
+                buttons.Controls.Add(ok);
+                layout.Controls.Add(new Label { Text = fieldCaption, AutoSize = true, Margin = new Padding(0, 0, 0, Px(4)) }, 0, 0);
+                layout.Controls.Add(input, 0, 1);
+                layout.Controls.Add(error, 0, 2);
+                layout.Controls.Add(buttons, 0, 3);
+                dialog.Controls.Add(layout);
+                dialog.AcceptButton = ok;
+                dialog.CancelButton = cancel;
+                dialog.Shown += (s, e) => { input.Focus(); input.SelectAll(); };
                 return dialog.ShowDialog(this) == DialogResult.OK ? input.Text.Trim() : null;
             }
         }

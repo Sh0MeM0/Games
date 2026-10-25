@@ -78,6 +78,14 @@ namespace Profiles.AutoCAD
             if (sectionId != null) ProjectId(sectionId);
         }
 
+        /// <summary>True for an output record of any kind, profile or section of the project.</summary>
+        internal static bool BelongsToProject(string key, string projectId)
+        {
+            ProjectId(projectId);
+            ParseOutputKey(key, out string keyProject, out ProfileKind _, out string _, out string _);
+            return string.Equals(keyProject, projectId, StringComparison.OrdinalIgnoreCase);
+        }
+
         internal static long HandleValue(string value)
         {
             long handle;

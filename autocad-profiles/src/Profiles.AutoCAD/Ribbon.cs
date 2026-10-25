@@ -106,8 +106,9 @@ namespace Profiles.AutoCAD
 
         private sealed class ProfileCommandHandler : ICommand
         {
-            public bool CanExecute(object parameter) =>
-                AcadApplication.DocumentManager.MdiActiveDocument != null;
+            // CanExecuteChanged is never raised, so a button disabled while no
+            // drawing was open would stay disabled. Execute checks the document.
+            public bool CanExecute(object parameter) => true;
 
             public event EventHandler CanExecuteChanged
             {
@@ -121,7 +122,9 @@ namespace Profiles.AutoCAD
                 var item = parameter as RibbonButton;
                 var command = item?.CommandParameter as string ?? parameter as string;
                 if (document == null || string.IsNullOrEmpty(command)) return;
-                document.SendStringToExecute(command, true, false, true);
+                // Like the menu macros (^C^C), cancel an active command first;
+                // otherwise the command name is typed into its prompt.
+                document.SendStringToExecute("\x03\x03" + command, true, false, true);
             }
         }
     }

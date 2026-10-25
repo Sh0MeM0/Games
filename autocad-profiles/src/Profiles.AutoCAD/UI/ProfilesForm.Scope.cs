@@ -9,7 +9,7 @@ namespace Profiles.AutoCAD
     {
         private readonly ComboBox buildScope = new ComboBox
         {
-            DropDownStyle = ComboBoxStyle.DropDownList, Width = 185,
+            DropDownStyle = ComboBoxStyle.DropDownList, Width = Px(185),
             Margin = new Padding(3, 4, 4, 3)
         };
         private Control scopeControl;
@@ -33,6 +33,7 @@ namespace Profiles.AutoCAD
             buildScope.SelectedIndex = 0;
             var panel = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
             panel.Controls.Add(Caption("Область"));
+            buildScope.AccessibleName = "Область построения";
             panel.Controls.Add(buildScope);
             scopeControl = panel;
             tips.SetToolTip(buildScope, "Проверка, предпросмотр и построение используют одну область. По умолчанию строится только текущий профиль; остальные построения сохраняются.");

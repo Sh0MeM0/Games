@@ -11,7 +11,7 @@ namespace Profiles.AutoCAD
     {
         private readonly TabControl profileTabs = new TabControl
         {
-            Dock = DockStyle.Fill, Height = 31, Multiline = false,
+            Dock = DockStyle.Fill, Height = Px(31), Multiline = false,
             Padding = new Point(12, 3), Margin = new Padding(0, 3, 4, 0)
         };
         private readonly Dictionary<string, string> profileSectionSelections = new Dictionary<string, string>();

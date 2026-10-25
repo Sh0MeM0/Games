@@ -10,7 +10,7 @@ namespace Profiles.AutoCAD
 {
     public sealed partial class ProfilesForm
     {
-        private readonly ComboBox designMode = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 175, Margin = new Padding(2, 3, 6, 3) };
+        private readonly ComboBox designMode = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = Px(175), Margin = new Padding(2, 3, 6, 3) };
         private readonly CheckBox showEarthworks = new CheckBox { Text = "Ил / площади", AutoSize = true, Checked = false, Margin = new Padding(8, 5, 2, 2) };
         private TableLayoutPanel crossLayout;
         private Control earthworksPanel;
@@ -53,7 +53,9 @@ namespace Profiles.AutoCAD
             };
             var panel = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 1, RowCount = 2 };
             panel.Controls.Add(Fields("Проект", designMode, "Дно, м", projectBottom, "Ширина, м", bottomWidth), 0, 0);
-            leftSlope.Width = rightSlope.Width = 62;
+            leftSlope.Width = rightSlope.Width = Px(62);
+            leftSlope.AccessibleName = "Левый откос, заложение";
+            rightSlope.AccessibleName = "Правый откос, заложение";
             var center = (FlowLayoutPanel)Fields("Откосы 1:", leftSlope, "/", rightSlope, "Центр, м", centerOffset);
             center.Controls.Add(Button("Автоцентр", FindAutoCenter));
             panel.Controls.Add(center, 0, 1);
@@ -208,7 +210,10 @@ namespace Profiles.AutoCAD
             var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true, Padding = new Padding(6) };
             var content = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, Padding = new Padding(3) };
             content.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            content.Controls.Add(new Label { Text = "Снятие ила", AutoSize = true, Font = new Font(Font, FontStyle.Bold), Margin = new Padding(3, 6, 3, 8) });
+            content.Controls.Add(new Label { Text = "Снятие ила", AutoSize = true, Font = BoldFont, Margin = new Padding(3, 6, 3, 8) });
+            siltThickness.AccessibleName = "Толщина снимаемого ила, м";
+            siltLeft.AccessibleName = "Левая граница снятия ила, м";
+            siltRight.AccessibleName = "Правая граница снятия ила, м";
             content.Controls.Add(Caption("Толщина, м"));
             content.Controls.Add(siltThickness);
             content.Controls.Add(Caption("Левая граница, м"));
@@ -217,7 +222,7 @@ namespace Profiles.AutoCAD
             content.Controls.Add(siltRight);
             content.Controls.Add(Note("Пустая толщина — без ила. Пустые границы — автоматически."));
             content.Controls.Add(surveyOrigin);
-            content.Controls.Add(new Label { Text = "Площади поперечника", AutoSize = true, Font = new Font(Font, FontStyle.Bold), Margin = new Padding(3, 12, 3, 8) });
+            content.Controls.Add(new Label { Text = "Площади поперечника", AutoSize = true, Font = BoldFont, Margin = new Padding(3, 12, 3, 8) });
             content.Controls.Add(Caption("Выемка без ила"));
             content.Controls.Add(cutArea);
             content.Controls.Add(Caption("Насыпь"));
@@ -228,7 +233,7 @@ namespace Profiles.AutoCAD
             content.Controls.Add(Button("Обновить расчёт", RefreshEarthworks));
             scroll.Controls.Add(content);
             foreach (Control control in content.Controls)
-                if (control is Label label) label.MaximumSize = new Size(185, 0);
+                if (control is Label label) label.MaximumSize = new Size(Px(185), 0);
             tips.SetToolTip(siltLeft, "Граница в системе смещений поперечника. Для нового поперечника первая точка имеет смещение 0. Импортированные абсолютные смещения сохраняются.");
             tips.SetToolTip(siltRight, "Весь диапазон снятия ила должен быть покрыт фактическими отметками без пропусков.");
             return scroll;

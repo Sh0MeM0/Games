@@ -93,6 +93,10 @@ namespace Profiles.AutoCAD
                     // a transaction open while the user edits or picks a point.
                     using (document.LockDocument()) DrawingProjectStore.Save(document.Database, project);
                 };
+                Action<string> deleteProject = projectId =>
+                {
+                    using (document.LockDocument()) DrawingProjectStore.Delete(document.Database, projectId);
+                };
                 ProfileProject active = previous == null ? null : ProjectFile.Clone(previous);
                 string selectedSectionId = null;
                 var captureOptions = new DrawingCaptureOptions();
@@ -105,7 +109,7 @@ namespace Profiles.AutoCAD
                     DrawingPlan plan;
                     bool rebuildExisting, allSections, allProfiles;
                     DialogResult dialogResult;
-                    using (var form = new ProfilesForm(kind, active, catalog.Projects, saveDraft, selectedSectionId))
+                    using (var form = new ProfilesForm(kind, active, catalog.Projects, saveDraft, selectedSectionId, deleteProject))
                     {
                         form.CaptureOptions = captureOptions.Clone();
                         if (session != null) form.RestoreEditorSession(session, selectedSectionId);

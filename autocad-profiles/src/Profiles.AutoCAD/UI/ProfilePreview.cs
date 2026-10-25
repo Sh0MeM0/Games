@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using Profiles.Core;
 
@@ -128,28 +129,21 @@ namespace Profiles.AutoCAD.UI
             }
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+            int skipped = 0;
             foreach (var entity in plan.Entities)
             {
-                Color color = EntityColor(entity.ColorIndex);
-                if (entity is DrawHatch hatch) DrawRegion(e.Graphics, hatch, color);
-                else if (entity is DrawDimension dimension) DrawDimensionPreview(e.Graphics, dimension, color);
-                else if (entity is DrawPolyline line && line.Points.Count >= 2)
-                {
-                    using (var pen = new Pen(color, (float)Math.Max(.65, Math.Min(2.2, entity.LineWeightMm * 3))))
-                    {
-                        if (entity.Dashed) pen.DashStyle = DashStyle.Dash;
-                        var vertices = line.Points.Select(Project).ToArray();
-                        e.Graphics.DrawLines(pen, vertices);
-                        if (line.Closed) e.Graphics.DrawLine(pen, vertices[vertices.Length - 1], vertices[0]);
-                    }
-                }
-                else if (entity is DrawCircle circle)
-                {
-                    PointF center = Project(circle.Center);
-                    float radius = (float)(circle.Radius * PreviewScale);
-                    using (var pen = new Pen(color, .8F)) e.Graphics.DrawEllipse(pen, center.X - radius, center.Y - radius, radius * 2, radius * 2);
-                }
-                else if (entity is DrawText text) DrawLabel(e.Graphics, text, color);
+                // An exception escaping OnPaint makes WinForms replace the control
+                // with a red cross for the rest of the session. Skip that entity.
+                try { DrawEntity(e.Graphics, entity); }
+                catch (Exception exception) when (exception is ArgumentException || exception is OverflowException ||
+                    exception is ExternalException || exception is InvalidOperationException) { skipped++; }
+            }
+            if (skipped > 0)
+            {
+                var banner = new Rectangle(8, Math.Max(8, ClientSize.Height - 84), Math.Max(20, ClientSize.Width - 16), 32);
+                using (var brush = new SolidBrush(Color.FromArgb(255, 243, 205))) e.Graphics.FillRectangle(brush, banner);
+                TextRenderer.DrawText(e.Graphics, "Часть объектов не показана в предпросмотре: " + skipped + ". Построение в AutoCAD от этого не зависит.",
+                    Font, banner, Color.FromArgb(110, 75, 0), TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             }
             if (stale)
             {
@@ -165,6 +159,30 @@ namespace Profiles.AutoCAD.UI
                 TextRenderer.DrawText(e.Graphics, hatchPreviewNotice, Font, banner, Color.FromArgb(110, 75, 0),
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak);
             }
+        }
+
+        private void DrawEntity(Graphics graphics, DrawEntity entity)
+        {
+            Color color = EntityColor(entity.ColorIndex);
+            if (entity is DrawHatch hatch) DrawRegion(graphics, hatch, color);
+            else if (entity is DrawDimension dimension) DrawDimensionPreview(graphics, dimension, color);
+            else if (entity is DrawPolyline line && line.Points.Count >= 2)
+            {
+                using (var pen = new Pen(color, (float)Math.Max(.65, Math.Min(2.2, entity.LineWeightMm * 3))))
+                {
+                    if (entity.Dashed) pen.DashStyle = DashStyle.Dash;
+                    var vertices = line.Points.Select(Project).ToArray();
+                    graphics.DrawLines(pen, vertices);
+                    if (line.Closed) graphics.DrawLine(pen, vertices[vertices.Length - 1], vertices[0]);
+                }
+            }
+            else if (entity is DrawCircle circle)
+            {
+                PointF center = Project(circle.Center);
+                float radius = (float)(circle.Radius * PreviewScale);
+                using (var pen = new Pen(color, .8F)) graphics.DrawEllipse(pen, center.X - radius, center.Y - radius, radius * 2, radius * 2);
+            }
+            else if (entity is DrawText text) DrawLabel(graphics, text, color);
         }
 
         private void DrawRegion(Graphics graphics, DrawHatch hatch, Color color)

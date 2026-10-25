@@ -15,7 +15,7 @@ import zipfile
 from menu_package import build_classic_menu
 
 ROOT = Path(__file__).resolve().parent
-VERSION = '0.8.1'
+VERSION = '0.8.2'
 TARGETS = {'2020': ('23.1.0', 'R23.1'), '2021': ('24.0.0', 'R24.0'),
            '2022': ('24.1.51000', 'R24.1'), '2023': ('24.2.0', 'R24.2'),
            '2024': ('24.3.0', 'R24.3')}
