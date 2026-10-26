@@ -65,7 +65,7 @@ public sealed class SectionElevationOwnershipTests
         Assert.Null(intersection.Existing);
         Assert.Null(intersection.Design);
         var plan = ProfileEngine.Build(project);
-        Assert.Equal(3, Curves(plan, "PROF_ORD").Count);
+        Assert.Equal(2, Curves(plan, "PROF_ORD").Count);
         Assert.Equal(2, Labels(plan, 7).Length);
         Assert.Equal(2, Labels(plan, 1).Length);
         Assert.Equal(5, result.CutArea.Value, 8);

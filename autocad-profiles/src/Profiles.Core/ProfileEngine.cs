@@ -544,7 +544,7 @@ namespace Profiles.Core
             {
                 double minX = section.Points[0].Offset, width = X(section.Points.Last().Offset - minX), labels = 38 * Layout;
                 Func<Point2, Point2> transform = p => new Point2(X(p.X - minX), Y(p.Y));
-                List<SectionPoint> display = SectionDisplayGeometry.Build(earthworks);
+                var survey = section.Points.Where(point => point.Existing.HasValue).ToList();
                 List<SectionPoint> table = SectionDisplayGeometry.BuildTable(earthworks, entered);
                 List<List<Point2>> existing = SectionGeometry.Runs(section.Points, false);
                 List<List<Point2>> design = trapezoid != null ? new List<List<Point2>> { trapezoid } : SectionGeometry.Runs(section.Points, true);
@@ -574,7 +574,10 @@ namespace Profiles.Core
                 var rows = new List<Tuple<string, double, string>> { Tuple.Create("№ ТОЧКИ", 6.0, "number"), Tuple.Create("РАССТОЯНИЕ, м", 5.0, "distance") };
                 rows.Add(Tuple.Create("ОТМЕТКИ\nПОВЕРХНОСТИ, м", 12.0, "existing"));
                 rows.Add(Tuple.Create("ПРОЕКТНЫЕ\nОТМЕТКИ, м", 12.0, "design"));
-                var cells = rows.Select(row => SectionCells(row.Item3, table, minX, row.Item2 * Paper)).ToList();
+                // Only measured surface points own numbers and distance intervals.
+                // Project vertices contribute elevations, never extra survey columns.
+                var cells = rows.Select(row => SectionCells(row.Item3, row.Item3 == "design" ? table : survey,
+                    minX, row.Item2 * Paper)).ToList();
                 var heights = rows.Select(row => row.Item2 * Paper).ToList();
                 double bottomY = -heights.Sum(), top = 0;
                 int rowIndex = 0;
@@ -594,11 +597,23 @@ namespace Profiles.Core
                     top = bottom;
                 }
                 foreach (double x in new[] { -labels, 0, width }) Line(new Point2(x, 0), new Point2(x, bottomY));
-                foreach (SectionPoint point in display)
+                foreach (SectionPoint point in survey)
                 {
-                    double maximum = new[] { point.Existing, point.Design }.Where(z => z.HasValue).Select(z => Y(z.Value)).DefaultIfEmpty(0).Max();
                     double x = X(point.Offset - minX);
-                    Line(new Point2(x, bottomY), new Point2(x, maximum), "PROF_ORD");
+                    Line(new Point2(x, bottomY), new Point2(x, Y(point.Existing.Value)), "PROF_ORD");
+                }
+                var surveyElevations = survey.ToDictionary(point => point.Offset, point => point.Existing.Value);
+                foreach (var point in table.Where(point => point.Design.HasValue))
+                {
+                    double x = X(point.Offset - minX), existingElevation;
+                    // A coincident survey ordinate already connects this X to the
+                    // table. Do not overprint its solid black line with red dashes;
+                    // extend it only when the project is above the surface.
+                    double bottom = surveyElevations.TryGetValue(point.Offset, out existingElevation) ? Y(existingElevation) : 0;
+                    double topY = Y(point.Design.Value);
+                    if (topY > bottom)
+                        Curve(new List<Point2> { new Point2(x, bottom), new Point2(x, topY) },
+                            "PROF_PROJECT_ORD", 1, 0.18, true);
                 }
                 List<Point2> all = existing.Concat(design).SelectMany(x => x).ToList();
                 double highest = all.Max(p => Y(p.Y));
@@ -608,6 +623,7 @@ namespace Profiles.Core
                 Text(-labels + 2 * Layout, 9 * Layout, "ВЕРТ.1:" + settings.VerticalScale.ToString("0.###", CultureInfo.InvariantCulture), alignment: TextAlignment.Left, width: labels - 2 * Layout);
                 Text(-labels + 2 * Layout, 3 * Layout, "УСЛ. ОТМ. " + F(plan.Datum), alignment: TextAlignment.Left, width: labels - 2 * Layout);
                 calloutBoxes.Add(new AnnotationBox(Tuple.Create(-labels, 1 * Layout, labels, 23 * Layout)));
+                BankLabels(survey, minX);
                 var callouts = new List<SectionCallout>
                 {
                     AreaCallout("F срезки = " + Quantity(earthworks.CutArea) + " м²", earthworks.CutRegions, transform, 1),
@@ -652,6 +668,33 @@ namespace Profiles.Core
                     plan.Warnings.Add("Поперечник «" + section.Name + "»: подписи близких точек разнесены по высоте внутри строк таблицы.");
                 if (cells.Any(row => row.Any(cell => cell.TooNarrow)))
                     plan.Warnings.Add("Поперечник «" + section.Name + "»: для отдельных подписей недостаточно места при выбранном масштабе; уменьшите знаменатель горизонтального масштаба или разделите поперечник.");
+            }
+
+            private void BankLabels(List<SectionPoint> survey, double first)
+            {
+                var banks = survey.Where(point => point.Role == SectionPointRole.LeftBank || point.Role == SectionPointRole.RightBank).ToList();
+                foreach (var point in banks)
+                {
+                    string label = point.Role == SectionPointRole.LeftBank ? "Л.Б." : "П.Б.";
+                    var vertex = new Point2(X(point.Offset - first), Y(point.Existing.Value));
+                    var center = new Point2(vertex.X, vertex.Y + 8 * Layout);
+                    var other = banks.FirstOrDefault(bank => bank != point);
+                    if (other != null && X(Math.Abs(other.Offset - point.Offset)) < InlineWidth(label) + 2 * Layout)
+                        center.X += (point.Offset < other.Offset ? -1 : 1) * (InlineWidth(label) / 2 + Layout);
+                    for (int row = 0; row < 24 && !InlineLabelFits(label, center, 0); row++)
+                        center.Y += 6 * Layout;
+                    if (!InlineLabelFits(label, center, 0))
+                    {
+                        double highest = plan.Entities.OfType<DrawPolyline>().SelectMany(line => line.Points).Max(p => p.Y);
+                        highest = Math.Max(highest, calloutBoxes.Select(box => box.Bounds.Item2 + box.Bounds.Item4).DefaultIfEmpty(0).Max());
+                        center.Y = highest + 8 * Layout;
+                    }
+                    double endY = center.Y - TextHeight * .65 - Layout;
+                    Line(vertex, new Point2(center.X, endY), "PROF_BANK_MARKER");
+                    calloutBoxes.Add(new AnnotationBox(Tuple.Create(Math.Min(vertex.X, center.X) - .35 * Layout, vertex.Y,
+                        Math.Abs(center.X - vertex.X) + .7 * Layout, endY - vertex.Y)));
+                    InlineLabel(label, center, 0, 7);
+                }
             }
 
             private static string Quantity(double? value) { return value.HasValue ? F(value.Value) : "—"; }

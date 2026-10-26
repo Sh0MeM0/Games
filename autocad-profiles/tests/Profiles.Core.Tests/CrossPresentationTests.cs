@@ -9,7 +9,7 @@ namespace Profiles.Core.Tests;
 public sealed class CrossPresentationTests
 {
     [Fact]
-    public void TrapezoidDisplayAddsDaylightAndKneesWithoutChangingSavedSurveyPoints()
+    public void TrapezoidKeepsSurveyNumbersAndDistancesSeparateFromProjectMarks()
     {
         var project = Cross(new() { Offset = -8, Existing = 10 }, new() { Offset = 0, Existing = 10 }, new() { Offset = 8, Existing = 10 });
         project.Settings.HorizontalScale = project.Settings.VerticalScale = 100;
@@ -20,12 +20,12 @@ public sealed class CrossPresentationTests
         section.LeftSlope = 1;
         section.RightSlope = 2;
         var plan = ProfileEngine.Build(project);
-        Assert.Equal(new[] { 0.0, 5, 7, 8, 9, 13, 16 }, Curves(plan, "PROF_ORD").Select(line => line.Points[0].X));
+        Assert.Equal(new[] { 0.0, 8, 16 }, Curves(plan, "PROF_ORD").Select(line => line.Points[0].X));
         var texts = plan.Entities.OfType<DrawText>().ToList();
         var numbers = Assert.Single(texts, text => text.Text == "№ ТОЧКИ");
-        Assert.Equal(Enumerable.Range(1, 7).Select(number => number.ToString()), texts.Where(text => text.Position.X >= 0 && text.Position.Y == numbers.Position.Y).Select(text => text.Text));
+        Assert.Equal(Enumerable.Range(1, 3).Select(number => number.ToString()), texts.Where(text => text.Position.X >= 0 && text.Position.Y == numbers.Position.Y).Select(text => text.Text));
         var distances = Assert.Single(texts, text => text.Text == "РАССТОЯНИЕ, м");
-        Assert.Equal(new[] { "5.00", "2.00", "1.00", "1.00", "4.00", "3.00" }, texts.Where(text => text.Position.X >= 0 && text.Position.Y == distances.Position.Y).Select(text => text.Text));
+        Assert.Equal(new[] { "8.00", "8.00" }, texts.Where(text => text.Position.X >= 0 && text.Position.Y == distances.Position.Y).Select(text => text.Text));
         var design = Assert.Single(texts, text => text.Text == "ПРОЕКТНЫЕ\nОТМЕТКИ, м");
         Assert.Equal(new[] { "10.00", "8.00", "8.00", "10.00" }, texts.Where(text => text.Position.X >= 0 && text.Position.Y == design.Position.Y).Select(text => text.Text));
         Assert.Equal(new[] { -8.0, 0, 8 }, section.Points.Select(point => point.Offset));
@@ -81,21 +81,21 @@ public sealed class CrossPresentationTests
     }
 
     [Fact]
-    public void NearbySupplementalColumnsKeepExactOffsetsAndStaggerTheirLabels()
+    public void NearbyProjectVerticesDoNotSplitMeasuredIntervalsOrShrinkTheirNumbers()
     {
         var project = SampleProjects.CrossSections();
         project.Sections = project.Sections.Take(1).ToList();
-        var plan = ProfileEngine.Build(project);
-        var texts = plan.Entities.OfType<DrawText>().ToList();
-        var ninth = Assert.Single(texts, text => text.Text == "9");
-        var tenth = Assert.Single(texts, text => text.Text == "10");
-        // The right bank rises 0.05 m over 4 m; intersect that slope with x = 0.3 + 1.5 * (z - 141.2).
-        Assert.Equal(4.125 / .98125 - 4, tenth.Position.X - ninth.Position.X, 8);
-        Assert.NotEqual(ninth.Position.Y, tenth.Position.Y);
-        var shortDistances = texts.Where(text => text.Text == "0.30").ToList();
-        Assert.Equal(2, shortDistances.Count);
-        Assert.Equal(shortDistances[0].Position.Y, shortDistances[1].Position.Y);
-        Assert.Contains(plan.Warnings, warning => warning.Contains("разнесены по высоте"));
+        var withProject = ProfileEngine.Build(project).Entities.OfType<DrawText>().ToList();
+        project.Sections[0].DesignMode = SectionDesignMode.None;
+        var withoutProject = ProfileEngine.Build(project).Entities.OfType<DrawText>().ToList();
+        foreach (string rowName in new[] { "№ ТОЧКИ", "РАССТОЯНИЕ, м" })
+        {
+            var row = withProject.Single(t => t.Text == rowName);
+            var actual = withProject.Where(t => t.Position.X >= 0 && t.Position.Y == row.Position.Y).ToList();
+            var expected = withoutProject.Where(t => t.Position.X >= 0 && t.Position.Y == row.Position.Y).ToList();
+            Assert.NotEmpty(actual);
+            Assert.Equal(expected.Select(t => (t.Text, t.Position, t.Height)), actual.Select(t => (t.Text, t.Position, t.Height)));
+        }
     }
 
     [Fact]
