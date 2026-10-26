@@ -79,6 +79,7 @@ namespace Profiles.AutoCAD
             ConfigureCrossGrid();
             WireChanges(this);
             InitializeInterpolation();
+            InitializeStationAssignment();
             InitializeRowOrdering();
             InitializeSharedEditing();
             InitializeProjectSupport(availableProjects);
@@ -261,7 +262,8 @@ namespace Profiles.AutoCAD
             center.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             // Section names such as «Поперечник 12 — копия» did not fit the numeric width.
             sectionName.Width = Px(200);
-            var header = (FlowLayoutPanel)Fields("Профиль", sectionName, "Вода, м", sectionWater);
+            var header = (FlowLayoutPanel)Fields("Имя / ПК", sectionName, "Вода, м", sectionWater);
+            header.Controls.Add(Button("Назначить на продольный…", ShowStationAssignment));
             header.Controls.Add(showEarthworks);
             center.Controls.Add(header, 0, 0);
             center.Controls.Add(BuildCrossDesignPanel(), 0, 1);
@@ -277,14 +279,14 @@ namespace Profiles.AutoCAD
             {
                 earthworksPanel.Visible = showEarthworks.Checked;
                 crossLayout.ColumnStyles[2].Width = showEarthworks.Checked ? (float)(215 * DeviceDpi / 96.0) : 0;
-                crossGrid.FitElevenPointColumns();
+                crossGrid.FitTwelvePointColumns();
             };
             crossPage.Controls.Add(layout);
             tips.SetToolTip(sectionStation, "Выберите или введите пикет и нажмите Enter. 6+50 означает 650 м, число 6 означает 6 м. Пикеты сортируются численно. Расстояния поперечника вводятся по съёмке.");
             tips.SetToolTip(leftSlope, "Заложение — горизонталь / вертикаль: для откоса 1:1,5 введите 1,5.");
             tips.SetToolTip(rightSlope, "Правый откос может отличаться от левого. Требуется положительное число.");
             tips.SetToolTip(sectionWater, "Урез общий для этого пикета: изменение переносится в продольный профиль и другие поперечники на том же ПК.");
-            tips.SetToolTip(showEarthworks, "Показать параметры снятия ила и рассчитанные площади. Панель изначально скрыта, чтобы в таблице помещалось одиннадцать точек.");
+            tips.SetToolTip(showEarthworks, "Показать параметры снятия ила и рассчитанные площади. Панель изначально скрыта, чтобы в таблице помещалось двенадцать точек.");
         }
 
         private void BuildPreviewPage()
@@ -642,7 +644,8 @@ namespace Profiles.AutoCAD
                 stationInputEdited = false;
                 sectionStation.Text = section.Station.HasValue ? StationCaption(section.Station.Value) : "";
                 sectionName.Text = section.Station.HasValue ? StationCaption(section.Station.Value) : section.Name ?? "";
-                sectionName.ReadOnly = section.Station.HasValue;
+                sectionName.ReadOnly = false;
+                sectionNameEdited = false;
                 longitudinalProjectBottomLinked = section.UseLongitudinalProjectBottom;
                 longitudinalWaterLinked = section.UseLongitudinalWater;
                 DisplayNumber(sectionWater, section.Water);
@@ -669,11 +672,19 @@ namespace Profiles.AutoCAD
         {
             bool old = loading;
             loading = true;
-            sectionList.Items.Clear();
-            for (int i = 0; i < sections.Count; i++)
-                sectionList.Items.Add((i + 1) + ". " + SectionCaption(sections[i]));
-            sectionList.SelectedIndex = selection >= 0 && selection < sections.Count ? selection : -1;
-            loading = old;
+            sectionList.BeginUpdate();
+            try
+            {
+                sectionList.Items.Clear();
+                for (int i = 0; i < sections.Count; i++)
+                    sectionList.Items.Add((i + 1) + ". " + SectionCaption(sections[i]));
+                sectionList.SelectedIndex = selection >= 0 && selection < sections.Count ? selection : -1;
+            }
+            finally
+            {
+                sectionList.EndUpdate();
+                loading = old;
+            }
         }
 
         private void AddSection()

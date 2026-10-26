@@ -36,6 +36,9 @@ internal static class Program
             Run("role actions target the clicked column and refresh menu state", AssignRoles);
             Run("reloading points refreshes roles without losing measurements", ReloadPoints);
             Run("disposing the grid releases both menus", DisposeMenus);
+            Run("twelve point columns fit and preserve active edits on resize", TwelveColumns);
+            FormWorkflowTests.Run();
+            passed += FormWorkflowTests.Passed;
             Console.WriteLine("Passed: " + passed + ", failed: 0");
             return 0;
         }
@@ -181,6 +184,37 @@ internal static class Program
             Require(expected[i].Existing == actual[i].Existing && expected[i].Design == actual[i].Design &&
                 expected[i].DistanceFromPrevious == actual[i].DistanceFromPrevious,
                 "menu action changed measurements for point " + i);
+    }
+
+    private static void TwelveColumns(SectionPointGrid grid)
+    {
+        var points = Enumerable.Range(0, 12).Select(i => new SectionPoint
+        {
+            DistanceFromPrevious = i == 0 ? 0 : 1.25, Existing = 140 + i / 100.0,
+            Role = i == 0 ? SectionPointRole.LeftBank : i == 11 ? SectionPointRole.RightBank : SectionPointRole.Regular
+        }).ToList();
+        grid.LoadPoints(points);
+        foreach (int width in new[] { 850, 1100, 900 })
+        {
+            grid.FindForm().ClientSize = new Size(width, 300);
+            grid.FitTwelvePointColumns();
+            Application.DoEvents();
+            Require(grid.Columns.Count == 13, "fit changed point count");
+            var last = grid.GetCellDisplayRectangle(12, 1, false);
+            Require(last.Width > 0 && last.Right <= grid.ClientSize.Width, "twelfth point does not fit at width " + width);
+            MeasurementsEqual(points, grid.ReadPoints());
+        }
+        grid.CurrentCell = grid.Rows[1].Cells[6];
+        Require(grid.BeginEdit(true), "could not edit sixth point");
+        var editor = (TextBox)grid.EditingControl;
+        editor.Text = "147.123456789";
+        grid.FindForm().ClientSize = new Size(1000, 300);
+        grid.FitTwelvePointColumns();
+        Application.DoEvents();
+        Require(grid.IsCurrentCellInEditMode && ReferenceEquals(editor, grid.EditingControl), "resize replaced active editor");
+        Require(editor.Text == "147.123456789", "resize lost uncommitted text");
+        grid.EndEdit();
+        Require(grid.ReadPoints()[5].Existing == 147.123456789, "fit rounded edited precision");
     }
 
     private static void Require(bool condition, string message)

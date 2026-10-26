@@ -9,6 +9,9 @@
   <ItemGroup>
     <!-- Exercise the real WinForms control without requiring an AutoCAD host. -->
     <Compile Include="$(SectionPointGridSource)" Link="SectionPointGrid.cs" />
+    <Compile Include="../../src/Profiles.AutoCAD/ProfilesForm.cs" Link="ProfilesForm.cs" />
+    <Compile Include="../../src/Profiles.AutoCAD/DrawingCaptureRequest.cs" Link="DrawingCaptureRequest.cs" />
+    <Compile Include="../../src/Profiles.AutoCAD/UI/*.cs" Exclude="../../src/Profiles.AutoCAD/UI/SectionPointGrid.cs" Link="UI/%(Filename)%(Extension)" />
     <ProjectReference Include="../../src/Profiles.Core/Profiles.Core.csproj" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net472" Version="1.0.3" PrivateAssets="all" />
     <Reference Include="System.Windows.Forms" />

@@ -67,7 +67,7 @@ public sealed class ManualSectionCompletionTests
     }
 
     [Fact]
-    public void ExplicitDimensionClearAndUnrelatedNoOpDoNotRestoreSuggestions()
+    public void ExplicitDimensionClearRemovesAnchorAndShowsNeighbourInterpolation()
     {
         var project = Bind(Project(), 25);
         var before = ProfileInterpolation.CloneSection(project.Sections[0]);
@@ -75,13 +75,15 @@ public sealed class ManualSectionCompletionTests
         entered.BottomWidth = null;
         var result = ProjectSynchronization.CommitSection(project, 0, before, entered);
         Assert.Null(result.Longitudinal.Single(point => point.Station == 25).BottomWidth);
-        Assert.Null(result.Sections[0].BottomWidth);
+        // The raw anchor stays cleared; the linked section shows interpolation just like elevations.
+        Assert.Equal(2.5, result.Sections[0].BottomWidth);
         before = ProfileInterpolation.CloneSection(result.Sections[0]);
         entered = ProfileInterpolation.CloneSection(before);
         entered.Name = "Местное имя";
         result = ProjectSynchronization.CommitSection(result, 0, before, entered);
         Assert.Null(result.Longitudinal.Single(point => point.Station == 25).BottomWidth);
-        Assert.Null(result.Sections[0].BottomWidth);
+        // The raw anchor stays cleared; the linked section shows interpolation just like elevations.
+        Assert.Equal(2.5, result.Sections[0].BottomWidth);
     }
 
     [Fact]

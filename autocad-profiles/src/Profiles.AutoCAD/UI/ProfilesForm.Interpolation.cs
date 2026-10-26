@@ -12,7 +12,7 @@ namespace Profiles.AutoCAD
     {
         private readonly Timer interpolationTimer = new Timer { Interval = 180 };
         private readonly Dictionary<string, double> derivedValues = new Dictionary<string, double>();
-        private readonly string[] elevationColumns = { "Ground", "LeftBank", "RightBank", "ExistingBottom", "Water", "ProjectBottom", "ProjectGround", "PipeInvert" };
+        private readonly string[] elevationColumns = { "Ground", "LeftBank", "RightBank", "ExistingBottom", "Water", "ProjectBottom", "ProjectGround", "PipeInvert", "BottomWidth", "LeftSlope", "RightSlope" };
         private Font interpolationFont;
         private double? currentSectionStation;
         private bool stationInputEdited;
@@ -64,7 +64,7 @@ namespace Profiles.AutoCAD
                 if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
                 string name = longGrid.Columns[e.ColumnIndex].Name;
                 if (derivedValues.TryGetValue(e.RowIndex + ":" + name, out var value))
-                    e.ToolTipText = "Расчётная отметка " + Format(value) + " м: линейная интерполяция между известными пикетами. Исходная ячейка остаётся пустой. Введите число, чтобы задать свою опорную отметку.";
+                    e.ToolTipText = "Расчётное значение " + Format(value) + ": линейная интерполяция между известными пикетами. Исходная ячейка остаётся пустой. Введите число, чтобы задать своё опорное значение.";
             };
             sectionStation.DropDown += (s, e) => RefreshStationList();
             sectionStation.TextUpdate += (s, e) => { if (!loading) stationInputEdited = true; };
@@ -103,6 +103,9 @@ namespace Profiles.AutoCAD
                 case "ProjectBottom": return point.ProjectBottom;
                 case "ProjectGround": return point.ProjectGround;
                 case "PipeInvert": return point.PipeInvert;
+                case "BottomWidth": return point.BottomWidth;
+                case "LeftSlope": return point.LeftSlope;
+                case "RightSlope": return point.RightSlope;
                 default: return null;
             }
         }
@@ -161,7 +164,9 @@ namespace Profiles.AutoCAD
 
         private void CommitStationInput()
         {
-            if (loading || stationChangeActive || !stationInputEdited) return;
+            if (loading || stationChangeActive) return;
+            CommitSectionName();
+            if (!stationInputEdited) return;
             if (!string.IsNullOrWhiteSpace(sectionStation.Text))
             {
                 string text = sectionStation.Text.Trim();

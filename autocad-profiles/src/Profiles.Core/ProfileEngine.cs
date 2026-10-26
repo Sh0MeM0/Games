@@ -571,7 +571,7 @@ namespace Profiles.Core
                 var rows = new List<Tuple<string, double, string>> { Tuple.Create("№ ТОЧКИ", 6.0, "number"), Tuple.Create("РАССТОЯНИЕ, м", 5.0, "distance") };
                 rows.Add(Tuple.Create("ОТМЕТКИ\nПОВЕРХНОСТИ, м", 12.0, "existing"));
                 rows.Add(Tuple.Create("ПРОЕКТНЫЕ\nОТМЕТКИ, м", 12.0, "design"));
-                var cells = rows.Select(row => SectionCells(row.Item3, display, minX)).ToList();
+                var cells = rows.Select(row => SectionCells(row.Item3, display, minX, row.Item2 * Paper)).ToList();
                 var heights = rows.Select(row => row.Item2 * Paper).ToList();
                 double bottomY = -heights.Sum(), top = 0;
                 int rowIndex = 0;
@@ -585,10 +585,9 @@ namespace Profiles.Core
                     double captionHeight = Math.Min(TextHeight, Math.Min((top - bottom - Paper) / (labelLines.Length * 1.3),
                         (labels - 3 * Layout) / (labelLines.Max(line => line.Length) * .75 * settings.TextWidthFactor)));
                     Text(-labels + 1.5 * Layout, center, row.Item1, alignment: TextAlignment.Left, width: labels - 3 * Layout, height: captionHeight);
-                    int laneCount = rowCells.Select(cell => cell.Lane + 1).DefaultIfEmpty(1).Max();
-                    double cellHeight = SectionCellHeight(rowCells, (top - bottom) / laneCount);
                     foreach (var cell in rowCells)
-                        Text(cell.X, top - (top - bottom) * (cell.Lane + .5) / laneCount, cell.Text, cell.Rotation, cell.Color, height: cell.Height ?? cellHeight);
+                        Text(cell.X, top - (top - bottom) * (cell.Lane + .5) / cell.LaneCount,
+                            cell.Text, cell.Rotation, cell.Color, height: cell.Height);
                     top = bottom;
                 }
                 foreach (double x in new[] { -labels, 0, width }) Line(new Point2(x, 0), new Point2(x, bottomY));
@@ -649,7 +648,7 @@ namespace Profiles.Core
                 if (cells.Any(row => row.Any(cell => cell.Lane > 0)))
                     plan.Warnings.Add("Поперечник «" + section.Name + "»: подписи близких точек разнесены по высоте внутри строк таблицы.");
                 if (cells.Any(row => row.Any(cell => cell.TooNarrow)))
-                    plan.Warnings.Add("Поперечник «" + section.Name + "»: отдельные интервалы слишком узкие для читаемых подписей расстояний; проверьте эти подписи после построения.");
+                    plan.Warnings.Add("Поперечник «" + section.Name + "»: для отдельных подписей недостаточно места при выбранном масштабе; уменьшите знаменатель горизонтального масштаба или разделите поперечник.");
             }
 
             private static string Quantity(double? value) { return value.HasValue ? F(value.Value) : "—"; }
@@ -657,14 +656,15 @@ namespace Profiles.Core
             private sealed class SectionCell
             {
                 internal double X, Rotation;
-                internal double? Height;
+                internal double Height;
                 internal string Text;
                 internal short Color = 7;
                 internal int Lane;
+                internal int LaneCount = 1;
                 internal bool TooNarrow;
             }
 
-            private List<SectionCell> SectionCells(string kind, List<SectionPoint> display, double first)
+            private List<SectionCell> SectionCells(string kind, List<SectionPoint> display, double first, double rowHeight)
             {
                 var cells = new List<SectionCell>();
                 for (int index = 0; index < display.Count; index++)
@@ -676,13 +676,18 @@ namespace Profiles.Core
                     {
                         double interval = point.Offset - display[index - 1].Offset;
                         string value = F(interval);
-                        double available = Math.Max(0, X(interval) - .8 * Paper);
+                        double intervalWidth = X(interval);
+                        // Leave a margin without letting a fixed minimum font
+                        // force text outside a very short measured interval.
+                        double available = intervalWidth - Math.Min(.8 * Paper, intervalWidth * .2);
                         double fitted = available / (value.Length * .75 * settings.TextWidthFactor);
-                        cells.Add(new SectionCell
+                        var cell = new SectionCell
                         {
                             X = X((point.Offset + display[index - 1].Offset) / 2 - first), Text = value,
-                            Height = Math.Min(2.5 * Paper, Math.Max(.8 * Paper, fitted)), TooNarrow = fitted < .8 * Paper
-                        });
+                        };
+                        cell.Height = Math.Max(double.Epsilon, Math.Min(SectionCellHeight(cell, rowHeight), fitted));
+                        cell.TooNarrow = cell.Height < Math.Min(TextHeight, .8 * Paper);
+                        cells.Add(cell);
                     }
                     else if (kind == "existing" && point.Existing.HasValue)
                         cells.Add(new SectionCell { X = x, Text = F(point.Existing.Value), Rotation = 90 });
@@ -692,23 +697,50 @@ namespace Profiles.Core
                 // Distances stay on the exact centerline of their fixed 5 mm row.
                 // Each interval controls only its own font size, never its neighbors'.
                 if (kind == "distance") return cells;
-                var laneEnds = new List<double>();
-                double nominalHeight = Math.Min(TextHeight, 3 * Paper);
                 foreach (var cell in cells)
+                    cell.Height = SectionCellHeight(cell, rowHeight);
+
+                // Only labels whose projected horizontal bounds overlap share
+                // lanes. A close pair must not shrink every distant ordinate in
+                // the row, and a long elevation must not resize shorter ones.
+                for (int firstCell = 0; firstCell < cells.Count;)
                 {
-                    double halfWidth = (cell.Rotation == 90 ? nominalHeight * 1.2 : cell.Text.Length * nominalHeight * .75 * settings.TextWidthFactor) / 2;
-                    int lane = laneEnds.FindIndex(end => end + .7 * Paper <= cell.X - halfWidth);
-                    if (lane < 0) { lane = laneEnds.Count; laneEnds.Add(double.NegativeInfinity); }
-                    cell.Lane = lane;
-                    laneEnds[lane] = cell.X + halfWidth;
+                    int lastCell = firstCell + 1;
+                    double right = cells[firstCell].X + SectionCellHalfWidth(cells[firstCell]);
+                    while (lastCell < cells.Count && cells[lastCell].X - SectionCellHalfWidth(cells[lastCell]) < right + .7 * Paper)
+                    {
+                        right = Math.Max(right, cells[lastCell].X + SectionCellHalfWidth(cells[lastCell]));
+                        lastCell++;
+                    }
+                    var laneEnds = new List<double>();
+                    for (int index = firstCell; index < lastCell; index++)
+                    {
+                        var cell = cells[index];
+                        double halfWidth = SectionCellHalfWidth(cell);
+                        int lane = laneEnds.FindIndex(end => end + .7 * Paper <= cell.X - halfWidth);
+                        if (lane < 0) { lane = laneEnds.Count; laneEnds.Add(double.NegativeInfinity); }
+                        cell.Lane = lane;
+                        laneEnds[lane] = cell.X + halfWidth;
+                    }
+                    for (int index = firstCell; index < lastCell; index++)
+                    {
+                        var cell = cells[index];
+                        cell.LaneCount = laneEnds.Count;
+                        cell.Height = SectionCellHeight(cell, rowHeight / cell.LaneCount);
+                        cell.TooNarrow = cell.Height < Math.Min(TextHeight, .8 * Paper);
+                    }
+                    firstCell = lastCell;
                 }
                 return cells;
             }
 
-            private double SectionCellHeight(List<SectionCell> cells, double laneHeight)
+            private double SectionCellHalfWidth(SectionCell cell) =>
+                (cell.Rotation == 90 ? cell.Height * 1.3 : cell.Text.Length * cell.Height * .75 * settings.TextWidthFactor) / 2;
+
+            private double SectionCellHeight(SectionCell cell, double laneHeight)
             {
-                double advance = cells.Any(cell => cell.Rotation == 90) ? cells.Select(cell => cell.Text.Length).DefaultIfEmpty(1).Max() * .75 * settings.TextWidthFactor : 1.3;
-                return Math.Max(double.Epsilon, Math.Min(Math.Min(TextHeight, 3 * Paper), Math.Max(laneHeight * .7, laneHeight - Paper) / advance));
+                double advance = cell.Rotation == 90 ? cell.Text.Length * .75 * settings.TextWidthFactor : 1.3;
+                return Math.Max(double.Epsilon, Math.Min(TextHeight, Math.Max(laneHeight * .7, laneHeight - Paper) / advance));
             }
 
             private void HatchRegions(List<List<Point2>> regions, Func<Point2, Point2> transform, string layer, short color, double angle)

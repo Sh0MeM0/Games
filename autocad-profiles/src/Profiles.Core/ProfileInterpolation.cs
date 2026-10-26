@@ -4,14 +4,15 @@ using System.Linq;
 
 namespace Profiles.Core
 {
-    /// <summary>Distance-weighted interpolation of missing elevations; input anchors are never changed.</summary>
+    /// <summary>Distance-weighted interpolation of missing elevations and channel dimensions; input anchors are never changed.</summary>
     public static class ProfileInterpolation
     {
-        private static readonly Func<LongitudinalPoint, double?>[] Elevations =
+        private static readonly Func<LongitudinalPoint, double?>[] InterpolatedValues =
         {
             p => p.Ground, p => p.LeftBank, p => p.RightBank,
             p => p.ExistingBottom, p => p.Water, p => p.ProjectBottom,
-            p => p.ProjectGround, p => p.PipeInvert
+            p => p.ProjectGround, p => p.PipeInvert,
+            p => p.BottomWidth, p => p.LeftSlope, p => p.RightSlope
         };
 
         public static ProfileProject ResolveLongitudinal(ProfileProject source)
@@ -27,9 +28,9 @@ namespace Profiles.Core
             var result = source.Select(Copy).ToList();
             // Each column has independent anchors; using raw input prevents derived
             // values from becoming fixed anchors when another value is edited.
-            for (int column = 0; column < Elevations.Length; column++)
+            for (int column = 0; column < InterpolatedValues.Length; column++)
             {
-                var get = Elevations[column];
+                var get = InterpolatedValues[column];
                 int previous = -1;
                 for (int next = 0; next < source.Count; next++)
                 {
@@ -50,8 +51,8 @@ namespace Profiles.Core
             ProfileValidation.Range(station, -1000000000, 1000000000, "Пикетаж");
             var exact = source.FirstOrDefault(p => p.Station == station);
             var sample = exact == null ? new LongitudinalPoint { Station = station } : Copy(exact);
-            for (int column = 0; column < Elevations.Length; column++)
-                Set(sample, column, ValueAt(source, p => p.Station, Elevations[column], station));
+            for (int column = 0; column < InterpolatedValues.Length; column++)
+                Set(sample, column, ValueAt(source, p => p.Station, InterpolatedValues[column], station));
             return sample;
         }
 
@@ -352,6 +353,9 @@ namespace Profiles.Core
                 case 5: point.ProjectBottom = value; break;
                 case 6: point.ProjectGround = value; break;
                 case 7: point.PipeInvert = value; break;
+                case 8: point.BottomWidth = value; break;
+                case 9: point.LeftSlope = value; break;
+                case 10: point.RightSlope = value; break;
             }
         }
 
@@ -367,7 +371,13 @@ namespace Profiles.Core
                 if (point.Station <= previous)
                     throw new ProfileValidationException("Для интерполяции пикеты должны строго возрастать; совпадающие пикеты недопустимы.");
                 previous = point.Station;
-                foreach (var get in Elevations) ProfileValidation.Elevation(get(point), "Интерполируемая отметка");
+                for (int column = 0; column < InterpolatedValues.Length; column++)
+                {
+                    double? value = InterpolatedValues[column](point);
+                    if (column < 8) ProfileValidation.Elevation(value, "Интерполируемая отметка");
+                    else if (value.HasValue)
+                        ProfileValidation.Range(value.Value, 0.000001, 1000000, "Ширина дна или заложение откоса");
+                }
             }
         }
 

@@ -6,7 +6,7 @@
     <AcVersion Condition="'$(AcVersion)' == ''">23.1.0</AcVersion>
     <OutputPath>bin/$(Configuration)/$(AcVersion)/</OutputPath>
     <PlatformTarget>x64</PlatformTarget>
-    <Version>0.8.2</Version>
+    <Version>0.8.3</Version>
     <Deterministic>true</Deterministic>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>

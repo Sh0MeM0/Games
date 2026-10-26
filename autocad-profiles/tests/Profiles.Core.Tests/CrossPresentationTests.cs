@@ -110,8 +110,8 @@ public sealed class CrossPresentationTests
         var row = Assert.Single(texts, text => text.Text == "РАССТОЯНИЕ, м");
         var values = texts.Where(text => text.Position.X >= 0 && Math.Abs(text.Position.Y - row.Position.Y) < 1e-8).ToList();
         Assert.Equal(new[] { "3.00", "0.50", "4.00" }, values.Select(text => text.Text));
-        Assert.Equal(.25, values[0].Height, 8);
-        Assert.Equal(.25, values[2].Height, 8);
+        Assert.Equal(.4 / 1.3, values[0].Height, 8);
+        Assert.Equal(.4 / 1.3, values[2].Height, 8);
         Assert.InRange(values[1].Height, .08, .249999);
         Assert.All(values, text => Assert.Equal(-.85, text.Position.Y, 8));
     }

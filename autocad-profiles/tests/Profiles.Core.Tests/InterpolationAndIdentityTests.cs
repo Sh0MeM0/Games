@@ -28,7 +28,7 @@ public sealed class InterpolationAndIdentityTests
     }
 
     [Fact]
-    public void EveryElevationColumnHasIndependentAnchorsWhileDimensionsStayRaw()
+    public void EveryNumericColumnHasIndependentAnchorsWhileDescriptiveFieldsStayRaw()
     {
         var source = new List<LongitudinalPoint>
         {
@@ -43,7 +43,7 @@ public sealed class InterpolationAndIdentityTests
         Assert.Equal(11, middle.ExistingBottom);
         Assert.Equal(13, middle.Water);
         Assert.Equal(10, middle.ProjectBottom);
-        Assert.Null(middle.BottomWidth);
+        Assert.Equal(2.5, middle.BottomWidth);
         Assert.Null(middle.LeftSlope);
         Assert.Equal(31, middle.ProjectGround);
         Assert.Equal(26, middle.PipeInvert);
@@ -76,7 +76,7 @@ public sealed class InterpolationAndIdentityTests
     }
 
     [Fact]
-    public void SamplingWorksBetweenRowsAndPreservesDimensionsOnlyAtExactStation()
+    public void SamplingInterpolatesDimensionsBetweenRowsAndPreservesExactInput()
     {
         var source = new List<LongitudinalPoint>
         {
@@ -84,7 +84,8 @@ public sealed class InterpolationAndIdentityTests
             new() { Station = 50, Water = 104, BottomWidth = 4 }
         };
         Assert.Equal(101, ProfileInterpolation.SampleLongitudinal(source, 20).Water);
-        Assert.Null(ProfileInterpolation.SampleLongitudinal(source, 20).BottomWidth);
+        Assert.Equal(2.5, ProfileInterpolation.SampleLongitudinal(source, 20).BottomWidth);
+        Assert.Null(ProfileInterpolation.SampleLongitudinal(source, 20).LeftSlope); // No second anchor.
         Assert.Equal(2, ProfileInterpolation.SampleLongitudinal(source, 10).BottomWidth);
         Assert.Equal(1.5, ProfileInterpolation.SampleLongitudinal(source, 10).LeftSlope);
     }

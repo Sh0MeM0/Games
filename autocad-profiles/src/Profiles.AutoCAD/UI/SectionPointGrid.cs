@@ -35,6 +35,7 @@ namespace Profiles.AutoCAD.UI
     /// <summary>Horizontal section editor; rendered precision never changes the raw survey data.</summary>
     public sealed class SectionPointGrid : DataGridView
     {
+        private const int VisiblePointCount = 12;
         private readonly List<SectionPoint> points = new List<SectionPoint>();
         private readonly Dictionary<string, string> invalid = new Dictionary<string, string>();
         private readonly ToolStripMenuItem interpolate;
@@ -107,7 +108,7 @@ namespace Profiles.AutoCAD.UI
             DefaultCellStyle.Format = "F2";
             DefaultCellStyle.FormatProvider = CultureInfo.InvariantCulture;
             DefaultCellStyle.NullValue = "";
-            DefaultCellStyle.Padding = new Padding(2, 0, 13, 0);
+            DefaultCellStyle.Padding = new Padding(2, 0, 4, 0);
             EnableHeadersVisualStyles = false;
             ColumnHeadersDefaultCellStyle.BackColor = Color.FromArgb(234, 239, 244);
             ColumnHeadersDefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleCenter;
@@ -174,14 +175,15 @@ namespace Profiles.AutoCAD.UI
                 }
             };
             DataError += (s, e) => { e.ThrowException = false; e.Cancel = false; };
-            FitElevenPointColumns();
+            FitTwelvePointColumns();
         }
 
-        /// <summary>Reserves room for eleven point columns without creating points or changing an active edit.</summary>
-        public void FitElevenPointColumns() => FitPointColumns(true);
+        /// <summary>Reserves room for twelve point columns without creating points or changing an active edit.</summary>
+        public void FitTwelvePointColumns() => FitPointColumns(true);
 
-        // Retained for existing form callers; the current layout fits eleven points.
-        public void FitTenPointColumns() => FitElevenPointColumns();
+        // Retained for existing form callers; all callers use the current layout.
+        public void FitElevenPointColumns() => FitTwelvePointColumns();
+        public void FitTenPointColumns() => FitTwelvePointColumns();
 
         private void FitPointColumns(bool force)
         {
@@ -191,20 +193,27 @@ namespace Profiles.AutoCAD.UI
             SuspendLayout();
             try
             {
-                var numericPadding = new Padding(ScalePixels(2), 0, ScalePixels(13), 0);
+                // The interpolation arrow is drawn only in empty cells. Reserving
+                // its width beside every number needlessly hides the last points.
+                var numericPadding = new Padding(ScalePixels(2), 0, ScalePixels(4), 0);
                 if (DefaultCellStyle.Padding != numericPadding) DefaultCellStyle.Padding = numericPadding;
-                int labelWidth = Math.Max(ScalePixels(135), TextRenderer.MeasureText("Интервал, м", Font,
-                    Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width + ScalePixels(10));
                 int borderWidth = BorderStyle == BorderStyle.None ? 0 : ScalePixels(BorderStyle == BorderStyle.Fixed3D ? 4 : 2);
                 int scrollbarWidth = Controls.OfType<VScrollBar>().Where(bar => bar.Visible).Sum(bar => bar.Width);
-                int available = ClientSize.Width - labelWidth - borderWidth - scrollbarWidth - (RowHeadersVisible ? RowHeadersWidth : 0);
+                int contentWidth = ClientSize.Width - borderWidth - scrollbarWidth - (RowHeadersVisible ? RowHeadersWidth : 0);
                 int minimum = Math.Max(ScalePixels(60), TextRenderer.MeasureText("-999.99", Font,
                     Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width + DefaultCellStyle.Padding.Horizontal + ScalePixels(4));
-                int width = Math.Max(minimum, Math.Min(ScalePixels(120), Math.Max(0, available) / 11));
+                int minimumLabelWidth = Math.Max(ScalePixels(100), TextRenderer.MeasureText("Интервал, м", Font,
+                    Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width + ScalePixels(10));
+                int labelWidth = Math.Max(minimumLabelWidth,
+                    Math.Min(ScalePixels(135), contentWidth - VisiblePointCount * minimum));
+                int available = contentWidth - labelWidth;
+                // On smaller windows or with the extra earthworks panel open,
+                // keep values readable and allow scrolling instead of shrinking text.
+                int width = Math.Max(minimum, Math.Min(ScalePixels(120), Math.Max(0, available) / VisiblePointCount));
                 if (!force && fittedPointWidth == width && fittedPointMinimum == minimum &&
                     fittedLabelWidth == labelWidth && fittedColumnCount == Columns.Count) return;
 
-                Columns[0].MinimumWidth = ScalePixels(125);
+                Columns[0].MinimumWidth = minimumLabelWidth;
                 if (Columns[0].Width != labelWidth) Columns[0].Width = labelWidth;
                 for (int index = 1; index < Columns.Count; index++)
                 {
@@ -506,7 +515,7 @@ namespace Profiles.AutoCAD.UI
             UpdateHeaders();
             UpdateDesignMode();
             loading = false;
-            FitElevenPointColumns();
+            FitTwelvePointColumns();
             Invalidate();
         }
 
@@ -694,7 +703,10 @@ namespace Profiles.AutoCAD.UI
                 e.Paint(e.ClipBounds, DataGridViewPaintParts.All);
                 var button = HeaderRoleButton(e.CellBounds);
                 ControlPaint.DrawButton(e.Graphics, button, ButtonState.Normal);
-                TextRenderer.DrawText(e.Graphics, "Назначить ▾", Font, button, Color.FromArgb(35, 65, 85),
+                string caption = TextRenderer.MeasureText("Назначить ▾", Font,
+                    Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width + ScalePixels(4) <= button.Width
+                    ? "Назначить ▾" : "Роль ▾";
+                TextRenderer.DrawText(e.Graphics, caption, Font, button, Color.FromArgb(35, 65, 85),
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis);
                 e.Handled = true;
             }
