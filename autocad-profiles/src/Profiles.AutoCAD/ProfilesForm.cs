@@ -279,14 +279,14 @@ namespace Profiles.AutoCAD
             {
                 earthworksPanel.Visible = showEarthworks.Checked;
                 crossLayout.ColumnStyles[2].Width = showEarthworks.Checked ? (float)(215 * DeviceDpi / 96.0) : 0;
-                crossGrid.FitTwelvePointColumns();
+                crossGrid.FitThirteenPointColumns();
             };
             crossPage.Controls.Add(layout);
             tips.SetToolTip(sectionStation, "Выберите или введите пикет и нажмите Enter. 6+50 означает 650 м, число 6 означает 6 м. Пикеты сортируются численно. Расстояния поперечника вводятся по съёмке.");
             tips.SetToolTip(leftSlope, "Заложение — горизонталь / вертикаль: для откоса 1:1,5 введите 1,5.");
             tips.SetToolTip(rightSlope, "Правый откос может отличаться от левого. Требуется положительное число.");
             tips.SetToolTip(sectionWater, "Урез общий для этого пикета: изменение переносится в продольный профиль и другие поперечники на том же ПК.");
-            tips.SetToolTip(showEarthworks, "Показать параметры снятия ила и рассчитанные площади. Панель изначально скрыта, чтобы в таблице помещалось двенадцать точек.");
+            tips.SetToolTip(showEarthworks, "Показать параметры снятия ила и рассчитанные площади. Панель изначально скрыта, чтобы в таблице помещалось тринадцать точек.");
         }
 
         private void BuildPreviewPage()

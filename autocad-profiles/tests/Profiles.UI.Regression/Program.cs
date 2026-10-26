@@ -36,7 +36,7 @@ internal static class Program
             Run("role actions target the clicked column and refresh menu state", AssignRoles);
             Run("reloading points refreshes roles without losing measurements", ReloadPoints);
             Run("disposing the grid releases both menus", DisposeMenus);
-            Run("twelve point columns fit and preserve active edits on resize", TwelveColumns);
+            Run("thirteen point columns fit and preserve active edits on resize", ThirteenColumns);
             FormWorkflowTests.Run();
             passed += FormWorkflowTests.Passed;
             Console.WriteLine("Passed: " + passed + ", failed: 0");
@@ -186,22 +186,23 @@ internal static class Program
                 "menu action changed measurements for point " + i);
     }
 
-    private static void TwelveColumns(SectionPointGrid grid)
+    private static void ThirteenColumns(SectionPointGrid grid)
     {
-        var points = Enumerable.Range(0, 12).Select(i => new SectionPoint
+        var points = Enumerable.Range(0, 13).Select(i => new SectionPoint
         {
             DistanceFromPrevious = i == 0 ? 0 : 1.25, Existing = 140 + i / 100.0,
-            Role = i == 0 ? SectionPointRole.LeftBank : i == 11 ? SectionPointRole.RightBank : SectionPointRole.Regular
+            Role = i == 0 ? SectionPointRole.LeftBank : i == 12 ? SectionPointRole.RightBank : SectionPointRole.Regular
         }).ToList();
+        grid.Font = new Font("Segoe UI", 9F);
         grid.LoadPoints(points);
         foreach (int width in new[] { 850, 1100, 900 })
         {
             grid.FindForm().ClientSize = new Size(width, 300);
-            grid.FitTwelvePointColumns();
+            grid.FitThirteenPointColumns();
             Application.DoEvents();
-            Require(grid.Columns.Count == 13, "fit changed point count");
-            var last = grid.GetCellDisplayRectangle(12, 1, false);
-            Require(last.Width > 0 && last.Right <= grid.ClientSize.Width, "twelfth point does not fit at width " + width);
+            Require(grid.Columns.Count == 14, "fit changed point count");
+            var last = grid.GetCellDisplayRectangle(13, 1, false);
+            Require(last.Width > 0 && last.Right <= grid.ClientSize.Width, "thirteenth point does not fit at width " + width);
             MeasurementsEqual(points, grid.ReadPoints());
         }
         grid.CurrentCell = grid.Rows[1].Cells[6];
@@ -209,7 +210,7 @@ internal static class Program
         var editor = (TextBox)grid.EditingControl;
         editor.Text = "147.123456789";
         grid.FindForm().ClientSize = new Size(1000, 300);
-        grid.FitTwelvePointColumns();
+        grid.FitThirteenPointColumns();
         Application.DoEvents();
         Require(grid.IsCurrentCellInEditMode && ReferenceEquals(editor, grid.EditingControl), "resize replaced active editor");
         Require(editor.Text == "147.123456789", "resize lost uncommitted text");

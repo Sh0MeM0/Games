@@ -17,6 +17,7 @@ namespace Profiles.Core
             // Interpolate only a copy, so blank cells remain derived values after anchors change.
             ProfileValidation.Check(project, geometry: false);
             var enteredLongitudinal = project.Longitudinal;
+            var enteredSections = project.Sections;
             if (project.Kind == ProfileKind.Longitudinal)
                 project = ProfileInterpolation.ResolveLongitudinal(project);
             else
@@ -73,12 +74,13 @@ namespace Profiles.Core
             else
             {
                 double? previousBottom = null;
-                foreach (CrossSection section in project.Sections)
+                for (int sectionIndex = 0; sectionIndex < project.Sections.Count; sectionIndex++)
                 {
+                    var section = project.Sections[sectionIndex];
                     List<Point2> trapezoid;
                     trapezoids.TryGetValue(section, out trapezoid);
                     var sectionPlan = new DrawingPlan { Datum = datum };
-                    new PlanBuilder(activeSettings, sectionPlan, project.Template).Section(section, trapezoid, sectionEarthworks[section]);
+                    new PlanBuilder(activeSettings, sectionPlan, project.Template).Section(section, enteredSections[sectionIndex], trapezoid, sectionEarthworks[section]);
                     double minY = Bounds(sectionPlan.Entities, false), maxY = Bounds(sectionPlan.Entities, true);
                     double shift = previousBottom.HasValue ? previousBottom.Value - 20 * builder.Layout - maxY : 0;
                     if (sectionPlans == null)
@@ -220,7 +222,7 @@ namespace Profiles.Core
             internal PlanBuilder(ProfileSettings settings, DrawingPlan plan, ProfileTemplate template)
             { this.settings = settings; this.plan = plan; this.template = template; Paper = settings.HorizontalScale / (1000 * settings.MetresPerDrawingUnit); }
 
-            private void Line(Point2 a, Point2 b, string layer = "PROF_GRID", short color = 8, double weight = 0.18)
+            private void Line(Point2 a, Point2 b, string layer = "PROF_GRID", short color = 7, double weight = 0.18)
             { plan.Entities.Add(new DrawPolyline { Layer = layer, ColorIndex = color, LineWeightMm = weight, Points = new List<Point2> { a, b } }); }
 
             private void Text(double x, double y, string value, double rotation = 0, short color = 7, TextAlignment alignment = TextAlignment.Center, double width = 0, double? height = null)
@@ -538,11 +540,12 @@ namespace Profiles.Core
                 Text(left + (dz < 0 ? 0.33 : 0.67) * dx, bottom + 0.27 * (top - bottom), F(length));
             }
 
-            internal void Section(CrossSection section, List<Point2> trapezoid, SectionEarthworks earthworks)
+            internal void Section(CrossSection section, CrossSection entered, List<Point2> trapezoid, SectionEarthworks earthworks)
             {
                 double minX = section.Points[0].Offset, width = X(section.Points.Last().Offset - minX), labels = 38 * Layout;
                 Func<Point2, Point2> transform = p => new Point2(X(p.X - minX), Y(p.Y));
                 List<SectionPoint> display = SectionDisplayGeometry.Build(earthworks);
+                List<SectionPoint> table = SectionDisplayGeometry.BuildTable(earthworks, entered);
                 List<List<Point2>> existing = SectionGeometry.Runs(section.Points, false);
                 List<List<Point2>> design = trapezoid != null ? new List<List<Point2>> { trapezoid } : SectionGeometry.Runs(section.Points, true);
                 var water = new List<List<Point2>>();
@@ -571,7 +574,7 @@ namespace Profiles.Core
                 var rows = new List<Tuple<string, double, string>> { Tuple.Create("№ ТОЧКИ", 6.0, "number"), Tuple.Create("РАССТОЯНИЕ, м", 5.0, "distance") };
                 rows.Add(Tuple.Create("ОТМЕТКИ\nПОВЕРХНОСТИ, м", 12.0, "existing"));
                 rows.Add(Tuple.Create("ПРОЕКТНЫЕ\nОТМЕТКИ, м", 12.0, "design"));
-                var cells = rows.Select(row => SectionCells(row.Item3, display, minX, row.Item2 * Paper)).ToList();
+                var cells = rows.Select(row => SectionCells(row.Item3, table, minX, row.Item2 * Paper)).ToList();
                 var heights = rows.Select(row => row.Item2 * Paper).ToList();
                 double bottomY = -heights.Sum(), top = 0;
                 int rowIndex = 0;

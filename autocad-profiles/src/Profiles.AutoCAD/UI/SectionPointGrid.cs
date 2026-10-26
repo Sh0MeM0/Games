@@ -35,7 +35,7 @@ namespace Profiles.AutoCAD.UI
     /// <summary>Horizontal section editor; rendered precision never changes the raw survey data.</summary>
     public sealed class SectionPointGrid : DataGridView
     {
-        private const int VisiblePointCount = 12;
+        private const int VisiblePointCount = 13;
         private readonly List<SectionPoint> points = new List<SectionPoint>();
         private readonly Dictionary<string, string> invalid = new Dictionary<string, string>();
         private readonly ToolStripMenuItem interpolate;
@@ -175,15 +175,16 @@ namespace Profiles.AutoCAD.UI
                 }
             };
             DataError += (s, e) => { e.ThrowException = false; e.Cancel = false; };
-            FitTwelvePointColumns();
+            FitThirteenPointColumns();
         }
 
-        /// <summary>Reserves room for twelve point columns without creating points or changing an active edit.</summary>
-        public void FitTwelvePointColumns() => FitPointColumns(true);
+        /// <summary>Reserves room for thirteen point columns without creating points or changing an active edit.</summary>
+        public void FitThirteenPointColumns() => FitPointColumns(true);
 
         // Retained for existing form callers; all callers use the current layout.
-        public void FitElevenPointColumns() => FitTwelvePointColumns();
-        public void FitTenPointColumns() => FitTwelvePointColumns();
+        public void FitTwelvePointColumns() => FitThirteenPointColumns();
+        public void FitElevenPointColumns() => FitThirteenPointColumns();
+        public void FitTenPointColumns() => FitThirteenPointColumns();
 
         private void FitPointColumns(bool force)
         {
@@ -200,7 +201,7 @@ namespace Profiles.AutoCAD.UI
                 int borderWidth = BorderStyle == BorderStyle.None ? 0 : ScalePixels(BorderStyle == BorderStyle.Fixed3D ? 4 : 2);
                 int scrollbarWidth = Controls.OfType<VScrollBar>().Where(bar => bar.Visible).Sum(bar => bar.Width);
                 int contentWidth = ClientSize.Width - borderWidth - scrollbarWidth - (RowHeadersVisible ? RowHeadersWidth : 0);
-                int minimum = Math.Max(ScalePixels(60), TextRenderer.MeasureText("-999.99", Font,
+                int minimum = Math.Max(ScalePixels(56), TextRenderer.MeasureText("-999.99", Font,
                     Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width + DefaultCellStyle.Padding.Horizontal + ScalePixels(4));
                 int minimumLabelWidth = Math.Max(ScalePixels(100), TextRenderer.MeasureText("Интервал, м", Font,
                     Size.Empty, TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width + ScalePixels(10));
@@ -515,7 +516,7 @@ namespace Profiles.AutoCAD.UI
             UpdateHeaders();
             UpdateDesignMode();
             loading = false;
-            FitTwelvePointColumns();
+            FitThirteenPointColumns();
             Invalidate();
         }
 

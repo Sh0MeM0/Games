@@ -11,6 +11,21 @@ namespace Profiles.Core
     {
         public static List<SectionPoint> Build(SectionEarthworks result)
         {
+            return BuildInternal(result, null);
+        }
+
+        /// <summary>
+        /// Same drawing ordinates, with elevations only at each curve's own
+        /// vertices. Authored manual anchors must be supplied before interpolation.
+        /// </summary>
+        public static List<SectionPoint> BuildTable(SectionEarthworks result, CrossSection entered)
+        {
+            if (entered == null) throw new ArgumentNullException(nameof(entered));
+            return BuildInternal(result, entered);
+        }
+
+        private static List<SectionPoint> BuildInternal(SectionEarthworks result, CrossSection entered)
+        {
             if (result == null) throw new ArgumentNullException(nameof(result));
             var section = result.ResolvedSection;
             if (section == null || section.Points == null)
@@ -18,6 +33,16 @@ namespace Profiles.Core
             var offsets = new SortedSet<double>();
             foreach (var point in section.Points) offsets.Add(point.Offset);
             var rawOffsets = new HashSet<double>(offsets);
+            var manualAnchorOffsets = new HashSet<double>();
+            if (entered != null)
+            {
+                if (entered.Points == null || entered.Points.Count != section.Points.Count)
+                    throw new ArgumentException("Исходные и расчётные точки поперечника не совпадают.", nameof(entered));
+                for (int index = 0; index < entered.Points.Count; index++)
+                    if (entered.Points[index].Design.HasValue ||
+                        (entered.UseLongitudinalProjectBottom && entered.ProjectAnchorIndex == index))
+                        manualAnchorOffsets.Add(section.Points[index].Offset);
+            }
             var vertexCoordinates = new Dictionary<double, double>();
             var existingRuns = SectionGeometry.Runs(section.Points, false);
             var mode = ProfileInterpolation.EffectiveDesignMode(section);
@@ -50,10 +75,20 @@ namespace Profiles.Core
                 if (!vertexCoordinates.TryGetValue(offset, out designOffset)) designOffset = offset;
                 double? design = mode == SectionDesignMode.Points ? Sample(section.Points, designOffset, true) :
                     mode == SectionDesignMode.Trapezoid ? SectionGeometry.InterpolateStrict(result.DesignCurve, designOffset) : null;
+                double? existing = Sample(section.Points, offset, false);
+                if (entered != null)
+                {
+                    // Ordinates used to draw/intersect two curves do not create
+                    // surveyed elevations or new authored design anchors.
+                    if (!rawOffsets.Contains(offset)) existing = null;
+                    bool ownDesignVertex = mode == SectionDesignMode.Points
+                        ? manualAnchorOffsets.Contains(offset) : vertexCoordinates.ContainsKey(offset);
+                    if (!ownDesignVertex) design = null;
+                }
                 display.Add(new SectionPoint
                 {
                     Offset = offset,
-                    Existing = Sample(section.Points, offset, false),
+                    Existing = existing,
                     Design = design,
                     DistanceFromPrevious = display.Count == 0 ? 0 : offset - display[display.Count - 1].Offset
                 });

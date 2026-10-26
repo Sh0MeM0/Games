@@ -1,2 +1,2 @@
-69c3ba8b80d54a5ac27832c42a13729c8a7f623785f5da9d48573f3a978ab96d  Profiles-Setup-0.8.3.exe
-4bf8ff09792c9b693e5f7a3b5d8e5f6ae3e4c2e9ac13449aebe8c0e8f9e258a2  Profiles-Bundle-0.8.3.zip
+ab4a60ed93675deeecac89f17f5e970488293b349ad8ed6ddb749eb9ed89fe58  Profiles-Setup-0.8.4.exe
+57cd74da54890008dc2eeebf8ddbca6b7a98687f8a446bc530c84f82c0b82d4c  Profiles-Bundle-0.8.4.zip

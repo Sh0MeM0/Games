@@ -27,7 +27,7 @@ public sealed class CrossPresentationTests
         var distances = Assert.Single(texts, text => text.Text == "РАССТОЯНИЕ, м");
         Assert.Equal(new[] { "5.00", "2.00", "1.00", "1.00", "4.00", "3.00" }, texts.Where(text => text.Position.X >= 0 && text.Position.Y == distances.Position.Y).Select(text => text.Text));
         var design = Assert.Single(texts, text => text.Text == "ПРОЕКТНЫЕ\nОТМЕТКИ, м");
-        Assert.Equal(new[] { "10.00", "8.00", "8.00", "8.00", "10.00" }, texts.Where(text => text.Position.X >= 0 && text.Position.Y == design.Position.Y).Select(text => text.Text));
+        Assert.Equal(new[] { "10.00", "8.00", "8.00", "10.00" }, texts.Where(text => text.Position.X >= 0 && text.Position.Y == design.Position.Y).Select(text => text.Text));
         Assert.Equal(new[] { -8.0, 0, 8 }, section.Points.Select(point => point.Offset));
         Assert.All(section.Points, point => Assert.Null(point.Design));
         Assert.Contains(texts, text => text.Text == "1:1");
