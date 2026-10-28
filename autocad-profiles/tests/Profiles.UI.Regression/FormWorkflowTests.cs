@@ -19,6 +19,7 @@ internal static class FormWorkflowTests
         Check("profile deletion keeps the surviving tab and persists its selection", DeleteProfile);
         Check("end station displays recalculating extrapolated elevations without saving anchors", EndStation);
         Check("drawn station shows interpolated bottom and slopes in the editor", InterpolatedDimensions);
+        Check("row fill is explicit, preserves manual input and survives template switches", FillRow);
         Check("station picker assigns existing station without rounding its precision", StationPicker);
     }
 
@@ -99,6 +100,44 @@ internal static class FormWorkflowTests
             Require(derived["2:ProjectBottom"] == 103, "changed anchor did not recalculate endpoint");
             var result = (ProfileProject)Call(form, "ReadProject");
             Require(!result.Longitudinal[2].ProjectBottom.HasValue, "derived endpoint became a fixed anchor");
+        }
+    }
+
+    private static void FillRow()
+    {
+        var source = Project();
+        source.Sections.Clear();
+        source.Longitudinal = new List<LongitudinalPoint>
+        {
+            new LongitudinalPoint { Station = 0, LeftBank = 110, RightBank = 111, ExistingBottom = 100,
+                ProjectBottom = 99, Water = 105, BottomWidth = 4, LeftSlope = 1, RightSlope = 2 },
+            new LongitudinalPoint { Station = 20, LeftBank = 108, RightBank = 109, ExistingBottom = 98,
+                ProjectBottom = 97, Water = 104, BottomWidth = 6, LeftSlope = 2, RightSlope = 3 },
+            new LongitudinalPoint { Station = 50, RightBank = 120 }
+        };
+        using (var form = new ProfilesForm(ProfileKind.Longitudinal, source))
+        {
+            Prepare(form);
+            var grid = Field<DataGridView>(form, "longGrid");
+            Require(grid.Columns["FillMissing"].Visible && grid.Columns["FillMissing"].Frozen, "fill button is not visible beside station");
+            var before = (ProfileProject)Call(form, "ReadProject");
+            Require(!before.Longitudinal[2].LeftBank.HasValue && !before.Longitudinal[2].BottomWidth.HasValue,
+                "empty cells were filled without a click");
+            var target = grid.Rows.Cast<DataGridViewRow>().Single(row => !row.IsNewRow && Equals(row.Cells["Station"].Value, 50.0));
+            typeof(DataGridView).GetMethod("OnCellContentClick", Private).Invoke(grid,
+                new object[] { new DataGridViewCellEventArgs(grid.Columns["FillMissing"].Index, target.Index) });
+            var result = (ProfileProject)Call(form, "ReadProject");
+            var filled = result.Longitudinal.Single(point => point.Station == 50);
+            Require(filled.LeftBank == 105 && filled.Water == 102.5 && filled.BottomWidth == 9, "row button lost bank/water/width continuation");
+            Require(filled.LeftSlope == 3.5 && filled.RightSlope == 4.5, "slopes were not filled");
+            Require(filled.RightBank == 120, "manual bank was overwritten");
+            Call(form, "SelectTemplate", ProfileTemplate.Nvk);
+            Require(grid.Columns["FillMissing"].Visible, "template switch hid row button");
+            Require(!(bool)typeof(ProfilesForm).GetMethod("RowEmpty", BindingFlags.Static | BindingFlags.NonPublic)
+                .Invoke(null, new object[] { target }), "filled row became empty");
+            int blank = grid.Rows.Add();
+            Require((bool)typeof(ProfilesForm).GetMethod("RowEmpty", BindingFlags.Static | BindingFlags.NonPublic)
+                .Invoke(null, new object[] { grid.Rows[blank] }), "button turned blank row into data");
         }
     }
 

@@ -12,7 +12,7 @@ namespace Profiles.AutoCAD
     {
         private readonly Timer interpolationTimer = new Timer { Interval = 180 };
         private readonly Dictionary<string, double> derivedValues = new Dictionary<string, double>();
-        private readonly string[] elevationColumns = { "Ground", "LeftBank", "RightBank", "ExistingBottom", "Water", "ProjectBottom", "ProjectGround", "PipeInvert", "BottomWidth", "LeftSlope", "RightSlope" };
+        private readonly string[] elevationColumns = { "Ground", "LeftBank", "RightBank", "ExistingBottom", "Water", "ProjectBottom", "ProjectGround", "PipeInvert", "BottomWidth", "LeftSlope", "RightSlope", "PeatDepth" };
         private Font interpolationFont;
         private double? currentSectionStation;
         private bool stationInputEdited;
@@ -40,7 +40,7 @@ namespace Profiles.AutoCAD
                 e.CellStyle.Font = longGrid.Font;
                 e.CellStyle.BackColor = e.RowIndex % 2 == 0 ? Color.White : longGrid.AlternatingRowsDefaultCellStyle.BackColor;
                 string name = longGrid.Columns[e.ColumnIndex].Name;
-                if (name == "PipeDescription" || name == "Foundation" || name == "PointName") return;
+                if (name == "FillMissing" || name == "PipeDescription" || name == "Foundation" || name == "PointName") return;
                 var raw = longGrid.Rows[e.RowIndex].Cells[e.ColumnIndex].Value;
                 if (string.IsNullOrWhiteSpace(Convert.ToString(raw, CultureInfo.InvariantCulture)) && derivedValues.TryGetValue(e.RowIndex + ":" + name, out var calculated))
                 {
@@ -91,11 +91,40 @@ namespace Profiles.AutoCAD
             projectBottom.ForeColor = Color.Firebrick;
         }
 
+        private void FillLongitudinalRow(DataGridViewRow row)
+        {
+            if (row.IsNewRow || RowEmpty(row)) return;
+            try
+            {
+                if (!longGrid.EndEdit()) return;
+                var raw = ReadLongitudinal(); // May sort rows; keep the row object, not its old index.
+                double station = Required(row, "Station");
+                var calculated = ProfileInterpolation.FillMissingLongitudinal(raw, station);
+                int filled = 0, missing = 0;
+                foreach (string field in elevationColumns)
+                {
+                    if (!longGrid.Columns[field].Visible || Optional(row, field).HasValue) continue;
+                    double? value = Elevation(calculated, field);
+                    if (!value.HasValue) { missing++; continue; }
+                    row.Cells[field].Value = value.Value;
+                    RecordLongitudinalCell(row.Cells[field]);
+                    filled++;
+                }
+                if (filled > 0) { SetDirty(); QueueSharedCommit(); }
+                RecalculateDerivedValues();
+                RefreshEarthworks();
+                SetStatus(StationCaption(station) + ": заполнено ячеек — " + filled +
+                    (missing > 0 ? "; без опор или с недопустимым результатом — " + missing + ". Введите их вручную." : ". Введённые значения сохранены."));
+            }
+            catch (Exception ex) { ShowError(ex.Message); }
+        }
+
         private static double? Elevation(LongitudinalPoint point, string field)
         {
             switch (field)
             {
                 case "Ground": return point.Ground;
+                case "PeatDepth": return point.PeatDepth;
                 case "LeftBank": return point.LeftBank;
                 case "RightBank": return point.RightBank;
                 case "ExistingBottom": return point.ExistingBottom;

@@ -108,6 +108,7 @@ namespace Profiles.AutoCAD
                 visible = new[] { "Station", "Ground", "ProjectBottom", "PeatDepth", "BottomWidth", "LeftSlope", "RightSlope" };
             else
                 visible = new[] { "Station", "LeftBank", "RightBank", "ExistingBottom", "Water", "ProjectBottom", "BottomWidth", "LeftSlope", "RightSlope" };
+            visible = new[] { "FillMissing" }.Concat(visible).ToArray();
             foreach (DataGridViewColumn column in longGrid.Columns) column.Visible = visible.Contains(column.Name);
             for (int i = 0; i < visible.Length; i++) longGrid.Columns[visible[i]].DisplayIndex = i;
             longGrid.Columns["Ground"].HeaderText = SelectedTemplate == ProfileTemplate.Nvk ? "Натурная земля, м" : "Земля, м";

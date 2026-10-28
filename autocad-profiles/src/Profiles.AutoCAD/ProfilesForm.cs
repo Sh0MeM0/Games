@@ -364,6 +364,21 @@ namespace Profiles.AutoCAD
             longGrid.Columns[5].DefaultCellStyle.ForeColor = Color.RoyalBlue;
             longGrid.Columns[2].DefaultCellStyle.ForeColor = Color.Black;
             longGrid.Columns[3].DefaultCellStyle.ForeColor = Color.Black;
+            longGrid.Columns.Add(new DataGridViewButtonColumn
+            {
+                Name = "FillMissing", HeaderText = "Расчёт строки", Text = "Заполнить",
+                UseColumnTextForButtonValue = true, ReadOnly = true, Width = Px(115),
+                ToolTipText = "Заполнить пустые отметки, ширину и откосы этого пикета по известным значениям. Введённые числа сохраняются."
+            });
+            longGrid.Columns["Station"].Frozen = false;
+            longGrid.Columns["FillMissing"].DisplayIndex = 0;
+            longGrid.Columns["FillMissing"].Frozen = true;
+            longGrid.Columns["Station"].Frozen = true;
+            longGrid.CellContentClick += (sender, args) =>
+            {
+                if (args.RowIndex < 0 || args.ColumnIndex != longGrid.Columns["FillMissing"].Index) return;
+                FillLongitudinalRow(longGrid.Rows[args.RowIndex]);
+            };
         }
 
         private void ConfigureCrossGrid()
@@ -454,7 +469,7 @@ namespace Profiles.AutoCAD
                 if (raw.Length == 0) return;
                 string[][] values = raw.Split('\n').Select(line => line.Split('\t')).ToArray();
                 int row = grid.CurrentCell == null ? 0 : grid.CurrentCell.RowIndex;
-                var visible = grid.Columns.Cast<DataGridViewColumn>().Where(c => c.Visible).OrderBy(c => c.DisplayIndex).ToList();
+                var visible = grid.Columns.Cast<DataGridViewColumn>().Where(c => c.Visible && !(c is DataGridViewButtonColumn)).OrderBy(c => c.DisplayIndex).ToList();
                 int column = grid.CurrentCell == null ? 0 : visible.FindIndex(c => c.Index == grid.CurrentCell.ColumnIndex);
                 if (column < 0) column = 0;
                 if (values.Length + row > 10000) throw new InvalidOperationException("Слишком много строк: максимум 10 000.");
@@ -554,7 +569,7 @@ namespace Profiles.AutoCAD
 
         private static bool RowEmpty(DataGridViewRow row)
         {
-            return row.Cells.Cast<DataGridViewCell>().All(c => string.IsNullOrWhiteSpace(Convert.ToString(c.Value, CultureInfo.InvariantCulture)));
+            return row.Cells.Cast<DataGridViewCell>().Where(c => !(c is DataGridViewButtonCell)).All(c => string.IsNullOrWhiteSpace(Convert.ToString(c.Value, CultureInfo.InvariantCulture)));
         }
 
         private static double Required(DataGridViewRow row, string column)

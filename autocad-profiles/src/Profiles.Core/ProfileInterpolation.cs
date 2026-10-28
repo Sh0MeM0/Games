@@ -49,6 +49,39 @@ namespace Profiles.Core
             return result;
         }
 
+        /// <summary>Explicit row action: fill from raw anchors, including both ends; never overwrite manual values.</summary>
+        public static LongitudinalPoint FillMissingLongitudinal(IList<LongitudinalPoint> source, double station)
+        {
+            CheckLongitudinal(source);
+            ProfileValidation.Range(station, -1000000000, 1000000000, "Пикетаж");
+            foreach (var point in source)
+                if (point.PeatDepth.HasValue) ProfileValidation.Range(point.PeatDepth.Value, 0, 1000000, "Глубина торфа");
+            var fields = InterpolatedValues.Concat(new Func<LongitudinalPoint, double?>[] { point => point.PeatDepth }).ToArray();
+            var exact = source.FirstOrDefault(point => point.Station == station);
+            var result = exact == null ? new LongitudinalPoint { Station = station } : Copy(exact);
+            for (int column = 0; column < fields.Length; column++)
+            {
+                var get = fields[column];
+                if (get(result).HasValue) continue;
+                var known = source.Where(point => get(point).HasValue).ToList();
+                if (known.Count == 0) continue;
+                double? value = ValueAt(known, point => point.Station, get, station);
+                if (!value.HasValue)
+                {
+                    int first = station < known[0].Station ? 0 : Math.Max(0, known.Count - 2);
+                    int second = Math.Min(first + 1, known.Count - 1);
+                    value = first == second ? get(known[first]) : Between(known[first].Station, get(known[first]).Value,
+                        known[second].Station, get(known[second]).Value, station);
+                }
+                // A linear continuation may produce an impossible width or slope.
+                // Leave it empty for manual input instead of accepting invalid geometry.
+                if (column >= 8 && (!NumberParser.Finite(value.Value) || value < (column == 11 ? 0 : 0.000001) || value > 1000000)) continue;
+                ProfileValidation.Elevation(column < 8 ? value : null, "Расчётная отметка");
+                Set(result, column, value);
+            }
+            return result;
+        }
+
         public static LongitudinalPoint SampleLongitudinal(IList<LongitudinalPoint> source, double station)
         {
             CheckLongitudinal(source);
@@ -386,6 +419,7 @@ namespace Profiles.Core
                 case 8: point.BottomWidth = value; break;
                 case 9: point.LeftSlope = value; break;
                 case 10: point.RightSlope = value; break;
+                case 11: point.PeatDepth = value; break;
             }
         }
 
