@@ -71,17 +71,25 @@ public sealed class LongitudinalDesignInterpolationTests
     [Theory]
     [InlineData(-10)]
     [InlineData(110)]
-    public void GeneralSamplingDoesNotExtrapolateElevationsOrDimensions(double station)
+    public void SamplingContinuesEndElevationsButDoesNotExtendDimensions(double station)
     {
         var sample = ProfileInterpolation.SampleLongitudinal(Profile().Longitudinal, station);
-        Assert.Null(sample.ExistingBottom);
-        Assert.Null(sample.ProjectBottom);
+        if (station < 0)
+        {
+            Assert.Null(sample.ExistingBottom);
+            Assert.Null(sample.ProjectBottom);
+        }
+        else
+        {
+            Assert.Equal(12.4, sample.ExistingBottom!.Value, 10);
+            Assert.Equal(9.2, sample.ProjectBottom!.Value, 10);
+        }
         Assert.Null(sample.BottomWidth);
         Assert.Null(sample.LeftSlope);
         Assert.Null(sample.RightSlope);
 
         // Only the explicit new-section suggestion API carries endpoint
-        // dimensions; elevations must never be extrapolated with them.
+        // dimensions; elevation continuation belongs to SampleLongitudinal.
         var seed = ProfileInterpolation.SampleDesignParameters(Profile().Longitudinal, station);
         Assert.Equal(station < 0 ? 2 : 4, seed.BottomWidth);
         Assert.Equal(station < 0 ? 1 : 3, seed.LeftSlope);

@@ -16,6 +16,8 @@ internal static class FormWorkflowTests
         foreach (string name in new[] { "0+20", "20", "ПК 0+20" })
             Check("station name " + name + " transfers captured survey into longitudinal grid", () => NameAssigns(name));
         Check("ordinary survey name stays unassigned", OrdinaryName);
+        Check("profile deletion keeps the surviving tab and persists its selection", DeleteProfile);
+        Check("end station displays recalculating extrapolated elevations without saving anchors", EndStation);
         Check("drawn station shows interpolated bottom and slopes in the editor", InterpolatedDimensions);
         Check("station picker assigns existing station without rounding its precision", StationPicker);
     }
@@ -52,6 +54,51 @@ internal static class FormWorkflowTests
             Require(grid.Rows.Cast<DataGridViewRow>().Any(r => !r.IsNewRow && Equals(r.Cells["ExistingBottom"].Value, 109.25)), "longitudinal UI is stale");
             Field<TabControl>(form, "tabs").SelectedTab = Field<TabPage>(form, "longPage");
             Application.DoEvents();
+        }
+    }
+
+    private static void DeleteProfile()
+    {
+        var first = Project();
+        var source = ProfileCollection.Add(first, "Лишний");
+        using (var form = new ProfilesForm(ProfileKind.Longitudinal, source))
+        {
+            Prepare(form);
+            Require(Field<Button>(form, "deleteProfileButton").Enabled, "delete is not available for extra profile");
+            Call(form, "RemoveCurrentProfile");
+            var result = (ProfileProject)Call(form, "ReadProject");
+            Require(result.ProfileId == first.ProfileId, "surviving profile is not selected");
+            Require(result.AdditionalProfiles.Count == 0, "deleted profile was retained");
+            Require(result.Longitudinal.Count == first.Longitudinal.Count, "surviving data lost");
+            Require(result.Sections.Count == first.Sections.Count, "surviving sections lost");
+            Require(Field<TabControl>(form, "profileTabs").TabCount == 1, "deleted tab is still displayed");
+            Require(!Field<Button>(form, "deleteProfileButton").Enabled, "single remaining profile can be deleted");
+        }
+    }
+
+    private static void EndStation()
+    {
+        var source = Project();
+        source.Longitudinal = new List<LongitudinalPoint>
+        {
+            new LongitudinalPoint { Station = 0, ExistingBottom = 110, ProjectBottom = 108 },
+            new LongitudinalPoint { Station = 20, ExistingBottom = 108, ProjectBottom = 107 },
+            new LongitudinalPoint { Station = 50 }
+        };
+        source.Sections.Clear();
+        using (var form = new ProfilesForm(ProfileKind.Longitudinal, source))
+        {
+            Prepare(form);
+            Call(form, "RecalculateDerivedValues");
+            var derived = Field<Dictionary<string, double>>(form, "derivedValues");
+            Require(derived["2:ExistingBottom"] == 105, "existing bottom did not extrapolate");
+            Require(derived["2:ProjectBottom"] == 105.5, "design bottom did not extrapolate");
+            var grid = Field<DataGridView>(form, "longGrid");
+            grid.Rows[1].Cells["ProjectBottom"].Value = 106.0;
+            Call(form, "RecalculateDerivedValues");
+            Require(derived["2:ProjectBottom"] == 103, "changed anchor did not recalculate endpoint");
+            var result = (ProfileProject)Call(form, "ReadProject");
+            Require(!result.Longitudinal[2].ProjectBottom.HasValue, "derived endpoint became a fixed anchor");
         }
     }
 

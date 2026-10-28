@@ -64,7 +64,7 @@ namespace Profiles.AutoCAD
                 if (e.RowIndex < 0 || e.ColumnIndex < 0) return;
                 string name = longGrid.Columns[e.ColumnIndex].Name;
                 if (derivedValues.TryGetValue(e.RowIndex + ":" + name, out var value))
-                    e.ToolTipText = "Расчётное значение " + Format(value) + ": линейная интерполяция между известными пикетами. Исходная ячейка остаётся пустой. Введите число, чтобы задать своё опорное значение.";
+                    e.ToolTipText = "Расчётное значение " + Format(value) + ": линейный расчёт по известным пикетам; после последней опоры дно и проектные отметки продолжаются с последним уклоном (при одной опоре — по её высоте). Исходная ячейка остаётся пустой. Введите число, чтобы задать своё опорное значение.";
             };
             sectionStation.DropDown += (s, e) => RefreshStationList();
             sectionStation.TextUpdate += (s, e) => { if (!loading) stationInputEdited = true; };

@@ -139,6 +139,50 @@ public sealed class ProfileCollectionTests
         Assert.Single(untouched.Sections);
     }
 
+    [Fact]
+    public void RemovingActiveMiddleTabSelectsNextAndPreservesOtherDataAndOrder()
+    {
+        var first = Project();
+        var second = ProfileCollection.Add(first, "Второй");
+        second.Longitudinal.Add(new() { Station = 5, ProjectBottom = 9 });
+        second.Sections.Add(new() { Name = "Удаляемый поперечник" });
+        var third = ProfileCollection.Add(second, "Третий");
+        third.Settings.HorizontalScale = 500;
+        var source = ProfileCollection.Select(third, second.ProfileId);
+        string before = ProjectFile.Serialize(source);
+        var result = ProfileCollection.Remove(source, second.ProfileId);
+        Assert.Equal(third.ProfileId, result.ProfileId);
+        Assert.Equal(1, result.ActiveProfileIndex);
+        Assert.Equal(500, result.Settings.HorizontalScale);
+        Assert.Empty(result.Longitudinal);
+        Assert.Empty(result.Sections);
+        Assert.Equal(new[] { first.ProfileId, third.ProfileId }, ProfileCollection.Enumerate(result).Select(p => p.ProfileId));
+        var retained = ProfileCollection.Select(result, first.ProfileId);
+        Assert.Equal(140, Assert.Single(retained.Longitudinal).ExistingBottom);
+        Assert.Equal(first.Sections[0].SectionId, Assert.Single(retained.Sections).SectionId);
+        Assert.Equal(before, ProjectFile.Serialize(source));
+        Assert.Equal(result.ProfileId, ProjectFile.Clone(result).ProfileId);
+    }
+
+    [Fact]
+    public void RemovingInactiveTabKeepsSelectionAndRemovingLastTabSelectsPrevious()
+    {
+        var first = Project();
+        var second = ProfileCollection.Add(first, "Второй");
+        var third = ProfileCollection.Add(second, "Третий");
+        var result = ProfileCollection.Remove(third, first.ProfileId);
+        Assert.Equal(third.ProfileId, result.ProfileId);
+        Assert.Equal(1, result.ActiveProfileIndex);
+        result = ProfileCollection.Remove(result, third.ProfileId);
+        Assert.Equal(second.ProfileId, result.ProfileId);
+        Assert.Equal(0, result.ActiveProfileIndex);
+        Assert.Empty(result.AdditionalProfiles);
+        string before = ProjectFile.Serialize(result);
+        Assert.Throws<ProfileValidationException>(() => ProfileCollection.Remove(result, result.ProfileId));
+        Assert.Throws<ProfileValidationException>(() => ProfileCollection.Remove(result, "missing"));
+        Assert.Equal(before, ProjectFile.Serialize(result));
+    }
+
     private static ProfileProject Project() => new()
     {
         Name = "Общий проект",

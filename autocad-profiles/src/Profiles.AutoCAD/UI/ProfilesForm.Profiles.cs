@@ -15,6 +15,7 @@ namespace Profiles.AutoCAD
             Padding = new Point(12, 3), Margin = new Padding(0, 3, 4, 0)
         };
         private readonly Dictionary<string, string> profileSectionSelections = new Dictionary<string, string>();
+        private Button deleteProfileButton;
         private ProfileProject profileContainer;
         private bool updatingProfileTabs;
 
@@ -29,15 +30,19 @@ namespace Profiles.AutoCAD
         {
             var bar = new TableLayoutPanel
             {
-                Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 3, RowCount = 1,
+                Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 4, RowCount = 1,
                 Margin = new Padding(0), Padding = new Padding(0, 0, 0, 3)
             };
             bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             bar.Controls.Add(profileTabs, 0, 0);
             bar.Controls.Add(Button("+ Профиль", AddProfile), 1, 0);
             bar.Controls.Add(Button("Имя профиля…", RenameProfile), 2, 0);
+            deleteProfileButton = Button("Удалить профиль…", DeleteProfile);
+            bar.Controls.Add(deleteProfileButton, 3, 0);
+            tips.SetToolTip(deleteProfileButton, "Удалить выбранный продольный профиль и его поперечники. Другие вкладки сохраняются.");
             profileTabs.SelectedIndexChanged += ProfileTabChanged;
             tips.SetToolTip(profileTabs, "Профили одного проекта. У каждой вкладки свои продольные данные, поперечники, шаблон и масштабы.");
             return bar;
@@ -62,6 +67,7 @@ namespace Profiles.AutoCAD
                         profileTabs.SelectedTab = page;
                 }
                 profileTabs.ShowToolTips = true;
+                if (deleteProfileButton != null) deleteProfileButton.Enabled = profileTabs.TabCount > 1;
             }
             finally { updatingProfileTabs = false; }
         }
@@ -113,6 +119,35 @@ namespace Profiles.AutoCAD
                 if (TrySaveCurrent(true)) SetStatus("Создан профиль «" + name + "». Введите его продольные данные или возьмите их из чертежа.");
             }
             catch (Exception error) { ShowError(error.Message); }
+        }
+
+        private void DeleteProfile()
+        {
+            if (profileContainer == null || ProfileCollection.Enumerate(profileContainer).Count <= 1) return;
+            if (!TrySaveCurrent(true)) return;
+            if (MessageBox.Show(this,
+                "Удалить профиль «" + Project.ProfileName + "»?\n\n" +
+                "Будут удалены его продольные данные и поперечники. Остальные профили проекта сохранятся. " +
+                "Уже построенные объекты останутся в чертеже; при необходимости удалите их вручную.\n\n" +
+                "Чтобы сохранить копию, нажмите «Нет» и экспортируйте проект в JSON.",
+                "Удаление профиля", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+            try { RemoveCurrentProfile(); }
+            catch (Exception error) { ShowError(error.Message); }
+        }
+
+        private void RemoveCurrentProfile()
+        {
+            var remaining = ProfileCollection.Remove(Project, CurrentProfileId);
+            string removedSelection = ProfileSelectionKey;
+            autoSaveTimer.Stop();
+            interpolationTimer.Stop();
+            LoadProject(remaining);
+            profileSectionSelections.Remove(removedSelection);
+            RestoreProfileSection();
+            SetDirty();
+            if (TrySaveCurrent(true))
+                SetStatus("Профиль удалён. Открыт профиль «" + remaining.ProfileName + "». Построенные объекты остались в чертеже.");
         }
 
         private void RenameProfile()

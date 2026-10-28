@@ -31,7 +31,7 @@ namespace Profiles.Core
             for (int column = 0; column < InterpolatedValues.Length; column++)
             {
                 var get = InterpolatedValues[column];
-                int previous = -1;
+                int previous = -1, penultimate = -1;
                 for (int next = 0; next < source.Count; next++)
                 {
                     if (!get(source[next]).HasValue) continue;
@@ -39,8 +39,12 @@ namespace Profiles.Core
                         for (int index = previous + 1; index < next; index++)
                             Set(result[index], column, Between(source[previous].Station, get(source[previous]).Value,
                                 source[next].Station, get(source[next]).Value, source[index].Station));
+                    penultimate = previous;
                     previous = next;
                 }
+                if (ExtendsEnd(column) && previous >= 0)
+                    for (int index = previous + 1; index < source.Count; index++)
+                        Set(result[index], column, EndValue(source, get, penultimate, previous, source[index].Station));
             }
             return result;
         }
@@ -52,7 +56,19 @@ namespace Profiles.Core
             var exact = source.FirstOrDefault(p => p.Station == station);
             var sample = exact == null ? new LongitudinalPoint { Station = station } : Copy(exact);
             for (int column = 0; column < InterpolatedValues.Length; column++)
-                Set(sample, column, ValueAt(source, p => p.Station, InterpolatedValues[column], station));
+            {
+                var get = InterpolatedValues[column];
+                double? value = ValueAt(source, p => p.Station, get, station);
+                if (!value.HasValue && ExtendsEnd(column))
+                {
+                    int last = -1, previous = -1;
+                    for (int index = 0; index < source.Count; index++)
+                        if (get(source[index]).HasValue) { previous = last; last = index; }
+                    if (last >= 0 && station > source[last].Station)
+                        value = EndValue(source, get, previous, last, station);
+                }
+                Set(sample, column, value);
+            }
             return sample;
         }
 
@@ -325,6 +341,20 @@ namespace Profiles.Core
                 return Between(coordinate(points[left]), value(points[left]).Value, x, value(points[index]).Value, target);
             }
             return null;
+        }
+
+        // Continue only the bottom/design elevations beyond their last raw anchor.
+        // Surveyed terrain, water and physical dimensions retain their existing rules.
+        private static bool ExtendsEnd(int column) => column == 3 || column == 5 || column == 6 || column == 7;
+
+        private static double EndValue(IList<LongitudinalPoint> source, Func<LongitudinalPoint, double?> get,
+            int previous, int last, double station)
+        {
+            double value = previous < 0 ? get(source[last]).Value :
+                Between(source[previous].Station, get(source[previous]).Value,
+                    source[last].Station, get(source[last]).Value, station);
+            ProfileValidation.Elevation(value, "Экстраполированная отметка");
+            return value;
         }
 
         private static double Between(double x0, double y0, double x1, double y1, double x) =>

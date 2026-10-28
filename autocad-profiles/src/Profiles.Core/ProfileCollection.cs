@@ -53,6 +53,22 @@ namespace Profiles.Core
             return result;
         }
 
+        public static ProfileProject Remove(ProfileProject source, string profileId)
+        {
+            var result = ProjectFile.Clone(source);
+            var profiles = Snapshots(result);
+            int index = Find(profiles, profileId);
+            if (profiles.Count == 1)
+                throw new ProfileValidationException("Нельзя удалить единственный профиль проекта. Создайте другой профиль или удалите весь проект.");
+            string activeId = result.ProfileId;
+            profiles.RemoveAt(index);
+            int selected = string.Equals(activeId, profileId, StringComparison.OrdinalIgnoreCase)
+                ? Math.Min(index, profiles.Count - 1) : Find(profiles, activeId);
+            Activate(result, profiles, selected);
+            ProfileValidation.Check(result, false);
+            return result;
+        }
+
         public static ProfileProject Rename(ProfileProject source, string profileId, string name)
         {
             var result = ProjectFile.Clone(source);
