@@ -232,7 +232,8 @@ namespace Profiles.AutoCAD
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, Px(150)));
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 0));
-            var left = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(4) };
+            var left = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6, Padding = new Padding(4) };
+            left.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             left.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             left.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             left.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -242,7 +243,8 @@ namespace Profiles.AutoCAD
             sectionStation.Dock = DockStyle.Top;
             left.Controls.Add(sectionStation, 0, 1);
             left.Controls.Add(Button("Обновить по ПК", RefreshStationSeed), 0, 2);
-            left.Controls.Add(sectionList, 0, 3);
+            left.Controls.Add(BuildCrossApproximationPanel(), 0, 3);
+            left.Controls.Add(sectionList, 0, 4);
             var listButtons = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true };
             listButtons.Controls.Add(Button("+ до", () => InsertSection(false)));
             listButtons.Controls.Add(Button("+ после", () => InsertSection(true)));
@@ -250,7 +252,7 @@ namespace Profiles.AutoCAD
             listButtons.Controls.Add(Button("−", RemoveSection));
             foreach (Button button in listButtons.Controls)
                 button.MinimumSize = new Size(Px(50), Px(26));
-            left.Controls.Add(listButtons, 0, 4);
+            left.Controls.Add(listButtons, 0, 5);
             layout.Controls.Add(left, 0, 0);
 
             var center = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 6, ColumnCount = 1, Padding = new Padding(3) };
@@ -267,7 +269,7 @@ namespace Profiles.AutoCAD
             header.Controls.Add(showEarthworks);
             center.Controls.Add(header, 0, 0);
             center.Controls.Add(BuildCrossDesignPanel(), 0, 1);
-            center.Controls.Add(Note("Слева направо по течению · интервалы по съёмке · пусто = неизвестно"), 0, 2);
+            center.Controls.Add(Note("Слева направо по течению · ручной ввод или расчётные кнопки слева · пусто = неизвестно"), 0, 2);
             center.Controls.Add(crossGrid, 0, 3);
             center.Controls.Add(BuildPointToolbar(), 0, 4);
             center.Controls.Add(Note("«Назначить» в шапке: берега / дно · Пустая отметка: ▼ → интерполяция · Красная ячейка: проектное дно · Ctrl+V: Excel"), 0, 5);

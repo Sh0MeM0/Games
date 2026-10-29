@@ -1,0 +1,167 @@
+{
+  "SchemaVersion": 5,
+  "ProjectId": "d0fd55133b584dffa96ca2f7f79cd0d5",
+  "Name": "Расчётный пример: bowl",
+  "ProfileId": "38281014654841d39a8dd09dc565b098",
+  "ProfileName": "Профиль 1",
+  "ActiveProfileIndex": 0,
+  "AdditionalProfiles": [],
+  "Kind": "CrossSection",
+  "Template": "Reconstruction",
+  "Settings": {
+    "Title": "ПРОДОЛЬНЫЙ ПРОФИЛЬ",
+    "HorizontalScale": 1000.0,
+    "VerticalScale": 100.0,
+    "CrossHorizontalScale": null,
+    "CrossVerticalScale": null,
+    "MetresPerDrawingUnit": 1.0,
+    "Datum": null,
+    "TextHeightMm": 2.5,
+    "TextWidthFactor": 0.85,
+    "ShowEmptyRows": true
+  },
+  "Longitudinal": [],
+  "Sections": [
+    {
+      "SectionId": "182b8302983e46838d72a9abcba3f23e",
+      "Name": "Расчётный пример — bowl",
+      "DesignMode": "None",
+      "UsePointDistances": true,
+      "ProjectAnchorIndex": null,
+      "UseLongitudinalProjectBottom": false,
+      "UseLongitudinalWater": false,
+      "SiltThickness": null,
+      "SiltLeft": null,
+      "SiltRight": null,
+      "LeftBank": 103.2,
+      "RightBank": 104.5,
+      "ExistingBottom": 100.0,
+      "Station": null,
+      "Water": null,
+      "ProjectBottom": null,
+      "BottomWidth": null,
+      "LeftSlope": null,
+      "RightSlope": null,
+      "CenterOffset": 0.0,
+      "Points": [
+        {
+          "Label": "",
+          "Role": "LeftBank",
+          "DistanceFromPrevious": 0.0,
+          "UseLongitudinalElevation": false,
+          "Offset": 0.0,
+          "Existing": 103.2,
+          "Design": null
+        },
+        {
+          "Label": "",
+          "Role": "Regular",
+          "DistanceFromPrevious": 1.6666666666666667,
+          "UseLongitudinalElevation": false,
+          "Offset": 1.6666666666666667,
+          "Existing": 102.28326168430335,
+          "Design": null
+        },
+        {
+          "Label": "",
+          "Role": "Regular",
+          "DistanceFromPrevious": 1.6666666666666667,
+          "UseLongitudinalElevation": false,
+          "Offset": 3.3333333333333335,
+          "Existing": 101.50035273368607,
+          "Design": null
+        },
+        {
+          "Label": "",
+          "Role": "Regular",
+          "DistanceFromPrevious": 1.6666666666666667,
+          "UseLongitudinalElevation": false,
+          "Offset": 5.0,
+          "Existing": 100.86592261904762,
+          "Design": null
+        },
+        {
+          "Label": "",
+          "Role": "Regular",
+          "DistanceFromPrevious": 1.6666666666666667,
+          "UseLongitudinalElevation": false,
+          "Offset": 6.666666666666667,
+          "Existing": 100.39462081128748,
+          "Design": null
+        },
+        {
+          "Label": "",
+          "Role": "Regular",
+          "DistanceFromPrevious": 1.6666666666666667,
+          "UseLongitudinalElevation": false,
+          "Offset": 8.333333333333334,
+          "Existing": 100.10109678130512,
+          "Design": null
+        },
+        {
+          "Label": "",
+          "Role": "Bottom",
+          "DistanceFromPrevious": 1.6666666666666667,
+          "UseLongitudinalElevation": false,
+          "Offset": 10.0,
+          "Existing": 100.0,
+          "Design": null
+        },
+        {
+          "Label": "",
+          "Role": "Regular",
+          "DistanceFromPrevious": 2.3333333333333335,
+          "UseLongitudinalElevation": false,
+          "Offset": 12.333333333333334,
+          "Existing": 100.10790895061727,
+          "Design": null
+        },
+        {
+          "Label": "",
+          "Role": "Regular",
+          "DistanceFromPrevious": 2.3333333333333335,
+          "UseLongitudinalElevation": false,
+          "Offset": 14.666666666666668,
+          "Existing": 100.4453086419753,
+          "Design": null
+        },
+        {
+          "Label": "",
+          "Role": "Regular",
+          "DistanceFromPrevious": 2.3333333333333335,
+          "UseLongitudinalElevation": false,
+          "Offset": 17.0,
+          "Existing": 101.03270833333333,
+          "Design": null
+        },
+        {
+          "Label": "",
+          "Role": "Regular",
+          "DistanceFromPrevious": 2.3333333333333335,
+          "UseLongitudinalElevation": false,
+          "Offset": 19.333333333333332,
+          "Existing": 101.89061728395063,
+          "Design": null
+        },
+        {
+          "Label": "",
+          "Role": "Regular",
+          "DistanceFromPrevious": 2.3333333333333335,
+          "UseLongitudinalElevation": false,
+          "Offset": 21.666666666666664,
+          "Existing": 103.03954475308643,
+          "Design": null
+        },
+        {
+          "Label": "",
+          "Role": "RightBank",
+          "DistanceFromPrevious": 2.3333333333333335,
+          "UseLongitudinalElevation": false,
+          "Offset": 23.999999999999996,
+          "Existing": 104.5,
+          "Design": null
+        }
+      ]
+    }
+  ]
+}

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using System.Windows.Forms;
 using Profiles.AutoCAD;
+using Profiles.AutoCAD.UI;
 using Profiles.Core;
 
 internal static class FormWorkflowTests
@@ -20,6 +21,7 @@ internal static class FormWorkflowTests
         Check("end station displays recalculating extrapolated elevations without saving anchors", EndStation);
         Check("drawn station shows interpolated bottom and slopes in the editor", InterpolatedDimensions);
         Check("row fill is explicit, preserves manual input and survives template switches", FillRow);
+        Check("cross-section width dialog and elevation button fill inserted columns and persist", ApproximateCrossSection);
         Check("station picker assigns existing station without rounding its precision", StationPicker);
     }
 
@@ -214,6 +216,85 @@ internal static class FormWorkflowTests
             Require(values["1:LeftSlope"] == 2 && values["1:RightSlope"] == 3, "missing slope interpolation");
             var raw = (ProfileProject)Call(form, "ReadProject");
             Require(!raw.Longitudinal[1].BottomWidth.HasValue, "UI promoted interpolation into raw anchor");
+        }
+    }
+
+    private static void ApproximateCrossSection()
+    {
+        var source = new ProfileProject
+        {
+            Kind = ProfileKind.CrossSection,
+            Longitudinal = new List<LongitudinalPoint>
+            {
+                new LongitudinalPoint { Station = 20, LeftBank = 110, ExistingBottom = 100, RightBank = 112 }
+            }
+        };
+        source.Sections.Add(ProfileInterpolation.CreateSection(source.Longitudinal, 20));
+        using (var form = new ProfilesForm(ProfileKind.CrossSection, source))
+        {
+            Prepare(form);
+            var grid = Field<SectionPointGrid>(form, "crossGrid");
+            // Mono cannot move CurrentCell in a hidden grid; host the production
+            // control in a visible window while retaining its form event handlers.
+            var originalParent = grid.Parent;
+            using var gridHost = new Form { ClientSize = new System.Drawing.Size(1000, 220), ShowInTaskbar = false };
+            gridHost.Controls.Add(grid); gridHost.Show(); Application.DoEvents();
+            grid.CurrentCell = grid.Rows[1].Cells[1];
+            grid.AddPointAfter(); grid.AddPointAfter();
+            int bottomIndex = grid.ReadPoints().FindIndex(p => p.Role == SectionPointRole.Bottom);
+            grid.CurrentCell = grid.Rows[1].Cells[bottomIndex + 1];
+            grid.AddPointAfter(); grid.AddPointAfter();
+            Require(grid.ReadPoints().Count == 7, "inserted columns were lost");
+            Require(grid.ReadPoints().Count(p => !p.Existing.HasValue) == 4, "new elevations filled without clicking");
+            Exception error = null;
+            int stage = 0;
+            using (var timer = new Timer { Interval = 60 })
+            {
+                timer.Tick += (sender, args) =>
+                {
+                    var dialog = Application.OpenForms.Cast<Form>().FirstOrDefault(f => f.Text == "Ширина между берегами");
+                    if (dialog == null) return;
+                    try
+                    {
+                        var controls = Descendants(dialog).ToList();
+                        var width = controls.OfType<TextBox>().Single(t => t.AccessibleName == "Ширина между берегами, м");
+                        var bottom = controls.OfType<TextBox>().Single(t => t.AccessibleName == "Дно от левого берега, м");
+                        var apply = controls.OfType<Button>().Single(b => b.Text == "Распределить");
+                        if (stage++ == 0)
+                        {
+                            width.Text = "-1"; apply.PerformClick();
+                            Require(dialog.DialogResult != DialogResult.OK, "negative width was accepted");
+                            return;
+                        }
+                        width.Text = "21,5"; bottom.Text = "8,5";
+                        apply.PerformClick();
+                        Require(dialog.DialogResult == DialogResult.OK, "valid comma-decimal width was rejected");
+                        timer.Stop();
+                    }
+                    catch (Exception ex) { error = ex; timer.Stop(); dialog.DialogResult = DialogResult.Cancel; }
+                };
+                timer.Start();
+                typeof(Button).GetMethod("OnClick", Private).Invoke(Field<Button>(form, "crossBankWidthButton"), new object[] { EventArgs.Empty });
+            }
+            if (error != null) throw error;
+            var spaced = grid.ReadPoints();
+            Require(Math.Abs(spaced.Skip(1).Sum(p => p.DistanceFromPrevious.Value) - 21.5) < 1e-9, "width was not distributed");
+            Require(spaced.Count(p => !p.Existing.HasValue) == 4, "distance action changed elevations");
+            // A hand-entered intermediate point must survive automatic filling.
+            grid.SetElevationAt(1, false, 108.75);
+            typeof(Button).GetMethod("OnClick", Private).Invoke(Field<Button>(form, "fillCrossElevationsButton"), new object[] { EventArgs.Empty });
+            var result = (ProfileProject)Call(form, "ReadProject");
+            var section = result.Sections.Single();
+            Require(section.Points.All(p => p.Existing.HasValue), "blank elevations remain");
+            Require(section.Points[1].Existing == 108.75, "manual intermediate elevation changed");
+            Require(section.Points[3].Existing == 100 && section.Points[3].UseLongitudinalElevation, "linked bottom was lost");
+            Require(section.Points[2].Existing > 100 && section.Points[4].Existing > 100, "points beside bottom are not higher");
+            Require(section.ProjectAnchorIndex == 3, "insertion lost project anchor index");
+            var saved = ProjectFile.Deserialize(ProjectFile.Serialize(result));
+            Require(saved.Sections[0].Points.All(p => p.Existing.HasValue), "saved estimates were lost");
+            Require(saved.Longitudinal.Single().LeftBank == 110, "filling changed longitudinal anchors");
+            Require(ProfileEngine.Build(saved).Entities.Count > 0, "filled section did not build");
+            gridHost.Controls.Remove(grid); originalParent.Controls.Add(grid);
         }
     }
 
