@@ -67,38 +67,44 @@ def build_ref(wb):
     ws['A1'] = 'Справочники Таксации Лайт (перенесены из файла ТАКСАЦИЯ-АВТО 4.2). Можно дополнять: свои породы — в пустые строки библиотеки, базовые величины — в календарь.'
     ws['A1'].font = Font(name=FONT, bold=True)
     # --- библиотека пород: служебные строки + библиотека + 300 пустых строк для своих пород
-    hdr = ['Вид (порода)', 'Тип породы', 'Куст (1)', 'Твёрдость', 'Инвазивный (1)', 'Ø кома при h<1м', 'h кома при h<1м', 'В библиотеке (1)', 'Служебная (1)', '2-е название, латынь']
+    hdr = ['№', 'Вид (порода)', 'Тип породы', 'Куст (1)', 'Твёрдость', 'Инвазивный (1)', 'Ø кома при h<1м', 'h кома при h<1м', 'В библиотеке (1)', 'Служебная (1)', '2-е название, латынь']
     for i, h in enumerate(hdr):
         style_header(ws.cell(row=4, column=1 + i, value=h))
     r = 5
     lib_names = {s['name'].lower() for s in REF['species']}
     for s in REF['special']:
-        vals = [s['name'], s['type'], 1 if s['shrub'] else 0, 'мяг.', 0, s.get('ballD'), s.get('ballH'),
+        vals = [r - 4, s['name'], s['type'], 1 if s['shrub'] else 0, 'мяг.', 0, s.get('ballD'), s.get('ballH'),
                 1 if s['name'].lower() in lib_names else 0, 1, '']
         for i, v in enumerate(vals):
             ws.cell(row=r, column=1 + i, value=v)
         r += 1
     for s in REF['species']:
-        vals = [s['name'], s['type'], 1 if s['shrub'] else 0, s['hard'] or None, 1 if s['invasive'] else 0, s.get('ballD'), s.get('ballH'), 1, 0, s.get('alt') or None]
+        vals = [r - 4, s['name'], s['type'], 1 if s['shrub'] else 0, s['hard'] or None, 1 if s['invasive'] else 0, s.get('ballD'), s.get('ballH'), 1, 0, s.get('alt') or None]
         for i, v in enumerate(vals):
             ws.cell(row=r, column=1 + i, value=v)
         r += 1
     lib_last = r + 300 - 1
     for rr in range(r, lib_last + 1):
-        for c in range(1, 11):
+        ws.cell(row=rr, column=1, value=rr - 4)
+        for c in range(2, 12):
             ws.cell(row=rr, column=c).fill = F_SET
-    note(ws.cell(row=r, column=1), 'Свои породы вписывайте сюда, подряд, без пустых строк: название, тип (хвой., медл., быст., плод., малоц. — деревья; '
+    ws.freeze_panes = 'C5'
+    ws.auto_filter.ref = 'A4:K%d' % lib_last          # фильтр с поиском: удобно найти номер породы
+    ws.column_dimensions['A'].width = 6
+    note(ws.cell(row=r, column=2), 'Свои породы вписывайте сюда, подряд, без пустых строк: название, тип (хвой., медл., быст., плод., малоц. — деревья; '
          'лиан., хвой.., вечз., крас., медл.., быст.., плод.. — кусты), куст = 1, твёрдость (мяг./хвн./твд.), в библиотеке = 1. '
          'После этого порода появится в списке на листе «Ведомость».', 300)
-    for name, col in [('Lib_Name', 'A'), ('Lib_Type', 'B'), ('Lib_Shrub', 'C'), ('Lib_Hard', 'D'), ('Lib_Inv', 'E'),
-                      ('Lib_BallD', 'F'), ('Lib_BallH', 'G'), ('Lib_InLib', 'H'), ('Lib_Special', 'I')]:
+    for name, col in [('Lib_Name', 'B'), ('Lib_Type', 'C'), ('Lib_Shrub', 'D'), ('Lib_Hard', 'E'), ('Lib_Inv', 'F'),
+                      ('Lib_BallD', 'G'), ('Lib_BallH', 'H'), ('Lib_InLib', 'I'), ('Lib_Special', 'J')]:
         defname(wb, name, "'Справочник'!$%s$5:$%s$%d" % (col, col, lib_last))
     # список для выбора породы: только заполненные строки (иначе Excel открывает список на первой пустой строке — «с середины»)
-    defname(wb, 'SPL', "'Справочник'!$A$5:INDEX('Справочник'!$A$5:$A$%d,MAX(1,COUNTA('Справочник'!$A$5:$A$%d)))" % (lib_last, lib_last))
+    defname(wb, 'SPL', "'Справочник'!$B$5:INDEX('Справочник'!$B$5:$B$%d,MAX(1,COUNTA('Справочник'!$B$5:$B$%d)))" % (lib_last, lib_last))
     # список для поиска породы по началу любого слова (колонки AB:AC, скрыты): ключ — название с этого слова до конца,
     # значение — полное название; отсортирован по ключу, поэтому подходящие ключи идут подряд
     style_header(ws.cell(row=4, column=28, value='ключ поиска'))
     style_header(ws.cell(row=4, column=29, value='порода'))
+    style_header(ws.cell(row=4, column=30, value='№'))
+    numbers = {s0['name']: i + 1 for i, s0 in enumerate(REF['special'] + REF['species'])}
     keys = []
     for s0 in REF['special'] + REF['species']:
         nm = s0['name']
@@ -113,20 +119,25 @@ def build_ref(wb):
     for j, (k, nm) in enumerate(keys):
         ws.cell(row=5 + j, column=28, value=k)
         ws.cell(row=5 + j, column=29, value=nm)
+        ws.cell(row=5 + j, column=30, value=numbers[nm])
     kl = 4 + len(keys)
     defname(wb, 'SPK', "'Справочник'!$AB$5:$AB$%d" % kl)
     defname(wb, 'SPV1', "'Справочник'!$AC$5")
+    defname(wb, 'SPV', "'Справочник'!$AC$5:$AC$%d" % kl)
+    defname(wb, 'SPN', "'Справочник'!$AD$5:$AD$%d" % kl)
     ws.column_dimensions['AB'].hidden = True
     ws.column_dimensions['AC'].hidden = True
-    for i, t in enumerate(['Название породы (вида). Отсюда берётся список выбора на листе «Ведомость».',
+    ws.column_dimensions['AD'].hidden = True
+    for i, t in enumerate(['Номер породы. Его можно ввести в колонку «Порода» листа «Ведомость» вместо названия.',
+                           'Название породы (вида). Отсюда берётся список выбора на листе «Ведомость». Фильтр в заголовке помогает найти породу и её номер.',
                            'Тип породы для тарифа и норм посадок: хвой., медл., быст., плод., малоц. — деревья; лиан., хвой.., вечз., крас., медл.., быст.., плод.. — кустарники; ж.и.1/ж.и.2 — живая изгородь.',
                            '1 — кустарник, 0 — дерево.', 'Твёрдость древесины для объёмов: мяг. — мягкая, хвн. — хвойная, твд. — твёрдая.',
                            '1 — инвазивный вид: компенсация не начисляется.', 'Диаметр кома, м, для пересадки растения высотой до 1 м.',
                            'Высота кома, м, для пересадки растения высотой до 1 м.', '1 — вид из библиотеки оригинала (для него считается размер кома).',
                            '1 — служебная строка (поросль, живая изгородь).', 'Второе название или латинское.']):
         note(ws.cell(row=4, column=1 + i), t)
-    ws.column_dimensions['A'].width = 34
-    ws.column_dimensions['J'].width = 30
+    ws.column_dimensions['B'].width = 34
+    ws.column_dimensions['K'].width = 30
     # --- справочные таблицы справа (колонки L и далее)
     c0 = 12   # L
 
@@ -386,12 +397,17 @@ def cols_spec():
     add('cnt', 'Кол-во (шт., м², п.м.)', None, 8,
         tip='Количество. Деревья и кусты — шт.; участок поросли — площадь, м²; живая изгородь — длина, п.м. '
             'Пусто — 1 шт., а если в «№ по плану» диапазон «4-10» — число номеров (7).')
-    add('sp', 'Порода, вид', None, 36,
-        tip='Порода из списка (стрелка справа от ячейки). Список начинается с начала и берётся с листа «Справочник».\n'
-            'Быстрый поиск: наберите начало любого слова названия (например «берез» или «повисл»), нажмите Enter и снова откройте список '
-            '(стрелка ▼ справа от ячейки или Alt+↓) — останутся только подходящие породы. Листать список — стрелками ↑↓ на клавиатуре. '
-            'В Microsoft 365 подсказки появляются сразу при наборе.\n'
+    add('sp', 'Порода, вид', None, 30,
+        tip='Порода: название или его № из справочника (лист «Справочник», колонка «№»).\n'
+            '• Введите № (например 14) — в расчёт и во все ведомости пойдёт порода №14, её название видно в соседней колонке.\n'
+            '• Введите начало названия (например «берез») — соседняя колонка покажет подходящие породы с номерами; введите нужный номер.\n'
+            '• Можно выбрать из списка (стрелка справа от ячейки, если Excel её показывает).\n'
             'Служебные строки: «Уч-к поросли дер.», «Уч-к поросли куст.», «*Уч-к поросли дер. у дорог», «*Уч-к поросли куст. у дорог», «Однорядная живая изгородь», «Двухрядная живая изгородь».')
+    add('sphint', 'Порода по справочнику (№)', 'IF({sp}&""="","",IF({libi}>0,"№"&{libi}&" "&INDEX(Lib_Name,{libi}),IF({hc}>0,"подходит "&{hc}&": "&INDEX(SPN,{hp})&" "&INDEX(SPV,{hp})'
+        + ''.join('&IF({hc}>%d,"; "&INDEX(SPN,{hp}+%d)&" "&INDEX(SPV,{hp}+%d),"")' % (i, i, i) for i in range(1, 6))
+        + '&IF({hc}>6,"; …","")&" — введите №",IF(ISNUMBER({spnum}),"нет породы с № "&{spnum},"нет в справочнике"))))', 40,
+        tip='Считается само. Если порода найдена — её № и название по справочнику. Если введено начало названия — подходящие породы с номерами: '
+            'введите в колонку «Порода» нужный №.')
     add('h', 'Высота, м', None, 8, tip='Высота, м. Нужна для тарифа кустарников, объёмов древесины (таблицы по высоте) и размера кома при пересадке.')
     add('d', 'Диаметр, см', None, 12,
         tip='Диаметр ствола на высоте 1,3 м, см:\n• целое число — один ствол;\n• «20,15,12» — многоствольное (до 27 стволов);\n• «-» — кустарник и живая изгородь;\n'
@@ -417,11 +433,11 @@ def cols_spec():
         tip='вырубить / пересадить / сохранить (с причиной, если указана) или текст ошибки ввода.')
     add('kdisp', 'К1; К2; К3; К4', 'IF({coefOK},IF({zero},"0; 0; 0; 0",{K1}&"; "&{K2}&"; "&{K3}&"; "&{K4}),"")', 13,
         tip='Коэффициенты, применённые к строке (после причины, «Инд. К» и колонок К1–К4).')
-    add('G', 'Компенсационные посадки (выплаты)', 'IF({rem}<>1,IF({trn}=1,"ком: "&{ball},""),IF(AND(ISNUMBER({Y}),{Y}=0),"Без компенсации",IF({Y}="ОШИБКА",{err},IF(S_VIEW="итог",IF(MONEYY,"("&{AR}&") баз.в.",{Z}),IF(MONEYY,"("&{AS}&") баз.в. "&IF({isPlot}," х"&{qty}&"м² ",IF({qty}>1," х"&{qty}&IF(OR({J}=16,{J}=17),"п.м. ","шт. "),""))&"х"&{Nc}&"х"&{K1}&"х"&{K2}&"х"&{K3}&"х"&{K4}&" ="&{Y},{mx}&" "&IF({mpos}>0,INDEX(LBL_G,{mpos}),"")&IF(AND({AQ}<>"",N({AQ})>=2),"х"&{AQ}&"ств.","")&"х"&{Nc}&"х"&{K1}&"х"&{K2}&"х"&{K3}&"х"&{K4}&" ="&{Y})))))', 40,
+    add('G', 'Компенсационные посадки (выплаты)', 'IF({rem}<>1,IF({trn}=1,"ком: "&{ball},""),IF(AND(ISNUMBER({Y}),{Y}=0),"Без компенсации",IF({Y}="ОШИБКА",{err},IF(S_VIEW="итог",IF(MONEYY,"("&{AR}&") баз.в.",{Z}),IF(MONEYY,"("&{AS}&") баз.в. "&IF({isPlot}," х"&{qb}&"м²"&IF({qb}<>{qty}," (факт "&{qty}&"м²)","")&" ",IF({qty}>1," х"&{qty}&IF(OR({J}=16,{J}=17),"п.м. ","шт. "),""))&"х"&{Nc}&"х"&{K1}&"х"&{K2}&"х"&{K3}&"х"&{K4}&" ="&{Y},{mx}&" "&IF({mpos}>0,INDEX(LBL_G,{mpos}),"")&IF(AND({AQ}<>"",N({AQ})>=2),"х"&{AQ}&"ств.","")&"х"&{Nc}&"х"&{K1}&"х"&{K2}&"х"&{K3}&"х"&{K4}&" ="&{Y})))))', 40,
         tip='Расчёт строки: (тариф) баз.в. × кол-во (шт., м² или п.м.) × коэф. состояния × К1 × К2 × К3 × К4 = итог. В режиме «посадками» — число саженцев. Для пересадки — размер кома.')
-    add('Y', 'Итог', 'IF({rem}<>1,"",IF({inv},0,IF(OR(NOT({coefOK}),{Nc}=""),"ОШИБКА",IF(MONEYY,IF(ISNUMBER({AR}),ROUND({AR}*IF({isPlot},{qty},IF({qty}>1,{qty},1))*{Nc}*{K1}*{K2}*{K3}*{K4},3),"ОШИБКА"),IFERROR(ROUND({mx}*IF(LEN({AO})<2,1,{AQ})*{Nc}*{K1}*{K2}*{K3}*{K4},3),"ОШИБКА")))))', 9,
-        tip='Итог строки: базовых величин (выплаты) или штук саженцев (посадки). Поросль считается по каждой строке: площадь × норма × коэффициенты.')
-    add('err', 'Ошибка', 'IF({sp}="","",IF(LEFT({Htxt},6)="ОШИБКА",{Htxt},IF({qty}="ERR","ОШИБКА: количество не распознано",IF({nmis},"ОШИБКА: кол-во не совпадает с номерами",IF(NOT({found}),IF(COUNTIF(SPK,{sp}&"*")>0,"ВЫБЕРИТЕ породу: стрелка ▼ в ячейке «Порода» — подходит "&COUNTIF(SPK,{sp}&"*"),"ОШИБКА: породы нет в справочнике"),IF(AND({rem}=1,{Nc}=""),"ОШИБКА: неизвестное состояние",IF(AND({rem}=1,{Y}="ОШИБКА"),"ОШИБКА: нет тарифа","")))))))', 22,
+    add('Y', 'Итог', 'IF({rem}<>1,"",IF({inv},0,IF(OR(NOT({coefOK}),{Nc}=""),"ОШИБКА",IF(MONEYY,IF(ISNUMBER({AR}),ROUND({AR}*IF({isPlot},{qb},IF({qty}>1,{qty},1))*{Nc}*{K1}*{K2}*{K3}*{K4},3),"ОШИБКА"),IFERROR(ROUND({mx}*IF(LEN({AO})<2,1,{AQ})*{Nc}*{K1}*{K2}*{K3}*{K4},3),"ОШИБКА")))))', 9,
+        tip='Итог строки: базовых величин (выплаты) или штук саженцев (посадки). Поросль считается по каждой строке: площадь (не меньше 10 м²) × норма × коэффициенты.')
+    add('err', 'Ошибка', 'IF({sp}="","",IF(LEFT({Htxt},6)="ОШИБКА",{Htxt},IF({qty}="ERR","ОШИБКА: количество не распознано",IF({nmis},"ОШИБКА: кол-во не совпадает с номерами",IF(NOT({found}),IF({hc}>0,"ВЫБЕРИТЕ породу: введите её № из колонки «Порода по справочнику» (подходит "&{hc}&")","ОШИБКА: породы нет в справочнике"),IF(AND({rem}=1,{Nc}=""),"ОШИБКА: неизвестное состояние",IF(AND({rem}=1,{Y}="ОШИБКА"),"ОШИБКА: нет тарифа","")))))))', 22,
         tip='Ошибка ввода в строке. Строка с ошибкой не входит в итоги; число таких строк показано на листе «Удаляемые».')
     # служебные
     h = True
@@ -435,7 +451,11 @@ def cols_spec():
     add('nmis', 'кол-во ≠ диапазону', 'IF({rok},AND({cnt}&""<>"",N({qty})<>{rb}-{ra}+1),FALSE)', 5, h)
     add('qty', 'Кол-во, число', 'IF({sp}="","",IF({cnt}&""="",IF({rok},IF({rb}>={ra},{rb}-{ra}+1,"ERR"),1),IFERROR(VALUE({cnt}&""),"ERR")))', 8, h)
     add('ne', 'конец номера', 'IF({sp}="",N({ne:prev}),IF({rok},{rb},IF({free},N({ne:prev}),IF({cnt}&""="",{s0},IFERROR({s0}+VALUE({cnt}&"")-1,{s0})))))', 8, h)
-    add('libi', 'строка справочника', 'IF({sp}="",0,IFERROR(MATCH({sp},Lib_Name,0),0))', 6, h)
+    add('spnum', 'порода: введён №', 'IFERROR(IF(--({sp}&"")=INT(--({sp}&"")),--({sp}&""),""),"")', 5, h)
+    add('spn', 'порода по справочнику', 'IF({sp}&""="","",IF(ISNUMBER({spnum}),IF(AND({spnum}>=1,{spnum}<=ROWS(Lib_Name)),IF(INDEX(Lib_Name,{spnum})&""="","№"&{spnum},INDEX(Lib_Name,{spnum})&""),"№"&{spnum}),TRIM({sp}&"")))', 20, h)
+    add('hc', 'подходит пород', 'IF(OR({sp}&""="",ISNUMBER({spnum})),0,COUNTIF(SPK,{sp}&"*"))', 4, h)
+    add('hp', 'первая подходящая', 'IF({hc}>0,MATCH({sp}&"*",SPK,0),0)', 4, h)
+    add('libi', 'строка справочника', 'IF({spn}="",0,IFERROR(MATCH({spn},Lib_Name,0),0))', 6, h)
     add('found', 'найдена', '{libi}>0', 6, h)
     add('special', 'служебная', 'IF({libi}>0,INDEX(Lib_Special,{libi})=1,FALSE)', 6, h)
     add('hard', 'твёрдость', 'IF({libi}>0,INDEX(Lib_Hard,{libi})&"","")', 6, h)
@@ -453,8 +473,9 @@ def cols_spec():
         add('K%d' % i, 'К%d' % i, 'IF({zero},0,IF({k%din}="да",%s,IF({k%din}="нет",%s,IF(K%dY,IF(%s,%s,%s),IF(%s,%s,%s)))))' % (i, on, i, off, i, same, on, off, same, off, on), 5, h)
     add('coefOK', 'коэф. есть', 'AND({act}="В",{found})', 5, h)
     add('Es', 'диаметр без пробелов', 'SUBSTITUTE({dtxt}," ","")', 8, h)
-    add('J', 'код ТКП', 'IF({rem}<>1,"",IF(NOT({shrubRow}),IF(ISNUMBER(SEARCH("уч-к поросли дер.",{sp})),IF({qty}>9.99,60,70),IF(OR({dnum},ISERROR(FIND("до1",{Es}))),IF({N}="хвой.",10,IF({N}="медл.",20,IF(OR({N}="быст.",{N}="плод."),30,IF({N}="малоц.",IF(AND(ISERROR(FIND("до4",{Es})),IF({dnum},{d},IFERROR(VALUE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE({Es},"1,",""),"2,",""),"3,","")),4))>3.99),40,IF(ISNUMBER(FIND("**до4",{Es})),50,1)),1)))),IF(AND(OR({N}="хвой.",{N}="медл.",{N}="быст.",{N}="плод."),ISNUMBER(FIND("**до1",{Es}))),50,1))),IF(ISNUMBER(SEARCH("уч-к поросли куст.",{sp})),IF({qty}>9.99,18,19),IF(ISNUMBER(SEARCH("однорядная живая изгородь",{sp})),16,IF(ISNUMBER(SEARCH("двухрядная живая изгородь",{sp})),17,IF({N}="лиан.",11,IF(OR({N}="хвой..",{N}="вечз."),12,IF({N}="крас.",13,IF({N}="медл..",14,IF(OR({N}="быст..",{N}="плод.."),15,1))))))))))', 5, h)
+    add('J', 'код ТКП', 'IF({rem}<>1,"",IF(NOT({shrubRow}),IF(ISNUMBER(SEARCH("уч-к поросли дер.",{sp})),60,IF(OR({dnum},ISERROR(FIND("до1",{Es}))),IF({N}="хвой.",10,IF({N}="медл.",20,IF(OR({N}="быст.",{N}="плод."),30,IF({N}="малоц.",IF(AND(ISERROR(FIND("до4",{Es})),IF({dnum},{d},IFERROR(VALUE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE({Es},"1,",""),"2,",""),"3,","")),4))>3.99),40,IF(ISNUMBER(FIND("**до4",{Es})),50,1)),1)))),IF(AND(OR({N}="хвой.",{N}="медл.",{N}="быст.",{N}="плод."),ISNUMBER(FIND("**до1",{Es}))),50,1))),IF(ISNUMBER(SEARCH("уч-к поросли куст.",{sp})),18,IF(ISNUMBER(SEARCH("однорядная живая изгородь",{sp})),16,IF(ISNUMBER(SEARCH("двухрядная живая изгородь",{sp})),17,IF({N}="лиан.",11,IF(OR({N}="хвой..",{N}="вечз."),12,IF({N}="крас.",13,IF({N}="медл..",14,IF(OR({N}="быст..",{N}="плод.."),15,1))))))))))', 5, h)
     add('isPlot', 'поросль', 'OR({J}=60,{J}=70,{J}=18,{J}=19)', 5, h)
+    add('qb', 'кол-во для расчёта', 'IF({isPlot},MAX({qty},10),{qty})', 5, h)
     add('pT', 'поросль деревьев (1)', 'IF(OR({J}=60,{J}=70),1,0)', 4, h)
     add('pS', 'поросль кустарников (1)', 'IF(OR({J}=18,{J}=19),1,0)', 4, h)
     add('plot', 'поросль (1)', 'IF({isPlot},1,0)', 4, h)
@@ -482,13 +503,13 @@ def cols_spec():
     for name, typ, col, kind in pt:
         cond = ('OR(%s)' % ','.join('{M}="%s"' % t for t in typ)) if isinstance(typ, tuple) else '{M}="%s"' % typ
         if kind == 'tree':
-            f = 'IF(OR({rem}<>1,{shrubRow}),"",IF(%s,IF({J}=1,0,{qty}*INDEX(%s,MATCH({J},PT_J,0))),""))' % (cond, col)
+            f = 'IF(OR({rem}<>1,{shrubRow}),"",IF(%s,IF({J}=1,0,{qb}*INDEX(%s,MATCH({J},PT_J,0))),""))' % (cond, col)
         elif kind == 'treeB':
-            f = 'IF(OR({rem}<>1,{shrubRow}),"",IF(%s,IF({J}=1,0,IF({J}=70,1,{qty})*INDEX(%s,MATCH({J},PT_J,0))),0))' % (cond, col)
+            f = 'IF(OR({rem}<>1,{shrubRow}),"",IF(%s,IF({J}=1,0,{qb}*INDEX(%s,MATCH({J},PT_J,0))),0))' % (cond, col)
         elif kind == 'shrub':
-            f = 'IF(OR({rem}<>1,NOT({shrubRow})),"",IF(%s,IF({J}=1,0,{qty}*INDEX(%s,MATCH({J},PS_J,0))),""))' % (cond, col)
+            f = 'IF(OR({rem}<>1,NOT({shrubRow})),"",IF(%s,IF({J}=1,0,{qb}*INDEX(%s,MATCH({J},PS_J,0))),""))' % (cond, col)
         else:
-            f = 'IF(OR({rem}<>1,NOT({shrubRow})),"",IF(%s,IF({J}=1,0,IF({J}=19,1,{qty})*INDEX(%s,MATCH({J},PS_J,0))),""))' % (cond, col)
+            f = 'IF(OR({rem}<>1,NOT({shrubRow})),"",IF(%s,IF({J}=1,0,{qb}*INDEX(%s,MATCH({J},PS_J,0))),""))' % (cond, col)
         add(name, 'посадки ' + (typ if isinstance(typ, str) else '/'.join(typ)), f, 5, h)
     add('mx', 'посадок, шт.', 'IF({rem}<>1,"",MAX({c0}:{c9}))', 5, h)
     add('mpos', 'колонка посадок', 'IF({rem}<>1,"",IFERROR(MATCH({mx},{c0}:{c9},0),0))', 4, h)
@@ -534,7 +555,7 @@ def cols_spec():
     add('BZ', 'стволы, м³ скл.', 'IF({CE}<1,"",{qty}*%s)' % vol_sp(False, wz), 6, h)
     add('big', 'стволы >50 см, м³', 'IF({CE}<1,0,%s)' % vol_sp(False, '(%s>50)' % DN), 6, h)
     add('pct', 'V% из примечания', 'IFERROR(VALUE(MID({note},SEARCH("V",{note})+2,SEARCH("%",{note},SEARCH("V",{note}))-SEARCH("V",{note})-1)),1)', 5, h)
-    add('BV', 'кустарник, т', 'IF({rem}<>1,"",IF(OR(AND({CA}>0.1,{CA}<8),AND({shrubRow},{qty}=1)),IF({Hn}>1,{Hn}+({Hn}-1)/3,{Hn})*S_MASS*{pct}*{qty}/1000,""))', 6, h)
+    add('BV', 'кустарник, т', 'IF({rem}<>1,"",IF(OR(AND({CA}>0.1,{CA}<8),{shrubRow}),IF({Hn}>1,{Hn}+({Hn}-1)/3,{Hn})*S_MASS*{pct}*{qty}*IF({J}=16,3,IF({J}=17,5,1))/1000,""))', 6, h)
     # пересадка
     add('bcol', 'колонка кома', 'IF({Hn}>5,6,IF({Hn}>4,5,IF({Hn}>2,4,IF({Hn}>1.5,3,IF({Hn}>0.99,2,1)))))', 4, h)
     add('ball', 'Размер кома, м', 'IF({trn}<>1,"",IF({libi}=0,"",IF(INDEX(Lib_InLib,{libi})<>1,"",IF({bcol}=1,"Ø"&INDEX(Lib_BallD,{libi})&"; h"&INDEX(Lib_BallH,{libi}),IFERROR("Ø"&ROUND(N(INDEX(Lib_BallD,{libi}))*INDEX(TypeK,MATCH({N},TypeK_Type,0),({bcol}-2)*2+1),1)&"; h"&ROUND(N(INDEX(Lib_BallH,{libi}))*INDEX(TypeK,MATCH({N},TypeK_Type,0),({bcol}-2)*2+2),1),"")))))', 12, h)
@@ -549,6 +570,8 @@ def cols_spec():
     add('keepC', 'счётчик сохраняемых', 'N({keepC:prev})+{keep}', 5, h)
     add('remC', 'счётчик удаляемых', 'N({remC:prev})+{rem}', 5, h)
     add('trC', 'счётчик пересаживаемых', 'N({trC:prev})+{trn}', 5, h)
+    keep_sp = {'spnum', 'spn', 'hc', 'hp', 'sphint', 'libi'}
+    C = [(n, t, (f.replace('{sp}', '{spn}') if (f and n not in keep_sp) else f), w, hd, tip, arr) for n, t, f, w, hd, tip, arr in C]
     return C
 
 
@@ -581,14 +604,14 @@ def build_main(wb, nrows):
     inputs = [n for n, t, f, *_ in spec if f is None]
     ws['A1'] = 'Ведомость существующих деревьев и кустарников (ввод) — Таксация Лайт'
     ws['A1'].font = Font(name=FONT, bold=True, size=13, color=GREEN)
-    ws['A2'] = ('Вводите данные в жёлтые колонки %s–%s. Наведите мышь на заголовок колонки — появится пояснение. Пустые строки допускаются. '
-                'Чтобы убрать дерево, проще очистить его строку (выделить и нажать Delete), чем удалять строку целиком.' % (L[inputs[0]], L[inputs[-1]]))
+    ws['A2'] = ('Вводите данные в колонки с жёлтым заголовком. Породу можно ввести номером из справочника. Наведите мышь на заголовок колонки — '
+                'появится пояснение. Пустые строки допускаются. Чтобы убрать дерево, проще очистить его строку (выделить и нажать Delete), чем удалять строку целиком.')
     ws['A2'].alignment = Alignment(wrap_text=True, vertical='top')
     ws.merge_cells('A2:T2')
     ws.row_dimensions[2].height = 30
     ws['A3'] = ('="Строк в книге: "&ROWS(\'Ведомость\'!$%s$%d:$%s$%d)&", заполнено: "&COUNTA(\'Ведомость\'!$%s$%d:$%s$%d)&". '
-                'Не хватает строк — возьмите книгу большего размера и перенесите колонки %s–%s. Служебные колонки справа скрыты (группа «+» над заголовком)."'
-                % (L['sp'], FIRST, L['sp'], last, L['sp'], FIRST, L['sp'], last, L[inputs[0]], L[inputs[-1]]))
+                'Служебные колонки справа скрыты (группа «+» над заголовком)."'
+                % (L['sp'], FIRST, L['sp'], last, L['sp'], FIRST, L['sp'], last))
     ws['A3'].font = Font(name=FONT, italic=True, size=9, color='666666')
     for i, (name, title, f, w, hidden, tip, arr) in enumerate(spec):
         col = get_column_letter(i + 1)
@@ -607,7 +630,7 @@ def build_main(wb, nrows):
             ws[ref] = ArrayFormula(ref, '=' + render(f, L)) if arr else '=' + render(f, L)
             ws[ref].fill = F_CALC
     ws.row_dimensions[4].height = 44
-    ws.freeze_panes = '%s5' % get_column_letter(spec.index(next(x for x in spec if x[0] == 'sp')) + 2)
+    ws.freeze_panes = '%s5' % get_column_letter(spec.index(next(x for x in spec if x[0] == 'sphint')) + 2)
     ws.column_dimensions[L['noin']].number_format = '@'     # «4-10» остаётся текстом, а не датой
     rng = lambda c: '%s%d:%s%d' % (L[c], FIRST, L[c], last)
     dv_cond = DataValidation(type='list', formula1='"хор.,уд.,плох.,ненадл."', allow_blank=True)
@@ -807,30 +830,33 @@ def build_lists(wb, nrows):
     # древесина
     F3 = '0.000'
     num = lambda nm, mul='': 'IF(ISNUMBER(INDEX(R_%s,{I})),INDEX(R_%s,{I})%s,"")' % (nm, nm, mul)
+    SVV = 'Сучья, ветви, вершины'
     wd_cols = [C_NO, C_TITLE, C_QTY, C_H, ('Диаметр ствола, см', IDX('dRep'), 12, C_DT[3], None),
-               ('Древесина', IDX('wtype'), 10, 'Тип древесины по библиотеке пород: мягкая, хвойная или твёрдая. От него зависят таблица объёмов и плотность.', None),
-               ('Стволы, м³ скл.', num('BZ'), 10, 'Складочный объём стволов: объём ствола по таблице (диаметр каждого ствола и высота) × коэф. укладки (Ø ≥ 15 см — ×1,47, хвойные ×1,49; 11–15 см — ÷0,67; 3–11 см — ÷0,6) × кол-во.', F3),
-               ('Стволы, т', num('BX'), 9, 'Масса стволов: объём стволов по таблице × плотность древесины × кол-во.', F3),
-               ('Пни, м³ скл.', num('BZ', '*0.2'), 9, 'Пни: 20 % складочного объёма стволов (как в оригинале). Корни отдельно не считаются: в оригинале такого расчёта нет.', F3),
-               ('Пни, т', num('BX', '*0.2'), 8, 'Пни: 20 % массы стволов (как в оригинале).', F3),
-               ('Ветви, м³ скл.', num('BY'), 9, 'Ветви и сучья (крона): объём всего дерева минус объём ствола по таблицам, ÷ 0,1 (складочный), × кол-во.', F3),
-               ('Ветви, т', num('BW'), 8, 'Ветви и сучья: объём кроны × плотность × кол-во.', F3),
-               ('Кустарник, т', num('BV'), 9, 'Масса кустарника: высота × масса куста (лист «Настройки») × кол-во. Как в оригинале, считается только для строк с кол-вом 1 шт.', F3),
+               ('Тип древесины', IDX('wtype'), 10, 'Тип древесины по библиотеке пород: мягкая, хвойная или твёрдая. От него зависят таблица объёмов и плотность.', None),
+               (SVV + ', м³ скл.', num('BY'), 11, 'Сучья, ветви и вершины (крона): объём всего дерева минус объём ствола по таблицам оригинала, ÷ 0,1 (складочный), × кол-во.', F3),
+               (SVV + ', т', num('BW'), 10, 'Сучья, ветви и вершины: объём кроны по таблицам × плотность древесины × кол-во.', F3),
+               ('Пни, м³ скл.', num('BZ', '*0.2'), 9, 'Пни: 20 % складочного объёма древесины стволов (как в оригинале). Корни отдельно не считаются.', F3),
+               ('Пни, т', num('BX', '*0.2'), 8, 'Пни: 20 % массы древесины стволов (как в оригинале).', F3),
+               ('Древесина, м³ скл.', num('BZ'), 10, 'Древесина (стволы), складочный объём: объём ствола по таблице (диаметр каждого ствола и высота) × коэф. укладки (Ø ≥ 15 см — ×1,47, хвойные ×1,49; 11–15 см — ÷0,67; 3–11 см — ÷0,6) × кол-во.', F3),
+               ('Древесина, т', num('BX'), 9, 'Древесина (стволы), масса: объём стволов по таблице × плотность древесины × кол-во.', F3),
+               ('Кустарник, т', num('BV'), 9, 'Масса кустарника в каждой строке: высота × масса куста (лист «Настройки») × кол-во. '
+                'Живая изгородь: 1 п.м. = 3 куста (однорядная) или 5 кустов (двухрядная). Поросль: 1 м² = 1 куст, как в оригинале для поросли деревьев.', F3),
                ('Кустарник, м³ скл.', num('BV', '*1000/DEN_S/0.1'), 10, 'Складочный объём кустарника: масса ÷ плотность мягкой древесины ÷ 0,1.', F3)]
     tw = lambda key, ce=None: ('SUMIFS(R_%s,R_CE,%d)' % (key, ce)) if ce else 'SUM(R_%s)' % key
     wd_tot = []
     for label, ce in (('"Итого"', None), ('"в т.ч. мягкая"', 1), ('"в т.ч. хвойная"', 2), ('"в т.ч. твёрдая"', 3)):
         line = [label if ce is None else None, None if ce is None else label, None, None, None, None,
-                tw('BZ', ce), tw('BX', ce), tw('BZ', ce) + '*0.2', tw('BX', ce) + '*0.2', tw('BY', ce), tw('BW', ce)]
+                tw('BY', ce), tw('BW', ce), tw('BZ', ce) + '*0.2', tw('BX', ce) + '*0.2', tw('BZ', ce), tw('BX', ce)]
         line += ['VOL_BV', 'VOL_BVM3'] if ce is None else [None, None]
         wd_tot.append(line)
-    wd_tot.append([None, '"стволы Ø ≤ 50 см, м³ скл."', None, None, None, None, 'VOL_LE50_ALL'])
-    wd_tot.append([None, '"стволы Ø > 50 см, м³ скл."', None, None, None, None, 'VOL_GT50_ALL'])
-    wd_tot.append([None, '"округлённо (как в оригинале)"', None, None, None, None, 'ROUND(VOL_BZ_ALL,2)', 'ROUND(VOL_BX_ALL,3)', 'ROUND(VOL_BZ_ALL*0.2,2)',
-                   'ROUND(VOL_BX_ALL*0.2,2)', 'ROUND(VOL_BY_ALL,2)', 'ROUND(VOL_BW_ALL,2)', 'ROUND(VOL_BV,2)', 'ROUND(VOL_BVM3,2)'])
+    wd_tot.append([None, '"древесина Ø ≤ 50 см, м³ скл."', None, None, None, None, None, None, None, None, 'VOL_LE50_ALL'])
+    wd_tot.append([None, '"древесина Ø > 50 см, м³ скл."', None, None, None, None, None, None, None, None, 'VOL_GT50_ALL'])
+    wd_tot.append([None, '"округлённо (как в оригинале)"', None, None, None, None, 'ROUND(VOL_BY_ALL,2)', 'ROUND(VOL_BW_ALL,2)', 'ROUND(VOL_BZ_ALL*0.2,2)',
+                   'ROUND(VOL_BX_ALL*0.2,2)', 'ROUND(VOL_BZ_ALL,2)', 'ROUND(VOL_BX_ALL,3)', 'ROUND(VOL_BV,2)', 'ROUND(VOL_BVM3,2)'])
     caps['Древесина'] = nrows + len(wd_tot) + 2
-    ws = build_list(wb, 'Древесина', 'Отходы древесины по удаляемым деревьям и кустарникам: стволы, пни, ветви', wd_cols, 'remC', 'N_REM', wd_tot, caps['Древесина'])
-    ws['A5'] = 'Объёмы — по таблицам «Мягк», «Хвой», «Твер» оригинала (лист «Справочник»), по диаметру каждого ствола и высоте. Корни отдельно не считаются: в оригинале такого расчёта нет.'
+    ws = build_list(wb, 'Древесина', 'Отходы по удаляемым деревьям и кустарникам: сучья, ветви, вершины; пни; древесина', wd_cols, 'remC', 'N_REM', wd_tot, caps['Древесина'])
+    ws['A5'] = ('Объёмы — по таблицам «Мягк», «Хвой», «Твер» оригинала (лист «Справочник»), по диаметру каждого ствола и высоте. '
+                'Пни = 20 % от древесины стволов. Корни отдельно не считаются.')
     ws['A5'].font = Font(name=FONT, italic=True, size=9, color='555555')
     return {sh: (cap, wb[sh]._taks_kc) for sh, cap in caps.items()}
 
@@ -872,8 +898,8 @@ def build_totals(wb, L):
     for ty, nm in (('хвой.', 'C_X'), ('медл.', 'C_M'), ('быст.', 'C_B'), ('плод.', 'C_P'), ('малоц.', 'C_L')):
         put(nm, 'деревьев типа ' + ty, 'SUMIFS(R_qty,R_rem,1,R_AO,"%s")' % ty)
     put('C_TREES', 'деревьев всего (AP2009)', 'C_X+C_M+C_B+C_P+C_L')
-    put('C_TPLOT', 'поросль деревьев, м² (AP2008)', 'SUMIFS(R_Kq,R_sp,"*уч-к поросли дер*")')
-    put('C_SPLOT', 'поросль кустарников, м² (AP2030)', 'SUMIFS(R_Lq,R_sp,"*уч-к поросли куст.*")')
+    put('C_TPLOT', 'поросль деревьев, м² (AP2008)', 'SUMIFS(R_Kq,R_spn,"*уч-к поросли дер*")')
+    put('C_SPLOT', 'поросль кустарников, м² (AP2030)', 'SUMIFS(R_Lq,R_spn,"*уч-к поросли куст.*")')
     put('C_H1', 'живая изгородь однорядная, п.м.', 'SUMIFS(R_qty,R_rem,1,R_N,"ж.и.1")')
     put('C_H2', 'живая изгородь двухрядная, п.м.', 'SUMIFS(R_qty,R_rem,1,R_N,"ж.и.2")')
     shrub_types = ['лиан.', 'хвой..', 'вечз.', 'крас.', 'медл..', 'быст..', 'плод..']
@@ -881,10 +907,10 @@ def build_totals(wb, L):
         put('C_S%d' % i, 'кустов типа ' + ty, 'SUMIFS(R_qty,R_rem,1,R_N,"%s")' % ty)
     put('C_SUMK', 'сумма K (деревья и поросль дер.)', 'SUM(R_Kq)')
     put('C_SUML', 'сумма L (кусты, поросль, изгородь)', 'SUM(R_Lq)')
-    put('C_PD', 'поросль дер. (C2035)', 'SUMIFS(R_Kq,R_sp,"*ч-к поросли дер*")')
-    put('C_PK', 'поросль куст. (C2035)', 'SUMIFS(R_Lq,R_sp,"*ч-к поросли куст*")')
-    put('C_HH1', 'изгородь 1-р. (E2035)', 'SUMIFS(R_Lq,R_sp,"*днорядная живая изгород*")')
-    put('C_HH2', 'изгородь 2-р. (E2035)', 'SUMIFS(R_Lq,R_sp,"*вухрядная живая изгород*")')
+    put('C_PD', 'поросль дер. (C2035)', 'SUMIFS(R_Kq,R_spn,"*ч-к поросли дер*")')
+    put('C_PK', 'поросль куст. (C2035)', 'SUMIFS(R_Lq,R_spn,"*ч-к поросли куст*")')
+    put('C_HH1', 'изгородь 1-р. (E2035)', 'SUMIFS(R_Lq,R_spn,"*днорядная живая изгород*")')
+    put('C_HH2', 'изгородь 2-р. (E2035)', 'SUMIFS(R_Lq,R_spn,"*вухрядная живая изгород*")')
     put('C_TR35', 'деревьев удаляется (C2035)', 'C_SUMK-C_PD')
     put('C_SH35', 'кустарников удаляется (C2035)', 'C_SUML-C_PK-C_HH1-C_HH2')
     r += 1
@@ -924,8 +950,9 @@ def build_totals(wb, L):
     for i, hh in enumerate(['мяг.', 'хвн.', 'твд.', 'итого']):
         style_header(ws.cell(row=r, column=2 + i, value=hh))
     r += 1
-    vol_rows = [('VOL_LE50', 'стволы, м³ скл. Ø ≤ 50 см'), ('VOL_GT50', 'стволы, м³ скл. Ø > 50 см'), ('VOL_BZ', 'стволы, м³ скл.'), ('VOL_BX', 'стволы, т'),
-                ('VOL_STM3', 'пни, м³ скл.'), ('VOL_STT', 'пни, т'), ('VOL_BY', 'ветви, м³ скл.'), ('VOL_BW', 'ветви, т')]
+    vol_rows = [('VOL_LE50', 'древесина (стволы), м³ скл. Ø ≤ 50 см'), ('VOL_GT50', 'древесина (стволы), м³ скл. Ø > 50 см'),
+                ('VOL_BZ', 'древесина (стволы), м³ скл.'), ('VOL_BX', 'древесина (стволы), т'),
+                ('VOL_STM3', 'пни, м³ скл.'), ('VOL_STT', 'пни, т'), ('VOL_BY', 'сучья, ветви, вершины, м³ скл.'), ('VOL_BW', 'сучья, ветви, вершины, т')]
     vr = {}
     for nm, label in vol_rows:
         vr[nm] = r
@@ -979,18 +1006,18 @@ def build_totals(wb, L):
     r += 1
     put('EX_ALL', 'всего по ведомости', 'SUM(R_qty)')
     put('EX_DASH', 'строк с диаметром «-»', 'SUMIFS(R_qty,R_dtxt,"-")')
-    put('EX_PD', 'поросль деревьев, м²', 'SUMIFS(R_qty,R_sp,"*ч-к поросли дер*")')
-    put('EX_PK', 'поросль кустарников, м²', 'SUMIFS(R_qty,R_sp,"*ч-к поросли куст*")')
-    put('EX_HED', 'живая изгородь (все), п.м.', 'SUMIFS(R_qty,R_sp,"*рядная живая*")')
-    put('EX_H1', 'живая изгородь 1-р., п.м.', 'SUMIFS(R_qty,R_sp,"*днорядная живая*")')
-    put('EX_H2', 'живая изгородь 2-р., п.м.', 'SUMIFS(R_qty,R_sp,"*вухрядная живая*")')
+    put('EX_PD', 'поросль деревьев, м²', 'SUMIFS(R_qty,R_spn,"*ч-к поросли дер*")')
+    put('EX_PK', 'поросль кустарников, м²', 'SUMIFS(R_qty,R_spn,"*ч-к поросли куст*")')
+    put('EX_HED', 'живая изгородь (все), п.м.', 'SUMIFS(R_qty,R_spn,"*рядная живая*")')
+    put('EX_H1', 'живая изгородь 1-р., п.м.', 'SUMIFS(R_qty,R_spn,"*днорядная живая*")')
+    put('EX_H2', 'живая изгородь 2-р., п.м.', 'SUMIFS(R_qty,R_spn,"*вухрядная живая*")')
     put('EX_TREES', 'деревьев (Дер.)', 'EX_ALL-EX_DASH-EX_PD')
     put('EX_SHRUBS', 'кустарников (Кус.)', 'EX_DASH-EX_PK-EX_HED')
     put('TR_ALL', 'пересадка: всего', 'SUMIFS(R_qty,R_trn,1)')
-    put('TR_H1', 'пересадка: изгородь 1-р.', 'SUMIFS(R_qty,R_trn,1,R_sp,"*днорядная живая изгород*")')
-    put('TR_H2', 'пересадка: изгородь 2-р.', 'SUMIFS(R_qty,R_trn,1,R_sp,"*вухрядная живая изгород*")')
+    put('TR_H1', 'пересадка: изгородь 1-р.', 'SUMIFS(R_qty,R_trn,1,R_spn,"*днорядная живая изгород*")')
+    put('TR_H2', 'пересадка: изгородь 2-р.', 'SUMIFS(R_qty,R_trn,1,R_spn,"*вухрядная живая изгород*")')
     put('TR_SHRUBS', 'пересадка: кустов', 'SUMIFS(R_qty,R_trn,1,R_dtxt,"-")-TR_H1-TR_H2')
-    put('TR_TREES', 'пересадка: деревьев', 'TR_ALL-TR_SHRUBS-TR_H1-TR_H2-SUMIFS(R_qty,R_trn,1,R_sp,"*ч-к поросли дер*")-SUMIFS(R_qty,R_trn,1,R_sp,"*ч-к поросли куст*")')
+    put('TR_TREES', 'пересадка: деревьев', 'TR_ALL-TR_SHRUBS-TR_H1-TR_H2-SUMIFS(R_qty,R_trn,1,R_spn,"*ч-к поросли дер*")-SUMIFS(R_qty,R_trn,1,R_spn,"*ч-к поросли куст*")')
     put('TR_X', 'пересадка: хвойных', 'SUMIFS(R_qty,R_trType,"хвой.")')
     put('TR_P', 'пересадка: плодовых', 'SUMIFS(R_qty,R_trType,"плод.")')
     put('KP_X', 'сохраняемых хвойных', 'SUMIFS(R_qty,R_act,"",R_N,"хвой.",R_qty,">"&0.5,R_dtxt,"<>-")')
@@ -1141,6 +1168,8 @@ def build_balance(wb):
     ws['A1'].font = Font(name=FONT, bold=True, size=13)
     ws['A2'] = org_line()
     ws['A3'] = '=HYPERLINK("#\'Баланс\'!A4:H8","▶ Выделить таблицу баланса для AutoCAD (затем Ctrl+C; в AutoCAD: Правка → Специальная вставка → Объекты AutoCAD)")'
+    ws['A10'] = '=HYPERLINK("#\'Баланс\'!A12:E14","▶ Выделить таблицу объёмов отходов для AutoCAD")'
+    ws['A10'].font = Font(name=FONT, color='1F5FBF', underline='single')
     ws['A3'].font = Font(name=FONT, color='1F5FBF', underline='single')
     widths = [22, 20, 16, 12, 12, 20, 20, 20]
     for i, w in enumerate(widths):
@@ -1185,9 +1214,9 @@ def build_balance(wb):
         ws.cell(row=r, column=8, value='=IF(S_HEDGE="нет",{a},{a}&" / "&{a}*5)'.format(a=v('h2', w)))
     ws['A11'] = 'Объёмы выхода древесины и древесных отходов'
     ws['A11'].font = Font(name=FONT, bold=True)
-    vt = ['Единицы измерения', 'Стволы', 'Пни', 'Ветви', 'Кустарник']
-    vtips = [None, 'Складочный объём и масса стволов (по каждой позиции — лист «Древесина»).', 'Пни: 20 % от стволов (как в оригинале).',
-             'Ветви и сучья (крона).', 'Кустарник: масса по высоте и массе куста; объём через плотность мягкой древесины.']
+    vt = ['Единицы измерения', 'Сучья, ветви, вершины', 'Пни', 'Древесина', 'Кустарник']
+    vtips = [None, 'Сучья, ветви и вершины (крона) — по каждой позиции на листе «Древесина».', 'Пни: 20 % от древесины стволов (как в оригинале).',
+             'Древесина стволов: складочный объём и масса.', 'Кустарник: масса по высоте и массе куста в каждой строке; объём через плотность мягкой древесины.']
     for i, hh in enumerate(vt):
         c = ws.cell(row=12, column=1 + i, value=hh)
         style_header(c)
@@ -1195,13 +1224,13 @@ def build_balance(wb):
             note(c, vtips[i])
     ws['A13'] = 'складочный объём, м³'
     ws['A14'] = 'масса, тонн'
-    ws['B13'] = "=ROUND(INDEX(VOL_TBL,3,4),2)"
+    ws['B13'] = "=ROUND(INDEX(VOL_TBL,7,4),2)"
     ws['C13'] = "=ROUND(INDEX(VOL_TBL,3,4)*0.2,2)"
-    ws['D13'] = "=ROUND(INDEX(VOL_TBL,7,4),2)"
+    ws['D13'] = "=ROUND(INDEX(VOL_TBL,3,4),2)"
     ws['E13'] = "=ROUND(VOL_BVM3,2)"
-    ws['B14'] = "=ROUND(INDEX(VOL_TBL,4,4),3)"
+    ws['B14'] = "=ROUND(INDEX(VOL_TBL,8,4),2)"
     ws['C14'] = "=ROUND(INDEX(VOL_TBL,4,4)*0.2,2)"
-    ws['D14'] = "=ROUND(INDEX(VOL_TBL,8,4),2)"
+    ws['D14'] = "=ROUND(INDEX(VOL_TBL,4,4),3)"
     ws['E14'] = "=ROUND(VOL_BV,2)"
     ws['A16'] = 'По каждой позиции — лист «Древесина»; по типам твёрдости и по диаметрам стволов — лист «Итоги».'
     ws['A18'] = 'Баланс цветников, газонов, иного травяного покрова, м²'

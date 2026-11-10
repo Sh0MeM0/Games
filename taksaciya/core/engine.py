@@ -520,7 +520,7 @@ def percent_from_note(note):
     return 1 if math.isnan(v) else v
 
 
-def wood(ref, settings, info, row, K, L, stems, H, qty):
+def wood(ref, settings, info, row, K, L, stems, H, qty, J=None):
     res = {'ce': 0, 'BV': None, 'BW': None, 'BX': None, 'BY': None, 'BZ': None, 'CA': 0,
            'CB': None, 'CC': None, 'CD': None, 'perStem': [], 'err': None}
     CA = 0
@@ -529,10 +529,14 @@ def wood(ref, settings, info, row, K, L, stems, H, qty):
             CA += d
     res['CA'] = CA
     hh = row['height']
-    if (0.1 < CA < 8) or L == 1:
+    lite = not settings.get('compat')
+    # оригинал: масса куста только для строки с 1 шт.; Таксация Лайт — для каждой строки кустарника
+    # (живая изгородь: 1 п.м. = 3 куста в однорядной и 5 в двухрядной, как в балансе оригинала)
+    if (0.1 < CA < 8) or L == 1 or (lite and L is not None):
         h = hh if is_num(hh) else 0
         hk = h + (h - 1) / 3 if h > 1 else h
-        res['BV'] = hk * (settings['shrubMassKg'] * percent_from_note(row['note'])) * qty / 1000
+        per = (3 if J == 16 else 5 if J == 17 else 1) if (lite and L is not None) else 1
+        res['BV'] = hk * (settings['shrubMassKg'] * percent_from_note(row['note'])) * qty * per / 1000
     if K is None:
         return res
     ce = hardness_index(info)
@@ -614,6 +618,15 @@ def number_from_a(A, prev_b):
     return xnum(first) + ('' if math.isnan(av) else '-' + xnum(av - 1 + first))
 
 
+def species_by_number(ref, text):
+    """Таксация Лайт: в колонку «Порода» можно ввести № из справочника (служебные строки, затем библиотека, затем свои породы)."""
+    if not re.fullmatch(r'\d+', text):
+        return text
+    n = int(text)
+    names = [s['name'] for s in (ref.get('special') or [])] + [s['name'] for s in (ref.get('species') or [])]
+    return names[n - 1] if 1 <= n <= len(names) else '№%d' % n
+
+
 def split_a(src):
     """(кол-во, № нач.) из поля a («N№S» оригинала) или из полей count/start."""
     a = src.get('a')
@@ -684,6 +697,9 @@ def compute_trees(project, ref, S):
             q = 0
         r['qty'] = _norm_num(q)
         r['species'] = str(src['species']).strip()
+        if not S.get('compat'):
+            r['speciesIn'] = r['species']
+            r['species'] = species_by_number(ref, r['species'])
         r['info'] = species_info(ref, r['species'])
         r['N'] = r['info']['type']
         if not r['info']['found']:
@@ -744,7 +760,11 @@ def removal_row(r, ref, S):
     K = None if shrub_row else r['qty']
     L = r['qty'] if shrub_row else None
     J = type_code(r['species'], r['qty'], r['diam'], r['N'], shrub_row)
+    compat = S.get('compat')
+    if not compat:   # Таксация Лайт: участок поросли меньше 10 м² считается как 10 м² (норма «за 10 м²»)
+        J = {70: 60, 19: 18}.get(J, J)
     is_plot = J in (60, 70, 18, 19)
+    qb = max(r['qty'], 10) if (is_plot and not compat) else r['qty']   # площадь поросли для расчёта
     F = '-' if is_plot else r['cond']
     lname = lc(r['species'])
     if has(lname, lc(SP['treePlotRoad'])) or has(lname, lc(SP['shrubPlotRoad'])):
@@ -768,13 +788,12 @@ def removal_row(r, ref, S):
     Hn = 0 if r['height'] is None else r['height']
     tr = tariff(ref, J, stems, AQ, Hn, r['N'])
     try:
-        cols = plant_cols(ref, J, M, K, L)
+        cols = plant_cols(ref, J, M, None if K is None else (qb if is_plot else K), None if L is None else (qb if is_plot else L))
     except _NoNorm:
         cols = None
     mx = max_of(cols) if cols else {'max': None, 'pos': -1}
     k = r['coef']['k'] if r['coef'] else None
     Y, yerr = None, None
-    compat = S.get('compat')
     if compat and k and not r['coef']['zero'] and is_plot:
         Y = '-'
     elif invasive:
@@ -785,7 +804,7 @@ def removal_row(r, ref, S):
         if tr['v'] is None:
             Y, yerr = None, tr.get('err') or 'нет тарифа'
         else:
-            qm = r['qty'] if (is_plot and not compat) else (r['qty'] if max(r['qty'], 0) > 1 else 1)
+            qm = qb if (is_plot and not compat) else (r['qty'] if max(r['qty'], 0) > 1 else 1)
             Y = xround(tr['v'] * qm * Nc * k[0] * k[1] * k[2] * k[3], 3)
     else:
         if not cols:
@@ -805,7 +824,7 @@ def removal_row(r, ref, S):
         G = '(' + xnum(tr['v']) + ') баз.в.' if S['money'] else Z
     elif S['money']:
         if not compat and is_plot:
-            qt = ' х' + xnum(r['qty']) + 'м² '
+            qt = ' х' + xnum(qb) + 'м²' + (' (факт ' + xnum(r['qty']) + 'м²)' if qb != r['qty'] else '') + ' '
         elif not compat and J in (16, 17):
             qt = ' х' + xnum(r['qty']) + 'п.м. ' if max(r['qty'], 0) > 1 else ''
         else:
@@ -818,7 +837,7 @@ def removal_row(r, ref, S):
              ('х' + str(AQ) + 'ств.' if AQ != '' and AQ >= 2 else '') +
              'х' + xnum(Nc) + 'х' + xnum(k[0]) + 'х' + xnum(k[1]) + 'х' + xnum(k[2]) + 'х' + xnum(k[3]) +
              ' =' + (' + др. уч-ки поросли' if Y == '-' else xnum(Y)))
-    w = wood(ref, S, r['info'], r, K, L, stems, Hn, r['qty'])
+    w = wood(ref, S, r['info'], r, K, L, stems, Hn, r['qty'], J)
     if w['err']:
         r['warnings'].append(w['err'])
     return {'J': J, 'K': K, 'L': L, 'F': F, 'N': Nc, 'M': M, 'isPlot': is_plot, 'AO': AO, 'AQ': AQ,

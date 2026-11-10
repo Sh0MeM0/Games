@@ -56,7 +56,7 @@ def set_cells(xml, cells):
         add = ''.join('<row r="%d"></row>' % r for r in missing)
         xml = xml.replace('<sheetData/>', '<sheetData></sheetData>')
         # вставить в правильные места: проще — пересобрать после sheetData
-        rows = re.findall(r'(<row r="(\d+)".*?(?:/>|</row>))', xml, re.S)
+        rows = re.findall(r'(<row r="(\d+)"[^>]*?(?:/>|>.*?</row>))', xml, re.S)
         body = {int(n): t for t, n in rows}
         for r in missing:
             body[r] = '<row r="%d"></row>' % r
@@ -334,9 +334,15 @@ def compare(vec_name, project, verbose=False):
         chk('ошибки формул на листе %s' % sh, [], bad[:5])
     W = V['Ведомость']
     rows_by_idx = {r['idx']: r for r in res['rows']}
+    numbers = {}
+    for i, s in enumerate(REF['special'] + REF['species']):
+        numbers.setdefault(s['name'].lower(), (i + 1, s['name']))      # как MATCH: первое вхождение
     for r in res['rows']:
-        e = W.get('%s%d' % (L['err'], BX.FIRST + r['idx']))
-        chk('Ошибка (есть/нет) %d' % (BX.FIRST + r['idx']), bool(r['errors']), e not in (None, ''))
+        rr = BX.FIRST + r['idx']
+        e = W.get('%s%d' % (L['err'], rr))
+        chk('Ошибка (есть/нет) %d' % rr, bool(r['errors']), e not in (None, ''))
+        if r['info']['found']:
+            chk('Порода по справочнику %d' % rr, '№%d %s' % numbers[r['species'].lower()], W.get('%s%d' % (L['sphint'], rr)))
     for i in range(n):
         r = rows_by_idx.get(i)
         rr = BX.FIRST + i
@@ -417,13 +423,13 @@ def compare(vec_name, project, verbose=False):
         if w['err']:
             continue
         num = lambda v, m=1: '' if v is None else v * m
-        for col, val in (('G', num(w['BZ'])), ('H', num(w['BX'])), ('I', num(w['BZ'], 0.2)), ('J', num(w['BX'], 0.2)),
-                         ('K', num(w['BY'])), ('L', num(w['BW'])), ('M', num(w['BV']))):
+        for col, val in (('G', num(w['BY'])), ('H', num(w['BW'])), ('I', num(w['BZ'], 0.2)), ('J', num(w['BX'], 0.2)),
+                         ('K', num(w['BZ'])), ('L', num(w['BX'])), ('M', num(w['BV']))):
             chk('ДР %s%d' % (col, rr), val, WD.get('%s%d' % (col, rr)))
     vol = res['volume']
     tr0 = F0 + len(rem) + 1
-    for col, val in (('G', vol['stemsM3']['all']), ('H', vol['stemsT']['all']), ('I', vol['stumpsM3']['all']), ('J', vol['stumpsT']['all']),
-                     ('K', vol['branchesM3']['all']), ('L', vol['branchesT']['all']), ('M', vol['shrubT']['all']), ('N', vol['shrubM3'])):
+    for col, val in (('G', vol['branchesM3']['all']), ('H', vol['branchesT']['all']), ('I', vol['stumpsM3']['all']), ('J', vol['stumpsT']['all']),
+                     ('K', vol['stemsM3']['all']), ('L', vol['stemsT']['all']), ('M', vol['shrubT']['all']), ('N', vol['shrubM3'])):
         chk('ДР итого %s' % col, val, WD.get('%s%d' % (col, tr0)))
     # существующие и сохраняемые
     WE, WK = V['Существующие'], V['Сохраняемые']
@@ -448,7 +454,7 @@ def compare(vec_name, project, verbose=False):
     for i, rowv in enumerate(res['balanceReport']):
         for j, col in enumerate('BCDEFGH'):
             chk('bal %s%d' % (col, 5 + i), rowv[j + 1], WB.get('%s%d' % (col, 5 + i)))
-    for j, col in enumerate('BCDE'):
+    for j, col in zip((2, 1, 0, 3), 'BCDE'):     # сучья/ветви/вершины, пни, древесина, кустарник
         chk('vtab m3 %s' % col, vol['table']['m3'][j], WB.get('%s13' % col))
         chk('vtab t %s' % col, vol['table']['t'][j], WB.get('%s14' % col))
     # цветники
@@ -492,6 +498,10 @@ def new_rules_project(money=True):
         {'a': 4, 'noIn': '60-62', 'species': 'Яблоня домашняя', 'height': 4, 'diam': 16, 'cond': 'уд.', 'action': ''},
         {'a': '', 'noIn': '12а', 'species': 'Клен остролистный', 'height': 9, 'diam': 18, 'cond': 'хор.', 'action': 'В'},
         {'a': '', 'species': 'берез', 'height': 9, 'diam': 18, 'action': 'В'},
+        {'a': 2, 'species': str(1 + [x['name'] for x in REF['special'] + REF['species']].index('Дуб черешчатый')), 'height': 16, 'diam': 40, 'action': 'В'},
+        {'a': '', 'species': '9999', 'height': 9, 'diam': 18, 'action': 'В'},
+        {'a': 6, 'species': '1', 'height': 1, 'diam': '0-4', 'action': 'В'},
+        {'a': 4, 'species': 'Барбарис обыкновенный', 'height': 1.5, 'diam': '-', 'action': 'В'},
         {'a': '', 'species': 'береза повислая', 'height': 15, 'diam': '30,18', 'action': 'В', 'k2': 'да'},
         {'a': '', 'species': 'Сосна обыкновенная', 'height': 12, 'diam': 28, 'action': ''},
     ]
