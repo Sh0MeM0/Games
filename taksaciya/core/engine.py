@@ -207,6 +207,7 @@ def default_settings(ref):
         'view': d.get('formulaView') or 'формула + итог',
         'defaultCond': d.get('defaultCondition') or 'уд.',
         'shrubMassKg': d.get('shrubMassKg', 5) if d.get('shrubMassKg') is not None else 5,
+        'shrubStumpPct': 20,   # Таксация Лайт: доля пней в массе кустарника, % (по аналогии с пнями деревьев оригинала)
         'showPlots': d.get('showPlots') != 'нет', 'hedgePieces': d.get('hedgeAsPieces') != 'нет',
         'flowerMode': d.get('flowerOffset') or 'метрами',
         'reasons': [{'name': r['name'], 'group': r.get('group') or '', 'replace': r.get('replace') or ''}
@@ -1400,6 +1401,9 @@ def compute(project, ref, compat=False):
             r['rm'] = removal_row(r, ref, S)
     rmT = removal_totals(rows, S, ref, base)
     vol = volume_totals(rows, ref)
+    sp = float(S.get('shrubStumpPct') or 0) / 100     # кустарник: сучья, ветви, вершины и пни
+    vol['shrub'] = {'branchesT': vol['shrubT']['all'] * (1 - sp), 'stumpsT': vol['shrubT']['all'] * sp,
+                    'branchesM3': vol['shrubM3'] * (1 - sp), 'stumpsM3': vol['shrubM3'] * sp}
     trT = transplant_totals(rows, ref, S)
     ex = existing_totals(rows)
     bal = balance(rows, ex, rmT, trT, S)

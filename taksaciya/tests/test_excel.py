@@ -126,7 +126,7 @@ def fill_workbook(src, dst, project):
     d = datetime.date.fromisoformat(S['date'])
     vals = {'S_DATE': (d - datetime.date(1899, 12, 30)).days, 'S_K1': yn(S['k1']), 'S_K2': yn(S['k2']), 'S_K3': yn(S['k3']), 'S_K4': yn(S['k4']),
             'S_MONEY': 'выплатами' if S['money'] else 'посадками', 'S_UNIT': S['unit'], 'S_VIEW': S['view'], 'S_COND': S['defaultCond'],
-            'S_MASS': S['shrubMassKg'], 'S_FMODE': S['flowerMode'], 'S_PLOTS': yn(S['showPlots']), 'S_HEDGE': yn(S['hedgePieces']),
+            'S_MASS': S['shrubMassKg'], 'S_SHSTUMP': S.get('shrubStumpPct', 20), 'S_FMODE': S['flowerMode'], 'S_PLOTS': yn(S['showPlots']), 'S_HEDGE': yn(S['hedgePieces']),
             'S_PLOTTREE': S['compMap']['plotTree'], 'S_PLOTSHRUB': S['compMap']['plotShrub']}
     for k, v in vals.items():
         sh, ref = cell_of(k)
@@ -423,13 +423,17 @@ def compare(vec_name, project, verbose=False):
         if w['err']:
             continue
         num = lambda v, m=1: '' if v is None else v * m
+        spp = res['settings']['shrubStumpPct'] / 100
+        bvm3 = None if w['BV'] is None else w['BV'] * 1000 / REF['volumes']['density']['soft'] / 0.1
         for col, val in (('G', num(w['BY'])), ('H', num(w['BW'])), ('I', num(w['BZ'], 0.2)), ('J', num(w['BX'], 0.2)),
-                         ('K', num(w['BZ'])), ('L', num(w['BX'])), ('M', num(w['BV']))):
+                         ('K', num(w['BZ'])), ('L', num(w['BX'])), ('M', num(bvm3, 1 - spp)), ('N', num(w['BV'], 1 - spp)),
+                         ('O', num(bvm3, spp)), ('P', num(w['BV'], spp))):
             chk('ДР %s%d' % (col, rr), val, WD.get('%s%d' % (col, rr)))
     vol = res['volume']
     tr0 = F0 + len(rem) + 1
     for col, val in (('G', vol['branchesM3']['all']), ('H', vol['branchesT']['all']), ('I', vol['stumpsM3']['all']), ('J', vol['stumpsT']['all']),
-                     ('K', vol['stemsM3']['all']), ('L', vol['stemsT']['all']), ('M', vol['shrubT']['all']), ('N', vol['shrubM3'])):
+                     ('K', vol['stemsM3']['all']), ('L', vol['stemsT']['all']), ('M', vol['shrub']['branchesM3']), ('N', vol['shrub']['branchesT']),
+                     ('O', vol['shrub']['stumpsM3']), ('P', vol['shrub']['stumpsT'])):
         chk('ДР итого %s' % col, val, WD.get('%s%d' % (col, tr0)))
     # существующие и сохраняемые
     WE, WK = V['Существующие'], V['Сохраняемые']
@@ -454,9 +458,12 @@ def compare(vec_name, project, verbose=False):
     for i, rowv in enumerate(res['balanceReport']):
         for j, col in enumerate('BCDEFGH'):
             chk('bal %s%d' % (col, 5 + i), rowv[j + 1], WB.get('%s%d' % (col, 5 + i)))
-    for j, col in zip((2, 1, 0, 3), 'BCDE'):     # сучья/ветви/вершины, пни, древесина, кустарник
+    for j, col in zip((2, 1, 0), 'BCD'):     # сучья/ветви/вершины, пни, древесина
         chk('vtab m3 %s' % col, vol['table']['m3'][j], WB.get('%s13' % col))
         chk('vtab t %s' % col, vol['table']['t'][j], WB.get('%s14' % col))
+    for col, m3, t in (('E', vol['shrub']['branchesM3'], vol['shrub']['branchesT']), ('F', vol['shrub']['stumpsM3'], vol['shrub']['stumpsT'])):
+        chk('vtab m3 %s' % col, E.xround(m3, 2), WB.get('%s13' % col))
+        chk('vtab t %s' % col, E.xround(t, 2), WB.get('%s14' % col))
     # цветники
     WA = V['Цветники и газоны']
     for key, title, nn, tk in BX.AREA_BLOCKS:
@@ -508,7 +515,7 @@ def new_rules_project(money=True):
     S = {'date': '2026-03-01', 'k1': False, 'k2': True, 'k3': False, 'k4': False, 'money': money, 'unit': 'баз.в. (руб.)',
          'view': 'формула + итог', 'defaultCond': 'уд.', 'shrubMassKg': 5, 'flowerMode': 'метрами', 'showPlots': True, 'hedgePieces': True,
          'reasons': [{'name': 'СЕТИ', 'group': '', 'replace': ''}, {'name': 'БЛАГОУСТРОЙСТТВО', 'group': '', 'replace': ''}],
-         'compMap': dict(E.default_settings(E.prepare_ref(REF))['compMap'])}
+         'compMap': dict(E.default_settings(E.prepare_ref(REF))['compMap']), 'shrubStumpPct': 20 if money else 35}
     return {'settings': S, 'trees': T, 'flowers': [{'kind': 'Композиция из многолетников', 'cond': 'хор.', 'area': 4}],
             'lawns': [{'kind': 'Обыкновенный', 'cond': 'уд.', 'area': 30, 'reason': ''}], 'grass': [], 'projected': {}}
 
