@@ -357,7 +357,7 @@ def compare(vec_name, project, verbose=False):
         e = W.get('%s%d' % (L['err'], rr))
         chk('Ошибка (есть/нет) %d' % rr, bool(r['errors']), e not in (None, ''))
         if r['info']['found']:
-            chk('Порода по справочнику %d' % rr, '№%d' % numbers[r['species'].lower()][0], W.get('%s%d' % (L['sphint'], rr)))
+            chk('Порода по справочнику %d' % rr, '№%d %s' % numbers[r['species'].lower()], W.get('%s%d' % (L['sphint'], rr)))
     for i in range(n):
         r = rows_by_idx.get(i)
         rr = BX.FIRST + i
@@ -552,17 +552,20 @@ def new_rules_project(money=True):
 
 def deletion_check():
     total = fails = 0
-    for first, cnt in ((BX.FIRST + 2, 3), (BX.FIRST, 1)):        # три строки в середине; первая строка данных
-        c, d = deletion_case(first, cnt)
+    for first, cnt, own in ((BX.FIRST + 2, 3, False), (BX.FIRST, 1, False), (BX.FIRST + 6, 2, True)):
+        # три строки в середине; первая строка данных; свои номера по плану (с пропусками) — должны сохраниться
+        c, d = deletion_case(first, cnt, own)
         total += c
         fails += d
     return total, fails
 
 
-def deletion_case(first, cnt):
+def deletion_case(first, cnt, own=False):
     """Удалить строки «Ведомости» целиком: ни одной ошибки формул, итоги совпадают с ядром без этих деревьев."""
     tmp = tempfile.mkdtemp(prefix='taksd_')
     project = new_rules_project(True)
+    if own:
+        project['trees'] = [dict(t, noIn=str(10 + 3 * i)) for i, t in enumerate(project['trees'])]
     tpl = BX.build(len(project['trees']) + 5, os.path.join(tmp, 'tpl.xlsx'))
     filled = os.path.join(tmp, 'case.xlsx')
     fill_workbook(tpl, filled, project)
@@ -593,8 +596,15 @@ def deletion_case(first, cnt):
     L = BX.letters(BX.cols_spec())
     for i, r in enumerate(res['rows']):
         chk('№ строки %d' % i, r['no'], V['Ведомость'].get('%s%d' % (L['no'], BX.FIRST + i)))
+    WR = V['Удаляемые']
+    rem = [r for r in res['rows'] if r['removed']]
+    for i, r in enumerate(rem):
+        chk('Удаляемые № %d' % i, r['no'], WR.get('A%d' % (BX.LFIRST + i)))
+        chk('Удаляемые порода %d' % i, r['title'], WR.get('B%d' % (BX.LFIRST + i)))
+    for i, rowv in enumerate(res['removalReport']):
+        chk('Удаляемые итоги %d' % i, rowv[6], WR.get('G%d' % (BX.LFIRST + len(rem) + 1 + i)))
     shutil.rmtree(tmp, ignore_errors=True)
-    print('удаление строк %d–%d: проверено %d значений, расхождений %d' % (first, first + cnt - 1, checked, len(diffs)))
+    print('удаление строк %d–%d%s: проверено %d значений, расхождений %d' % (first, first + cnt - 1, ' (свои номера)' if own else '', checked, len(diffs)))
     for d in diffs[:25]:
         print('   %-18s ядро=%r  excel=%r' % d)
     return checked, len(diffs)

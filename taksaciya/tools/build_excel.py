@@ -18,9 +18,7 @@ import zipfile
 
 from openpyxl import Workbook
 from openpyxl.comments import Comment
-from openpyxl.formatting.rule import FormulaRule, Rule
-from openpyxl.styles.differential import DifferentialStyle
-from openpyxl.styles.numbers import NumberFormat
+from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.workbook.defined_name import DefinedName
@@ -410,15 +408,16 @@ def cols_spec():
     add('cnt', 'Кол-во (шт., м², п.м.)', None, 8,
         tip='Количество. Деревья и кусты — шт.; участок поросли — площадь, м²; живая изгородь — длина, п.м. '
             'Пусто — 1 шт., а если в «№ по плану» диапазон «4-10» — число номеров (7).')
-    add('sp', 'Порода, вид (№ или название)', None, 32,
+    add('sp', 'Порода, вид (№ или название)', None, 26,
         tip='Порода: № из справочника или название.\n'
-            '• Введите № (например 199) — в ячейке появится название породы («Береза повислая»), в расчёт пойдёт эта порода.\n'
+            '• Введите № (например 199) — справа, в колонке «Порода по справочнику», появится «№199 Береза повислая»; в расчёт и ведомости пойдёт эта порода.\n'
             '• Введите начало названия (например «берез») — вверху листа, в жёлтой панели, появятся подходящие породы с номерами; '
             'затем введите в эту же ячейку нужный №.\n'
             '• Номера — лист «Справочник», колонка «№» (там есть фильтр для поиска).\n'
             'Служебные строки: №1 «Уч-к поросли дер.», №2 «Уч-к поросли куст.», №3–4 — то же «у дорог», №5–6 — живая изгородь.')
-    add('sphint', '№ по справочнику', 'IF({sp}&""="","",IF({libi}>0,"№"&{libi},IF({hc}>0,"подходит "&{hc}&" — список вверху ↑",IF(ISNUMBER({spnum}),"нет № "&{spnum},"нет в справочнике"))))', 18,
-        tip='Считается само: № породы по справочнику. Если введено начало названия — сколько пород подходит; сам список с номерами — в жёлтой панели вверху листа.')
+    add('sphint', 'Порода по справочнику (№)', 'IF({sp}&""="","",IF({libi}>0,"№"&{libi}&" "&INDEX(Lib_Name,{libi}),IF({hc}>0,"подходит "&{hc}&" — список вверху ↑",IF(ISNUMBER({spnum}),"нет № "&{spnum},"нет в справочнике"))))', 32,
+        tip='Считается само: № и название породы по справочнику — то, что пойдёт в расчёт и в ведомости. Если введено начало названия — сколько пород подходит; '
+            'список с номерами — в жёлтой панели вверху листа.')
     add('h', 'Высота, м', None, 8, tip='Высота, м. Нужна для тарифа кустарников, объёмов древесины (таблицы по высоте) и размера кома при пересадке.')
     add('d', 'Диаметр, см', None, 12,
         tip='Диаметр ствола на высоте 1,3 м, см:\n• целое число — один ствол;\n• «20,15,12» — многоствольное (до 27 стволов);\n• «-» — кустарник и живая изгородь;\n'
@@ -661,7 +660,6 @@ def build_main(wb, nrows):
     ws.row_dimensions[HROW].height = 44
     ws.freeze_panes = '%s5' % get_column_letter(spec.index(next(x for x in spec if x[0] == 'sphint')) + 2)
     ws.column_dimensions[L['noin']].number_format = '@'     # «4-10» остаётся текстом, а не датой
-    ws.column_dimensions[L['sp']].alignment = Alignment(horizontal='left')   # № породы показывается названием — по левому краю
     rng = lambda c: '%s%d:%s%d' % (L[c], FIRST, L[c], last)
     dv_cond = DataValidation(type='list', formula1='"хор.,уд.,плох.,ненадл."', allow_blank=True)
     dv_act = DataValidation(type='list', formula1='"В,П"', allow_blank=True)
@@ -678,10 +676,6 @@ def build_main(wb, nrows):
             dv.add(rng(c))
     for name, col in L.items():
         defname(wb, 'R_' + name, "'Ведомость'!$%s$%d:$%s$%d" % (col, FIRST, col, last))
-    for i, s0 in enumerate(REF['special'] + REF['species'], 1):
-        nm = s0['name'].replace('"', "'")
-        dxf = DifferentialStyle(numFmt=NumberFormat(numFmtId=400 + i, formatCode='"%s"' % nm))
-        ws.conditional_formatting.add(rng('sp'), Rule(type='cellIs', operator='equal', formula=[str(i)], dxf=dxf))
     return ws, spec, L, last
 
 
@@ -734,7 +728,7 @@ def build_list(wb, sheet, title, cols, counter, nname, totals, cap, top_note=Non
     tb = "$%s$%d:$%s$%d" % (get_column_letter(t0), LFIRST, get_column_letter(t0 + nc - 1), LFIRST + T - 1)
     r = LFIRST
     k = 'ROWS($A$%d:$A%d)' % (LFIRST, r)
-    ws.cell(row=r, column=kc, value='=IF(%s>%s,"",IFERROR(MATCH(%s-1,R_%s,1),0)+1)' % (k, nname, k, counter))
+    ws.cell(row=r, column=kc, value='=IF(%s>%s,"",IFERROR(MATCH(%s,R_%s,0),""))' % (k, nname, k, counter))
     j = '(%s-%s-1)' % (k, nname)
     for i, (h, expr, w, tip, fmt) in enumerate(cols):
         item = expr.replace('{I}', '$%s%d' % (K, r))
