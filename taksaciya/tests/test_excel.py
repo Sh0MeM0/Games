@@ -159,8 +159,6 @@ def fill_workbook(src, dst, project):
         put('Ведомость', L['cond'] + str(r), t.get('cond') or None)
         put('Ведомость', L['act'] + str(r), t.get('action') or None)
         put('Ведомость', L['rsn'] + str(r), t.get('reason') or None)
-        kr = t.get('kRepl')
-        put('Ведомость', L['kr'] + str(r), num_or_text(kr) if kr not in (None, '') else None)
         put('Ведомость', L['note'] + str(r), t.get('note') or None)
         for k in range(1, 5):
             put('Ведомость', L['k%din' % k] + str(r), t.get('k%d' % k) or None)
@@ -317,8 +315,9 @@ def compare(vec_name, project, verbose=False):
     filled = os.path.join(tmp, 'case.xlsx')
     fill_workbook(tpl, filled, project)
     out = recalc(filled)
-    V, names = read_values(out, {'Ведомость', 'Итоги', 'Удаляемые', 'Баланс', 'Цветники и газоны', 'Пересаживаемые', 'Настройки',
-                                 'Существующие', 'Сохраняемые', 'Древесина'})
+    all_sheets = {'Ведомость', 'Итоги', 'Удаляемые', 'Баланс', 'Цветники и газоны', 'Пересаживаемые', 'Настройки',
+                  'Существующие', 'Сохраняемые', 'Древесина', 'Справочник'}
+    V, names = read_values(out, all_sheets)
     res = E.compute(project, REF)
     L = BX.letters(BX.cols_spec())
     diffs = []
@@ -329,8 +328,15 @@ def compare(vec_name, project, verbose=False):
         checked += 1
         if not same(x, y):
             diffs.append((label, x, y))
+    # ни одной ошибки формулы (#ЗНАЧ!, #Н/Д …) ни на одном листе
+    for sh in sorted(all_sheets):
+        bad = sorted(ref for ref, v in V[sh].items() if isinstance(v, str) and v.startswith('#ERR'))
+        chk('ошибки формул на листе %s' % sh, [], bad[:5])
     W = V['Ведомость']
     rows_by_idx = {r['idx']: r for r in res['rows']}
+    for r in res['rows']:
+        e = W.get('%s%d' % (L['err'], BX.FIRST + r['idx']))
+        chk('Ошибка (есть/нет) %d' % (BX.FIRST + r['idx']), bool(r['errors']), e not in (None, ''))
     for i in range(n):
         r = rows_by_idx.get(i)
         rr = BX.FIRST + i
@@ -485,6 +491,8 @@ def new_rules_project(money=True):
         {'a': 2, 'noIn': '50', 'species': 'Яблоня домашняя', 'height': 4, 'diam': 16, 'cond': 'уд.', 'action': ''},
         {'a': 4, 'noIn': '60-62', 'species': 'Яблоня домашняя', 'height': 4, 'diam': 16, 'cond': 'уд.', 'action': ''},
         {'a': '', 'noIn': '12а', 'species': 'Клен остролистный', 'height': 9, 'diam': 18, 'cond': 'хор.', 'action': 'В'},
+        {'a': '', 'species': 'берез', 'height': 9, 'diam': 18, 'action': 'В'},
+        {'a': '', 'species': 'береза повислая', 'height': 15, 'diam': '30,18', 'action': 'В', 'k2': 'да'},
         {'a': '', 'species': 'Сосна обыкновенная', 'height': 12, 'diam': 28, 'action': ''},
     ]
     S = {'date': '2026-03-01', 'k1': False, 'k2': True, 'k3': False, 'k4': False, 'money': money, 'unit': 'баз.в. (руб.)',

@@ -701,7 +701,8 @@ def compute_trees(project, ref, S):
         r['action'] = lc(src.get('action'))
         r['note'] = src.get('note') or ''
         r['reason'] = src.get('reason') or ''
-        r['kRepl'] = '' if src.get('kRepl') is None else src.get('kRepl')
+        # «Инд. К» в ведомости Таксации Лайт нет (его заменяют колонки К1–К4); учитывается только в режиме оригинала
+        r['kRepl'] = ('' if src.get('kRepl') is None else src.get('kRepl')) if S.get('compat') else ''
         r['kRow'] = None if S.get('compat') else [src.get('k1'), src.get('k2'), src.get('k3'), src.get('k4')]
         shrub_type = r['N'] in SHRUB_TYPES
         title = r['species']

@@ -95,15 +95,27 @@ def build_ref(wb):
         defname(wb, name, "'Справочник'!$%s$5:$%s$%d" % (col, col, lib_last))
     # список для выбора породы: только заполненные строки (иначе Excel открывает список на первой пустой строке — «с середины»)
     defname(wb, 'SPL', "'Справочник'!$A$5:INDEX('Справочник'!$A$5:$A$%d,MAX(1,COUNTA('Справочник'!$A$5:$A$%d)))" % (lib_last, lib_last))
-    # отсортированная копия списка для поиска по началу названия (колонки AB:AC, скрыты)
-    style_header(ws.cell(row=4, column=28, value='место по алфавиту'))
-    style_header(ws.cell(row=4, column=29, value='породы по алфавиту (для поиска)'))
-    for rr in range(5, lib_last + 1):
-        ws.cell(row=rr, column=28, value='=IF($A%d="","",COUNTIF(Lib_Name,"<"&$A%d)+1)' % (rr, rr))
-        ws.cell(row=rr, column=29, value='=IF(ROWS($AC$5:$AC%d)>COUNT($AB$5:$AB$%d),"",INDEX(Lib_Name,MATCH(SMALL($AB$5:$AB$%d,ROWS($AC$5:$AC%d)),$AB$5:$AB$%d,0)))'
-                % (rr, lib_last, lib_last, rr, lib_last))
-    defname(wb, 'SPS', "'Справочник'!$AC$5:$AC$%d" % lib_last)
-    defname(wb, 'SPS1', "'Справочник'!$AC$5")
+    # список для поиска породы по началу любого слова (колонки AB:AC, скрыты): ключ — название с этого слова до конца,
+    # значение — полное название; отсортирован по ключу, поэтому подходящие ключи идут подряд
+    style_header(ws.cell(row=4, column=28, value='ключ поиска'))
+    style_header(ws.cell(row=4, column=29, value='порода'))
+    keys = []
+    for s0 in REF['special'] + REF['species']:
+        nm = s0['name']
+        words = nm.split(' ')
+        seen = set()
+        for i in range(len(words)):
+            k = ' '.join(words[i:]).lstrip('*')
+            if k and k.lower() not in seen:
+                seen.add(k.lower())
+                keys.append((k, nm))
+    keys.sort(key=lambda kv: (kv[0].casefold(), kv[1].casefold()))
+    for j, (k, nm) in enumerate(keys):
+        ws.cell(row=5 + j, column=28, value=k)
+        ws.cell(row=5 + j, column=29, value=nm)
+    kl = 4 + len(keys)
+    defname(wb, 'SPK', "'Справочник'!$AB$5:$AB$%d" % kl)
+    defname(wb, 'SPV1', "'Справочник'!$AC$5")
     ws.column_dimensions['AB'].hidden = True
     ws.column_dimensions['AC'].hidden = True
     for i, t in enumerate(['Название породы (вида). Отсюда берётся список выбора на листе «Ведомость».',
@@ -374,9 +386,10 @@ def cols_spec():
     add('cnt', 'Кол-во (шт., м², п.м.)', None, 8,
         tip='Количество. Деревья и кусты — шт.; участок поросли — площадь, м²; живая изгородь — длина, п.м. '
             'Пусто — 1 шт., а если в «№ по плану» диапазон «4-10» — число номеров (7).')
-    add('sp', 'Порода, вид', None, 30,
+    add('sp', 'Порода, вид', None, 36,
         tip='Порода из списка (стрелка справа от ячейки). Список начинается с начала и берётся с листа «Справочник».\n'
-            'Быстрый поиск: наберите начало названия (например «берез»), нажмите Enter и снова откройте список — останутся только подходящие. '
+            'Быстрый поиск: наберите начало любого слова названия (например «берез» или «повисл»), нажмите Enter и снова откройте список '
+            '(стрелка ▼ справа от ячейки или Alt+↓) — останутся только подходящие породы. Листать список — стрелками ↑↓ на клавиатуре. '
             'В Microsoft 365 подсказки появляются сразу при наборе.\n'
             'Служебные строки: «Уч-к поросли дер.», «Уч-к поросли куст.», «*Уч-к поросли дер. у дорог», «*Уч-к поросли куст. у дорог», «Однорядная живая изгородь», «Двухрядная живая изгородь».')
     add('h', 'Высота, м', None, 8, tip='Высота, м. Нужна для тарифа кустарников, объёмов древесины (таблицы по высоте) и размера кома при пересадке.')
@@ -388,11 +401,9 @@ def cols_spec():
     add('rsn', 'Причина вырубки', None, 16,
         tip='Причина из списка причин (лист «Настройки»). Можно не указывать — тогда коэффициенты как в настройках и в колонках К1–К4. '
             'Причина может менять коэффициенты, если так задано в списке причин.')
-    add('kr', 'Инд. К', None, 7,
-        tip='Как в оригинале: номера коэффициентов, которые для этой строки меняются на противоположные (например 24 — К2 и К4), или «без компенcации» — строка без выплат.')
     for i, (nm, short, rule) in enumerate(K_INFO, 1):
         add('k%din' % i, '%s %s?' % (nm, short), None, 9,
-            tip='%s для этой строки — «%s?»: %s.\nПусто — как на листе «Настройки» (с учётом причины и «Инд. К»). Указанное здесь значение окончательное для строки.\n'
+            tip='%s для этой строки — «%s?»: %s.\nПусто — как на листе «Настройки» (с учётом причины). Указанное здесь значение окончательное для строки.\n'
                 'Пример: часть деревьев в водоохранной зоне или вне населённого пункта — отметьте только их.' % (nm, short, rule))
     add('note', 'Примечание', None, 14, tip='Попадает в наименование в скобках. Запись вида «V=50%» уменьшает массу кустарника.')
     # расчёт (видимые)
@@ -410,7 +421,7 @@ def cols_spec():
         tip='Расчёт строки: (тариф) баз.в. × кол-во (шт., м² или п.м.) × коэф. состояния × К1 × К2 × К3 × К4 = итог. В режиме «посадками» — число саженцев. Для пересадки — размер кома.')
     add('Y', 'Итог', 'IF({rem}<>1,"",IF({inv},0,IF(OR(NOT({coefOK}),{Nc}=""),"ОШИБКА",IF(MONEYY,IF(ISNUMBER({AR}),ROUND({AR}*IF({isPlot},{qty},IF({qty}>1,{qty},1))*{Nc}*{K1}*{K2}*{K3}*{K4},3),"ОШИБКА"),IFERROR(ROUND({mx}*IF(LEN({AO})<2,1,{AQ})*{Nc}*{K1}*{K2}*{K3}*{K4},3),"ОШИБКА")))))', 9,
         tip='Итог строки: базовых величин (выплаты) или штук саженцев (посадки). Поросль считается по каждой строке: площадь × норма × коэффициенты.')
-    add('err', 'Ошибка', 'IF({sp}="","",IF(LEFT({Htxt},6)="ОШИБКА",{Htxt},IF({qty}="ERR","ОШИБКА: количество не распознано",IF(AND({rok},{cnt}&""<>"",{qty}<>{rb}-{ra}+1),"ОШИБКА: кол-во не совпадает с номерами",IF(NOT({found}),"ОШИБКА: породы нет в справочнике",IF(AND({rem}=1,{Nc}=""),"ОШИБКА: неизвестное состояние",IF(AND({rem}=1,{Y}="ОШИБКА"),"ОШИБКА: нет тарифа","")))))))', 22,
+    add('err', 'Ошибка', 'IF({sp}="","",IF(LEFT({Htxt},6)="ОШИБКА",{Htxt},IF({qty}="ERR","ОШИБКА: количество не распознано",IF({nmis},"ОШИБКА: кол-во не совпадает с номерами",IF(NOT({found}),IF(COUNTIF(SPK,{sp}&"*")>0,"ВЫБЕРИТЕ породу: стрелка ▼ в ячейке «Порода» — подходит "&COUNTIF(SPK,{sp}&"*"),"ОШИБКА: породы нет в справочнике"),IF(AND({rem}=1,{Nc}=""),"ОШИБКА: неизвестное состояние",IF(AND({rem}=1,{Y}="ОШИБКА"),"ОШИБКА: нет тарифа","")))))))', 22,
         tip='Ошибка ввода в строке. Строка с ошибкой не входит в итоги; число таких строк показано на листе «Удаляемые».')
     # служебные
     h = True
@@ -421,6 +432,7 @@ def cols_spec():
     add('n1', 'начальный номер', 'IFERROR(IF(OR({nt}="",ISNUMBER(FIND("-",{nt}))),"",IF(AND(VALUE({nt})>=0,VALUE({nt})=INT(VALUE({nt}))),VALUE({nt}),"")),"")', 5, h)
     add('free', 'номер — текст', 'AND({nt}<>"",NOT({rok}),NOT(ISNUMBER({n1})))', 5, h)
     add('s0', 'первый номер', 'IF(ISNUMBER({n1}),{n1},N({ne:prev})+1)', 5, h)
+    add('nmis', 'кол-во ≠ диапазону', 'IF({rok},AND({cnt}&""<>"",N({qty})<>{rb}-{ra}+1),FALSE)', 5, h)
     add('qty', 'Кол-во, число', 'IF({sp}="","",IF({cnt}&""="",IF({rok},IF({rb}>={ra},{rb}-{ra}+1,"ERR"),1),IFERROR(VALUE({cnt}&""),"ERR")))', 8, h)
     add('ne', 'конец номера', 'IF({sp}="",N({ne:prev}),IF({rok},{rb},IF({free},N({ne:prev}),IF({cnt}&""="",{s0},IFERROR({s0}+VALUE({cnt}&"")-1,{s0})))))', 8, h)
     add('libi', 'строка справочника', 'IF({sp}="",0,IFERROR(MATCH({sp},Lib_Name,0),0))', 6, h)
@@ -435,10 +447,9 @@ def cols_spec():
     add('rem', 'удаляется', 'IF(LEFT({Htxt},8)="вырубить",1,0)', 5, h)
     add('trn', 'пересадка', 'IF(LEFT({Htxt},10)="пересадить",1,0)', 5, h)
     add('rep', 'замена по причине', 'IFERROR(INDEX(RS_Repl,MATCH({rsn},RS_Name,0))&"","")', 8, h)
-    add('ind', 'инд. замена', '{kr}&""', 6, h)
-    add('zero', 'без компенсации', 'OR(ISNUMBER(SEARCH("без*компен?ации",{ind})),ISNUMBER(SEARCH("без*компен?ации",{rep})))', 6, h)
+    add('zero', 'без компенсации', 'ISNUMBER(SEARCH("без*компен?ации",{rep}))', 6, h)
     for i, (on, off) in enumerate([(2, 1), (0.5, 1), (0.5, 1), (0.1, 1)], 1):
-        same = 'ISNUMBER(FIND("%d",{ind}))=ISNUMBER(FIND("%d",{rep}))' % (i, i)
+        same = 'NOT(ISNUMBER(FIND("%d",{rep})))' % i
         add('K%d' % i, 'К%d' % i, 'IF({zero},0,IF({k%din}="да",%s,IF({k%din}="нет",%s,IF(K%dY,IF(%s,%s,%s),IF(%s,%s,%s)))))' % (i, on, i, off, i, same, on, off, same, off, on), 5, h)
     add('coefOK', 'коэф. есть', 'AND({act}="В",{found})', 5, h)
     add('Es', 'диаметр без пробелов', 'SUBSTITUTE({dtxt}," ","")', 8, h)
@@ -603,7 +614,7 @@ def build_main(wb, nrows):
     dv_act = DataValidation(type='list', formula1='"В,П"', allow_blank=True)
     sp = '$%s%d' % (L['sp'], FIRST)
     dv_sp = DataValidation(type='list', allow_blank=True, showErrorMessage=False,
-                           formula1='IF(OR({s}="",COUNTIF(Lib_Name,{s})>0),SPL,IF(COUNTIF(SPS,{s}&"*")=0,SPL,OFFSET(SPS1,MATCH({s}&"*",SPS,0)-1,0,COUNTIF(SPS,{s}&"*"),1)))'.format(s=sp))
+                           formula1='IF(OR({s}="",COUNTIF(Lib_Name,{s})>0),SPL,IF(COUNTIF(SPK,{s}&"*")=0,SPL,OFFSET(SPV1,MATCH({s}&"*",SPK,0)-1,0,COUNTIF(SPK,{s}&"*"),1)))'.format(s=sp))
     assert len(dv_sp.formula1) < 255, len(dv_sp.formula1)
     dv_rs = DataValidation(type='list', formula1='RS_Name', allow_blank=True, showErrorMessage=False)
     dv_yn = DataValidation(type='list', formula1='"да,нет"', allow_blank=True, showErrorMessage=True,
@@ -993,7 +1004,7 @@ def build_totals(wb, L):
     put('KB_PK', 'сохраняемые: поросль кустарников, м²', 'EX_PK-C_PK')
     put('KB_H1', 'сохраняемые: изгородь 1-р., п.м.', 'EX_H1-TR_H1-C_HH1')
     put('KB_H2', 'сохраняемые: изгородь 2-р., п.м.', 'EX_H2-TR_H2-C_HH2')
-    put('N_ERR', 'строк с ошибками', 'COUNTIF(R_err,"ОШИБКА*")')
+    put('N_ERR', 'строк с ошибками', 'COUNTIF(R_err,"?*")')
     return ws, T
 
 
@@ -1225,7 +1236,7 @@ def build(nrows=1000, out=None):
              'Цветники и газоны', 'Баланс', 'Итоги', 'Справочник']
     wb._sheets = [wb[n] for n in order]
     for ws in wb.worksheets:
-        ws.sheet_view.zoomScale = 90
+        ws.sheet_view.zoomScale = 100 if ws.title == 'Ведомость' else 90
     from openpyxl.workbook.properties import CalcProperties
     wb.calculation = CalcProperties(fullCalcOnLoad=True)   # Excel пересчитает книгу при открытии
     out = out or out_name(nrows)
@@ -1308,7 +1319,7 @@ def expand_shared(src, dst, sheets):
             z.writestr(n, files[n])
 
 
-SIZES = [500, 1000, 2000, 5000, 10000]
+SIZES = [2000]   # книги на 500, 1000, 5000 и 10000 строк в excel/ — прежняя версия, больше не пересобираются
 
 
 def out_name(n):
