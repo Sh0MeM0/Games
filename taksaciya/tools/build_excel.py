@@ -189,16 +189,17 @@ def build_ref(wb):
                     ['PS_J', 'PS_1', 'PS_2', 'PS_3', 'PS_4', 'PS_5', 'PS_6', 'PS_7', None])
     V = REF['volumes']
     start = row
-    row = put_table(row, c0, 'Объёмы древесины, мягкие породы (Мягк, плотность %s)' % V['density']['soft'],
-                    ['диаметр', 'h1', 'h1б', 'всего1', 'ствол1', 'h2', 'h2б', 'всего2', 'ствол2'], V['soft'],
+    # первая строка таблиц объёмов — служебные нули: стволы тоньше 8 см и пустые дают 0 без формул массива
+    row = put_table(row, c0, 'Объёмы древесины, мягкие породы (Мягк, плотность %s; первая строка — служебные нули)' % V['density']['soft'],
+                    ['диаметр', 'h1', 'h1б', 'всего1', 'ствол1', 'h2', 'h2б', 'всего2', 'ствол2'], [[0] * 9] + V['soft'],
                     ['VolDiam', 'V_S2', None, 'V_S4', 'V_S5', None, None, 'V_S8', 'V_S9'], zero_blank=True)
     start = row
     row = put_table(row, c0, 'Объёмы древесины, хвойные (Хвой, плотность %s; строки — по диаметрам таблицы мягких пород)' % V['density']['conif'],
-                    ['h1', 'h1б', 'всего1', 'ствол1', 'h2', 'h2б', 'всего2', 'ствол2', 'h3', 'h3б', 'всего3', 'ствол3'], V['conif'],
+                    ['h1', 'h1б', 'всего1', 'ствол1', 'h2', 'h2б', 'всего2', 'ствол2', 'h3', 'h3б', 'всего3', 'ствол3'], [[0] * 12] + V['conif'],
                     ['V_C1', None, 'V_C3', 'V_C4', 'V_C5', None, 'V_C7', 'V_C8', None, None, 'V_C11', 'V_C12'], zero_blank=True)
     start = row
     row = put_table(row, c0, 'Объёмы древесины, твёрдые (Твер, плотность %s)' % V['density']['hard'],
-                    ['h1', 'h1б', 'всего1', 'ствол1', 'h2', 'h2б', 'всего2', 'ствол2'], V['hard'],
+                    ['h1', 'h1б', 'всего1', 'ствол1', 'h2', 'h2б', 'всего2', 'ствол2'], [[0] * 8] + V['hard'],
                     ['V_H1', None, 'V_H3', 'V_H4', 'V_H5', None, 'V_H7', 'V_H8'], zero_blank=True)
     start = row
     row = put_table(row, c0, 'Плотность древесины, кг/м³', ['мяг.', 'хвн.', 'твд.'], [[V['density']['soft'], V['density']['conif'], V['density']['hard']]])
@@ -488,13 +489,20 @@ def cols_spec():
     add('wtype', 'древесина', 'IF({CE}=1,"мягкая",IF({CE}=2,"хвойная",IF({CE}=3,"твёрдая","")))', 7, h)
     D = '{d1}:{d%d}' % NSTEM
 
-    def vol_arr(total):
+    DN = '--(0&%s)' % D            # стволы числами: пусто → 0 (строка нулей в таблицах объёмов)
+
+    def vol_sp(total, weight=''):
+        """SUMPRODUCT объёмов по всем стволам строки без формул массива (Excel 2010+, LibreOffice)."""
         a, b = ('V_S4', 'V_S8') if total else ('V_S5', 'V_S9')
         c1, c2, c3 = ('V_C3', 'V_C7', 'V_C11') if total else ('V_C4', 'V_C8', 'V_C12')
         d1, d2 = ('V_H3', 'V_H7') if total else ('V_H4', 'V_H8')
-        lk = lambda nm: 'LOOKUP(%s,VolDiam,%s)' % (D, nm)
-        return ('IFERROR(CHOOSE({CE},IF(%s<={Hn},%s,%s),IF(%s<={Hn},%s,IF(%s<={Hn},%s,%s)),IF(%s<={Hn},%s,%s)),0)'
-                % (lk('V_S2'), lk(a), lk(b), lk('V_C1'), lk(c1), lk('V_C5'), lk(c2), lk(c3), lk('V_H1'), lk(d1), lk(d2)))
+        lk = lambda nm: 'LOOKUP(%s,VolDiam,%s)' % (DN, nm)
+        w = ('*' + weight) if weight else ''
+        soft = 'SUMPRODUCT((%s*(%s<={Hn})+%s*(%s>{Hn}))%s)' % (lk(a), lk('V_S2'), lk(b), lk('V_S2'), w)
+        conif = 'SUMPRODUCT((%s*(%s<={Hn})+%s*(%s>{Hn})*(%s<={Hn})+%s*(%s>{Hn})*(%s>{Hn}))%s)' % (
+            lk(c1), lk('V_C1'), lk(c2), lk('V_C1'), lk('V_C5'), lk(c3), lk('V_C1'), lk('V_C5'), w)
+        hard = 'SUMPRODUCT((%s*(%s<={Hn})+%s*(%s>{Hn}))%s)' % (lk(d1), lk('V_H1'), lk(d2), lk('V_H1'), w)
+        return 'IF({CE}=1,%s,IF({CE}=2,%s,%s))' % (soft, conif, hard)
 
     def vol(dref, total):
         m = 'MATCH(%s,VolDiam,1)' % dref
@@ -504,15 +512,16 @@ def cols_spec():
         return ('CHOOSE({CE},IF(INDEX(V_S2,%s)<={Hn},INDEX(%s,%s),INDEX(%s,%s)),IF(INDEX(V_C1,%s)<={Hn},INDEX(%s,%s),IF(INDEX(V_C5,%s)<={Hn},INDEX(%s,%s),INDEX(%s,%s))),'
                 'IF(INDEX(V_H1,%s)<={Hn},INDEX(%s,%s),INDEX(%s,%s)))' % (m, a, m, b, m, m, c1, m, m, c2, m, c3, m, m, d1, m, d2, m))
     add('CA', 'сумма тонких стволов', 'IF({rem}<>1,0,SUMIF({d1}:{d%d},"<"&8))' % NSTEM, 5, h)
-    add('CC', 'всего, м³', 'IF({CE}<1,"",SUM(%s)+IF({CA}<8,0,%s-%s))' % (vol_arr(True), vol('{CA}', True), vol('{CA}', False)), 6, h, arr=True)
-    add('CD', 'стволы, м³', 'IF({CE}<1,"",SUM(%s))' % vol_arr(False), 6, h, arr=True)
+    add('CC', 'всего, м³', 'IF({CE}<1,"",%s+IF({CA}<8,0,%s-%s))' % (vol_sp(True), vol('{CA}', True), vol('{CA}', False)), 6, h)
+    add('CD', 'стволы, м³', 'IF({CE}<1,"",%s)' % vol_sp(False), 6, h)
     add('CB', 'ветви, м³', 'IF({CE}<1,"",IF({CC}<{CD},"",{CC}-{CD}))', 6, h)
     add('dens', 'плотность', 'IF({CE}<1,"",CHOOSE({CE},DEN_S,DEN_C,DEN_H))', 5, h)
     add('BX', 'стволы, т', 'IF({CE}<1,"",{CD}*{dens}*{qty}/1000)', 6, h)
     add('BW', 'ветви, т', 'IF(OR({CE}<1,{CB}=""),"",{CB}*{dens}*{qty}/1000)', 6, h)
     add('BY', 'ветви, м³ скл.', 'IF(OR({CE}<1,{CB}=""),"",{CB}/0.1*{qty})', 6, h)
-    add('BZ', 'стволы, м³ скл.', 'IF({CE}<1,"",{qty}*SUM(%s*IF(ISNUMBER(%s),IF(%s>=15,IF({CE}=2,1.49,1.47),IF(%s>=11,1/0.67,IF(%s>=3,1/0.6,0))),0)))' % (vol_arr(False), D, D, D, D), 6, h, arr=True)
-    add('big', 'стволы >50 см, м³', 'IF({CE}<1,0,SUM(%s*IF(ISNUMBER(%s),IF(%s>50,1,0),0)))' % (vol_arr(False), D, D), 6, h, arr=True)
+    wz = '((%s>=15)*IF({CE}=2,1.49,1.47)+(%s>=11)*(%s<15)/0.67+(%s>=3)*(%s<11)/0.6)' % (DN, DN, DN, DN, DN)
+    add('BZ', 'стволы, м³ скл.', 'IF({CE}<1,"",{qty}*%s)' % vol_sp(False, wz), 6, h)
+    add('big', 'стволы >50 см, м³', 'IF({CE}<1,0,%s)' % vol_sp(False, '(%s>50)' % DN), 6, h)
     add('pct', 'V% из примечания', 'IFERROR(VALUE(MID({note},SEARCH("V",{note})+2,SEARCH("%",{note},SEARCH("V",{note}))-SEARCH("V",{note})-1)),1)', 5, h)
     add('BV', 'кустарник, т', 'IF({rem}<>1,"",IF(OR(AND({CA}>0.1,{CA}<8),AND({shrubRow},{qty}=1)),IF({Hn}>1,{Hn}+({Hn}-1)/3,{Hn})*S_MASS*{pct}*{qty}/1000,""))', 6, h)
     # пересадка
@@ -566,7 +575,9 @@ def build_main(wb, nrows):
     ws['A2'].alignment = Alignment(wrap_text=True, vertical='top')
     ws.merge_cells('A2:T2')
     ws.row_dimensions[2].height = 30
-    ws['A3'] = 'Служебные колонки справа скрыты (группа «+» над заголовком). Строк в шаблоне: %d.' % nrows
+    ws['A3'] = ('="Строк в книге: "&ROWS(\'Ведомость\'!$%s$%d:$%s$%d)&", заполнено: "&COUNTA(\'Ведомость\'!$%s$%d:$%s$%d)&". '
+                'Не хватает строк — возьмите книгу большего размера и перенесите колонки %s–%s. Служебные колонки справа скрыты (группа «+» над заголовком)."'
+                % (L['sp'], FIRST, L['sp'], last, L['sp'], FIRST, L['sp'], last, L[inputs[0]], L[inputs[-1]]))
     ws['A3'].font = Font(name=FONT, italic=True, size=9, color='666666')
     for i, (name, title, f, w, hidden, tip, arr) in enumerate(spec):
         col = get_column_letter(i + 1)
@@ -624,9 +635,10 @@ def build_list(wb, sheet, title, cols, counter, nname, totals, cap, top_note=Non
     ws['A1'] = title
     ws['A1'].font = Font(name=FONT, bold=True, size=13)
     ws['A2'] = org_line()
-    if top_note:
-        ws['A3'] = top_note
-        ws['A3'].font = Font(name=FONT, color='B42318', bold=True)
+    over = ('IF(%s+1+%d>%d,"Перечень не помещается (в нём %d строк). Возьмите книгу большего размера и перенесите туда колонки ввода «Ведомости». ","")'
+            % (nname, T, cap, cap))
+    ws['A3'] = '=' + over + ('&' + top_note[1:] if top_note else '')
+    ws['A3'].font = Font(name=FONT, color='B42318', bold=True)
     last_col = get_column_letter(nc)
     ws['A4'] = ('=HYPERLINK("#\'{s}\'!A{h}:{c}"&({h}+{n}+1+{t}),"▶ Выделить таблицу для AutoCAD (затем Ctrl+C; в AutoCAD: Правка → Специальная вставка → Объекты AutoCAD)")'
                 .format(s=sheet, h=HDR_ROW, c=last_col, n=nname, t=T))
@@ -807,8 +819,8 @@ def build_lists(wb, nrows):
                    'ROUND(VOL_BX_ALL*0.2,2)', 'ROUND(VOL_BY_ALL,2)', 'ROUND(VOL_BW_ALL,2)', 'ROUND(VOL_BV,2)', 'ROUND(VOL_BVM3,2)'])
     caps['Древесина'] = nrows + len(wd_tot) + 2
     ws = build_list(wb, 'Древесина', 'Отходы древесины по удаляемым деревьям и кустарникам: стволы, пни, ветви', wd_cols, 'remC', 'N_REM', wd_tot, caps['Древесина'])
-    ws['A3'] = 'Объёмы — по таблицам «Мягк», «Хвой», «Твер» оригинала (лист «Справочник»), по диаметру каждого ствола и высоте. Корни отдельно не считаются: в оригинале такого расчёта нет.'
-    ws['A3'].font = Font(name=FONT, italic=True, size=9, color='555555')
+    ws['A5'] = 'Объёмы — по таблицам «Мягк», «Хвой», «Твер» оригинала (лист «Справочник»), по диаметру каждого ствола и высоте. Корни отдельно не считаются: в оригинале такого расчёта нет.'
+    ws['A5'].font = Font(name=FONT, italic=True, size=9, color='555555')
     return {sh: (cap, wb[sh]._taks_kc) for sh, cap in caps.items()}
 
 
@@ -1216,7 +1228,8 @@ def build(nrows=1000, out=None):
         ws.sheet_view.zoomScale = 90
     from openpyxl.workbook.properties import CalcProperties
     wb.calculation = CalcProperties(fullCalcOnLoad=True)   # Excel пересчитает книгу при открытии
-    out = out or os.path.join(ROOT, 'excel', 'Таксация-Лайт.xlsx')
+    out = out or out_name(nrows)
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     tmp = out + '.tmp.xlsx'
     wb.save(tmp)
     ranges = {'Ведомость': (FIRST, FIRST + nrows - 1, None)}
@@ -1295,10 +1308,18 @@ def expand_shared(src, dst, sheets):
             z.writestr(n, files[n])
 
 
+SIZES = [500, 1000, 2000, 5000, 10000]
+
+
+def out_name(n):
+    return os.path.join(ROOT, 'excel', 'Таксация-Лайт-%d.xlsx' % n)
+
+
 if __name__ == '__main__':
-    ap = argparse.ArgumentParser()
-    ap.add_argument('--rows', type=int, default=1000)
+    ap = argparse.ArgumentParser(description='Без параметров — книги всех размеров: ' + ', '.join(map(str, SIZES)) + ' строк.')
+    ap.add_argument('--rows', type=int, default=None, help='число строк ведомости (одна книга)')
     ap.add_argument('--out', default=None)
     a = ap.parse_args()
-    p = build(a.rows, a.out)
-    print(p, os.path.getsize(p) // 1024, 'КБ')
+    for n in ([a.rows] if a.rows else SIZES):
+        p = build(n, a.out or out_name(n))
+        print(p, os.path.getsize(p) // 1024, 'КБ')
