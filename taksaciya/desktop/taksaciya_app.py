@@ -1091,8 +1091,13 @@ def main():
     path = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith('--') else None
     if '--selftest' in sys.argv:
         res = E.compute(example_project(), REF)
-        print('selftest total =', E.money_text(res['removal']['money']['total'], res['settings'], res['baseValue']))
-        return 0 if abs(res['removal']['money']['total'] - 243.375) < 1e-9 else 1
+        ok = abs(res['removal']['money']['total'] - 243.375) < 1e-9
+        if sys.stdout is not None:      # у оконного .exe консоли нет
+            try:
+                print('selftest total =', E.money_text(res['removal']['money']['total'], res['settings'], res['baseValue']))
+            except (OSError, UnicodeError):
+                pass
+        return 0 if ok else 1
     app = App(path)
     app.mainloop()
     return 0
