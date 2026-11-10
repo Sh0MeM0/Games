@@ -32,12 +32,12 @@ HROW = FIRST - 1     # строка заголовков ведомости
 LFIRST = 7           # первая строка перечня на листах-ведомостях (Существующие, Удаляемые …)
 AUTHOR = 'Таксация Лайт'
 NSTEM = 27           # стволов в одной строке (как в оригинале)
-GREEN = '2C6A4C'
-F_IN = PatternFill('solid', fgColor='FFFFFF')
-F_CALC = PatternFill('solid', fgColor='EEF3EE')
-F_HEAD = PatternFill('solid', fgColor='DCE8DF')
-F_SET = PatternFill('solid', fgColor='FFF7D6')
-B_THIN = Border(*(Side(style='thin', color='C9D3CA'),) * 4)
+GREEN = 'FF2C6A4C'
+F_IN = PatternFill('solid', fgColor='FFFFFFFF')
+F_CALC = PatternFill('solid', fgColor='FFEEF3EE')
+F_HEAD = PatternFill('solid', fgColor='FFFFE699')     # шапки всех таблиц — светло-жёлтые
+F_SET = PatternFill('solid', fgColor='FFFFF7D6')
+B_THIN = Border(*(Side(style='thin', color='FFC9D3CA'),) * 4)
 FONT = 'Arial'
 
 
@@ -58,7 +58,7 @@ def note(cell, text, width=270):
 def style_header(c):
     c.font = Font(name=FONT, bold=True, size=9)
     c.fill = F_HEAD
-    c.alignment = Alignment(wrap_text=True, vertical='center')
+    c.alignment = Alignment(wrap_text=True, vertical='center', horizontal='center')
     c.border = B_THIN
 
 
@@ -287,9 +287,9 @@ def build_settings(wb):
          'По этой дате из календаря (лист «Справочник», колонки X–Z) выбирается базовая величина.'),
         ('S_BVOVR', 'Своя базовая величина, руб. (пусто — по календарю)', None, None,
          'Если базовая величина изменилась, а календарь ещё не дополнен, впишите её сюда. Пусто — по календарю.'),
-        ('BASE', 'Базовая величина для расчёта, руб.', '=IF(S_BVOVR<>"",S_BVOVR,IFERROR(INDEX(BV_Rub,MATCH(SUMPRODUCT(MAX((BV_From<=S_DATE)*BV_From)),BV_From,0)),0))', 'calc',
+        ('BASE', 'Базовая величина для расчёта, руб.', '=IF(S_BVOVR<>"",S_BVOVR,IFERROR(INDEX(BV_Rub,MATCH(BASE_FROM,BV_From,0)),0))', 'calc',
          'Считается сама: своя величина, если указана, иначе — из календаря по дате расчёта.'),
-        ('BASE_ACT', 'Действует по календарю с / постановление', '=IFERROR(TEXT(SUMPRODUCT(MAX((BV_From<=S_DATE)*BV_From)),"DD.MM.YYYY")&" — "&INDEX(BV_Act,MATCH(SUMPRODUCT(MAX((BV_From<=S_DATE)*BV_From)),BV_From,0)),"")', 'calc',
+        ('BASE_ACT', 'Действует по календарю с / постановление', '=IF(BASE_FROM=0,"",RIGHT("0"&DAY(BASE_FROM),2)&"."&RIGHT("0"&MONTH(BASE_FROM),2)&"."&YEAR(BASE_FROM)&IFERROR(IF(INDEX(BV_Act,MATCH(BASE_FROM,BV_From,0))&""="",""," — "&INDEX(BV_Act,MATCH(BASE_FROM,BV_From,0))),""))', 'calc',
          'Строка календаря, из которой взята базовая величина.'),
         (None, None, None, None, None),
     ]
@@ -342,11 +342,11 @@ def build_settings(wb):
                 dvs[kind].add(c)
             defname(wb, name, "'Настройки'!$C$%d" % r)
         r += 1
-    flags = [('K1Y', '=S_K1<>"нет"'), ('K2Y', '=S_K2="да"'), ('K3Y', '=S_K3="да"'), ('K4Y', '=S_K4="да"'), ('MONEYY', '=S_MONEY<>"посадками"')]
-    ws.cell(row=r + 1, column=2, value='Служебные флаги (не изменять)').font = Font(name=FONT, italic=True, color='888888')
+    flags = [('BASE_FROM', '=SUMPRODUCT(MAX((BV_From<=S_DATE)*BV_From))'), ('K1Y', '=S_K1<>"нет"'), ('K2Y', '=S_K2="да"'), ('K3Y', '=S_K3="да"'), ('K4Y', '=S_K4="да"'), ('MONEYY', '=S_MONEY<>"посадками"')]
+    ws.cell(row=r + 1, column=2, value='Служебные флаги (не изменять)').font = Font(name=FONT, italic=True, color='FF888888')
     for i, (nm, f) in enumerate(flags):
-        ws.cell(row=r + 2 + i, column=2, value=nm).font = Font(name=FONT, color='888888')
-        ws.cell(row=r + 2 + i, column=3, value=f).font = Font(name=FONT, color='888888')
+        ws.cell(row=r + 2 + i, column=2, value=nm).font = Font(name=FONT, color='FF888888')
+        ws.cell(row=r + 2 + i, column=3, value=f).font = Font(name=FONT, color='FF888888')
         defname(wb, nm, "'Настройки'!$C$%d" % (r + 2 + i))
     r = r + 2 + len(flags) + 2
     ws.cell(row=r, column=2, value='Причины вырубки').font = Font(name=FONT, bold=True)
@@ -502,11 +502,10 @@ def cols_spec():
         first = '{d}' if k == 1 else '""'
         add('d%d' % k, 'ствол %d' % k, 'IF({rem}<>1,"",IF({dnum},%s,IF(%s="","",IF(RIGHT(%s,3)="до1",0.8,IF(RIGHT(%s,3)="до4",3.8,IFERROR(VALUE(RIGHT(SUBSTITUTE(%s,"-","  "),3)),""))))))' % (first, seg, seg, seg, seg), 5, h)
     add('tc', 'колонка тарифа', 'IF({J}=10,1,IF({J}=20,2,IF({J}=30,3,IF({J}=40,4,""))))', 4, h)
-    for k in range(1, NSTEM + 1):
-        add('t%d' % k, 'тариф %d' % k, 'IF(N({d%d})>=12,IFERROR(LOOKUP({d%d},INDEX(TarThr,0,{tc}),INDEX(TarVal,0,{tc})),0),0)' % (k, k), 4, h)
     add('AQ', 'стволов ≥12', 'IF(OR({rem}<>1,{shrubRow}),"",MAX(1,COUNTIF({d1}:{d%d},">"&11.9)))' % NSTEM, 5, h)
-    add('AR', 'тариф, б.в.', 'IF({rem}<>1,"",IF({J}=1,0,IF(AND({AQ}<>"",N({AQ})>1),SUM({t1}:{t%d}),IF({J}=60,P_TP,IF({J}=70,P_TPS,IF({J}=16,P_H1,IF({J}=17,P_H2,IF({J}=18,P_SP,IF({J}=19,P_SPS,IF({J}=50,IFERROR(INDEX(Planted_Val,MATCH({N},Planted_Type,0)),""),IF(AND({J}>=11,{J}<=15),LOOKUP({Hn},INDEX(ShrThr,0,{J}-10),INDEX(ShrVal,0,{J}-10)),IFERROR(LOOKUP(MAX({d1}:{d%d}),INDEX(TarThr,0,{tc}),INDEX(TarVal,0,{tc})),""))))))))))))' % (NSTEM, NSTEM), 5, h)
-    terms = '&'.join('IF(N({d%d})>=12,"+"&{t%d},"")' % (k, k) for k in range(1, NSTEM + 1))
+    add('AR', 'тариф, б.в.', 'IF({rem}<>1,"",IF({J}=1,0,IF(AND({AQ}<>"",N({AQ})>1),IFERROR(SUMPRODUCT((--(0&{d1}:{d%d})>=12)*LOOKUP(--(0&{d1}:{d%d}),INDEX(TarThr,0,{tc}),INDEX(TarVal,0,{tc}))),0),IF({J}=60,P_TP,IF({J}=70,P_TPS,IF({J}=16,P_H1,IF({J}=17,P_H2,IF({J}=18,P_SP,IF({J}=19,P_SPS,IF({J}=50,IFERROR(INDEX(Planted_Val,MATCH({N},Planted_Type,0)),""),IF(AND({J}>=11,{J}<=15),LOOKUP({Hn},INDEX(ShrThr,0,{J}-10),INDEX(ShrVal,0,{J}-10)),IFERROR(LOOKUP(MAX({d1}:{d%d}),INDEX(TarThr,0,{tc}),INDEX(TarVal,0,{tc})),""))))))))))))' % (NSTEM, NSTEM, NSTEM), 5, h)
+    # тарифы стволов ≥ 12 см через «+» (раньше — 27 служебных колонок; теперь одна формула, вычисляется только для многоствольных)
+    terms = '&'.join('IF(N({d%d})>=12,"+"&IFERROR(LOOKUP({d%d},INDEX(TarThr,0,{tc}),INDEX(TarVal,0,{tc})),0),"")' % (k, k) for k in range(1, NSTEM + 1))
     add('AS', 'тариф текстом', 'IF({rem}<>1,"",IF({J}=1,"0",IF(AND({AQ}<>"",N({AQ})>1),MID(%s,2,999),{AR}&"")))' % terms, 8, h)
     pt = [('c0', 'хвой.', 'PT_X', 'tree'), ('c1', 'медл.', 'PT_M', 'tree'), ('c2', 'быст.', 'PT_B', 'treeB'),
           ('c3', 'лиан.', 'PS_1', 'shrub'), ('c4', ('хвой..', 'вечз.'), 'PS_2', 'shrub'), ('c5', 'крас.', 'PS_3', 'shrub'),
@@ -623,13 +622,13 @@ def build_main(wb, nrows):
     note(ws['A1'], 'Вводите данные в колонки с жёлтым заголовком. Наведите мышь на заголовок колонки — появится пояснение. '
                    'Пустые строки допускаются. Лишнюю позицию можно удалить целиком (правый щелчок по номеру строки → «Удалить») или очистить (Delete).', 320)
     ws['J1'] = ('="Строк в книге: "&ROWS(R_sp)&", заполнено: "&COUNTA(R_sp)&". Служебные колонки справа скрыты (группа «+» над заголовком)."')
-    ws['J1'].font = Font(name=FONT, italic=True, size=9, color='666666')
+    ws['J1'].font = Font(name=FONT, italic=True, size=9, color='FF666666')
     # панель подсказки: подходящие породы с номерами для последней строки, где порода введена не полностью
-    PANEL = PatternFill('solid', fgColor='FFF7D6')
+    PANEL = PatternFill('solid', fgColor='FFFFF7D6')
     ws['A2'] = ('=IF(SP_PEND=0,"Поиск породы: введите в колонку «Порода» номер из справочника или начало названия (например «берез») — '
                 'здесь появятся подходящие породы с номерами.","Строка "&(SP_PEND+%d)&": «"&SP_TXT&"» — подходит "&SP_HC&'
                 '". Введите в колонку «Порода» нужный номер:")' % (FIRST - 1))
-    ws['A2'].font = Font(name=FONT, bold=True, size=10, color='7A4A00')
+    ws['A2'].font = Font(name=FONT, bold=True, size=10, color='FF7A4A00')
     for rr in range(2, HROW):
         for cc in range(1, 15):
             ws.cell(row=rr, column=cc).fill = PANEL
@@ -640,13 +639,12 @@ def build_main(wb, nrows):
             f = ('=IF(SP_HC>={i},IF(AND({i}=20,SP_HC>20),"… и ещё "&(SP_HC-19)&" — уточните начало названия",'
                  'INDEX(SPN,SP_HP+{j})&"   "&INDEX(SPV,SP_HP+{j})),"")').format(i=slot, j=slot - 1)
             c = ws.cell(row=rr, column=cc, value=f)
-            c.font = Font(name=FONT, size=10, color='1F3F7A')
+            c.font = Font(name=FONT, size=10, color='FF1F3F7A')
     for i, (name, title, f, w, hidden, tip, arr) in enumerate(spec):
         col = get_column_letter(i + 1)
         c = ws.cell(row=HROW, column=i + 1, value=title)
         style_header(c)
-        if f is None:
-            c.fill = PatternFill('solid', fgColor='FFE9A8')
+        c.fill = PatternFill('solid', fgColor='FFFFD966' if f is None else 'FFC6E0B4')   # ввод — жёлтая шапка, расчёт — зелёная
         if tip:
             note(c, tip, 300)
         ws.column_dimensions[col].width = w
@@ -660,6 +658,8 @@ def build_main(wb, nrows):
     ws.row_dimensions[HROW].height = 44
     ws.freeze_panes = '%s5' % get_column_letter(spec.index(next(x for x in spec if x[0] == 'sphint')) + 2)
     ws.column_dimensions[L['noin']].number_format = '@'     # «4-10» остаётся текстом, а не датой
+    ws.column_dimensions[L['d']].number_format = '@'        # «20,15» — два ствола, а не число 20,15 (в русских настройках)
+    ws.column_dimensions[L['sp']].alignment = Alignment(horizontal='left')
     rng = lambda c: '%s%d:%s%d' % (L[c], FIRST, L[c], last)
     dv_cond = DataValidation(type='list', formula1='"хор.,уд.,плох.,ненадл."', allow_blank=True)
     dv_act = DataValidation(type='list', formula1='"В,П"', allow_blank=True)
@@ -700,11 +700,11 @@ def build_list(wb, sheet, title, cols, counter, nname, totals, cap, top_note=Non
     over = ('IF(%s+1+%d>%d,"Перечень не помещается (в нём %d строк). Возьмите книгу большего размера и перенесите туда колонки ввода «Ведомости». ","")'
             % (nname, T, cap, cap))
     ws['A3'] = '=' + over + ('&' + top_note[1:] if top_note else '')
-    ws['A3'].font = Font(name=FONT, color='B42318', bold=True)
+    ws['A3'].font = Font(name=FONT, color='FFB42318', bold=True)
     last_col = get_column_letter(nc)
     ws['A4'] = ('=HYPERLINK("#\'{s}\'!A{h}:{c}"&({h}+{n}+1+{t}),"▶ Выделить таблицу для AutoCAD (затем Ctrl+C; в AutoCAD: Правка → Специальная вставка → Объекты AutoCAD)")'
                 .format(s=sheet, h=HDR_ROW, c=last_col, n=nname, t=T))
-    ws['A4'].font = Font(name=FONT, color='1F5FBF', underline='single')
+    ws['A4'].font = Font(name=FONT, color='FF1F5FBF', underline='single')
     note(ws['A4'], 'Щелчок выделяет перечень вместе с итогами. Скопируйте (Ctrl+C), в AutoCAD выполните команду PASTESPEC '
                    '(«Правка → Специальная вставка») и выберите «Объекты AutoCAD» — получится таблица, которую можно править прямо в чертеже.', 300)
     for i, (h, expr, w, tip, fmt) in enumerate(cols):
@@ -738,10 +738,10 @@ def build_list(wb, sheet, title, cols, counter, nname, totals, cap, top_note=Non
         c.font = Font(name=FONT, size=9)
         c.alignment = Alignment(vertical='top', wrap_text=(w >= 30))
     rng = 'A%d:%s%d' % (LFIRST, last_col, LFIRST + cap - 1)
-    side = Side(style='thin', color='9AA79C')
+    side = Side(style='thin', color='FF9AA79C')
     ws.conditional_formatting.add(rng, FormulaRule(formula=['ROWS($A$%d:$A%d)<=%s' % (LFIRST, LFIRST, nname)], border=Border(side, side, side, side)))
     ws.conditional_formatting.add(rng, FormulaRule(formula=['AND(ROWS($A$%d:$A%d)>%s+1,ROWS($A$%d:$A%d)<=%s+1+%d)' % (LFIRST, LFIRST, nname, LFIRST, LFIRST, nname, T)],
-                                                   font=Font(bold=True), fill=PatternFill('solid', fgColor='EEF3EE', bgColor='EEF3EE')))
+                                                   font=Font(bold=True), fill=PatternFill('solid', fgColor='FFEEF3EE', bgColor='FFEEF3EE')))
     ws.freeze_panes = 'A%d' % LFIRST
     ws._taks_kc = (nc, kc)
     return ws
@@ -828,13 +828,13 @@ def wood_summary(ws, c0):
     ws.column_dimensions[L0].width = 30
     for j in range(1, 6):
         ws.column_dimensions[get_column_letter(c0 + j)].width = 14
-    side = Side(style='thin', color='9AA79C')
+    side = Side(style='thin', color='FF9AA79C')
     box = Border(side, side, side, side)
 
     def table(r, title, heads, rows, fmt, tip=None):
         last = get_column_letter(c0 + len(heads) - 1)
         link = ws.cell(row=r, column=c0, value='=HYPERLINK("#\'Древесина\'!%s%d:%s%d","▶ для AutoCAD")' % (L0, r + 2, last, r + 2 + len(rows)))
-        link.font = Font(name=FONT, size=9, color='1F5FBF', underline='single')
+        link.font = Font(name=FONT, size=9, color='FF1F5FBF', underline='single')
         t = ws.cell(row=r + 1, column=c0, value=title)
         t.font = Font(name=FONT, bold=True)
         if tip:
@@ -863,9 +863,58 @@ def wood_summary(ws, c0):
                ['Сучья, ветви, вершины, тонн'] + vt(8)], '0.0000',
               'Объёмы (м³ — складочные) и масса по мягкой, хвойной и твёрдой древесине, как на листе БАЛАНСЫ оригинала.')
     labels = ['до 12', '12-16', '16-20', '20-24', '24-28', '28-32', 'более 32']
-    table(r, 'Число стволов по диаметрам, шт.', ['Диаметр стволов, см', 'Мягкая', 'Хвойная', 'Твёрдая', 'Итого'],
-          [[lb] + ['=INDEX(STEMS_TBL,%d,%d)' % (i + 1, j) for j in range(1, 5)] for i, lb in enumerate(labels)], '0',
-          'Число удаляемых стволов по диаметрам и типам древесины (как на листе БАЛАНСЫ оригинала).')
+    r = table(r, 'Число стволов по диаметрам, шт.', ['Диаметр стволов, см', 'Мягкая', 'Хвойная', 'Твёрдая', 'Итого'],
+              [[lb] + ['=INDEX(STEMS_TBL,%d,%d)' % (i + 1, j) for j in range(1, 5)] for i, lb in enumerate(labels)], '0',
+              'Число удаляемых стволов по диаметрам и типам древесины (как на листе БАЛАНСЫ оригинала).')
+    balance_table(ws, c0, r)
+
+
+def balance_table(ws, c0, r):
+    """«Баланс существующих деревьев и кустарников» в виде для AutoCAD: двухуровневая шапка; колонки поросли деревьев и
+    кустарников стоят справа и попадают в выделение для AutoCAD, только если поросль есть."""
+    side = Side(style='thin', color='FF000000')
+    box = Border(side, side, side, side)
+    col = lambda j: get_column_letter(c0 + j)          # j = 0 … 9
+    for j in range(6, 10):
+        ws.column_dimensions[col(j)].width = 14
+    t, h1, h2, h3, d0 = r + 1, r + 2, r + 3, r + 4, r + 5
+    link = ws.cell(row=r, column=c0, value=('=HYPERLINK("#\'Древесина\'!{a}{t}:"&IF(EX_PK>0,"{j9}",IF(EX_PD>0,"{j8}","{j7}"))&"{e}",'
+                                            '"▶ для AutoCAD (колонки поросли — только если она есть)")').format(
+        a=col(0), t=t, j7=col(7), j8=col(8), j9=col(9), e=d0 + 3))
+    link.font = Font(name=FONT, size=9, color='FF1F5FBF', underline='single')
+    head = {(t, 0): 'Баланс существующих деревьев и кустарников',
+            (h1, 0): 'Проектные предложения', (h1, 1): 'Деревья, шт.', (h1, 5): 'Кустарники',
+            (h2, 1): 'Всего', (h2, 2): 'в том числе', (h2, 5): 'Кусты, шт.', (h2, 6): 'Живая изгородь, м',
+            (h3, 2): 'лиственные декоративные', (h3, 3): 'плодовые', (h3, 4): 'хвойные', (h3, 6): 'однорядная', (h3, 7): 'двухрядная',
+            (h1, 8): 'Деревья (поросль), м²', (h1, 9): 'Кустарники (поросль), м²'}
+    for rr in (t, h1, h2, h3):
+        for j in range(10):
+            c = ws.cell(row=rr, column=c0 + j, value=head.get((rr, j)))
+            style_header(c)
+            c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+            c.border = box
+    ws.cell(row=t, column=c0).font = Font(name=FONT, bold=True, size=11)
+    for a, b in (((t, 0), (t, 7)), ((h1, 0), (h3, 0)), ((h1, 1), (h1, 4)), ((h1, 5), (h1, 7)), ((h2, 1), (h3, 1)), ((h2, 2), (h2, 4)),
+                 ((h2, 5), (h3, 5)), ((h2, 6), (h2, 7)), ((h1, 8), (h3, 8)), ((h1, 9), (h3, 9))):
+        ws.merge_cells(start_row=a[0], start_column=c0 + a[1], end_row=b[0], end_column=c0 + b[1])
+    ws.row_dimensions[h3].height = 30
+    rows = [('Сохраняемые', 'KB_TREES', 'KB_L', 'KP_P', 'KP_X', 'KB_SHRUBS', 'KB_H1', 'KB_H2', 'KB_PD', 'KB_PK'),
+            ('Пересаживаемые', 'TR_TREES', '(TR_TREES-TR_P-TR_X)', 'TR_P', 'TR_X', 'TR_SHRUBS', 'TR_H1', 'TR_H2', '0', '0'),
+            ('Удаляемые', 'C_TR35', '(C_TREES-C_P-C_X)', 'C_P', 'C_X', 'C_SH35', 'C_HH1', 'C_HH2', 'C_PD', 'C_PK')]
+    for i, row in enumerate(rows):
+        ws.cell(row=d0 + i, column=c0, value=row[0])
+        for j in range(1, 10):
+            ws.cell(row=d0 + i, column=c0 + j, value='=' + row[j])
+    ws.cell(row=d0 + 3, column=c0, value='Итого')
+    for j in range(1, 10):
+        ws.cell(row=d0 + 3, column=c0 + j, value='=SUM(%s%d:%s%d)' % (col(j), d0, col(j), d0 + 2))
+    for rr in range(d0, d0 + 4):
+        for j in range(10):
+            c = ws.cell(row=rr, column=c0 + j)
+            c.border = box
+            c.font = Font(name=FONT, size=9, bold=(rr == d0 + 3))
+            c.alignment = Alignment(horizontal='left' if j == 0 else 'center', vertical='center')
+    note(ws.cell(row=h1, column=c0 + 8), 'Колонки поросли попадают в таблицу для AutoCAD, только если на объекте есть поросль деревьев (кустарников).')
 
 
 def build_lists(wb, nrows):
@@ -938,7 +987,7 @@ def build_lists(wb, nrows):
     wood_summary(ws, 18)
     ws['A5'] = ('Объёмы — по таблицам «Мягк», «Хвой», «Твер» оригинала (лист «Справочник»), по диаметру каждого ствола и высоте. '
                 'Пни = 20 % от древесины стволов. Корни отдельно не считаются.')
-    ws['A5'].font = Font(name=FONT, italic=True, size=9, color='555555')
+    ws['A5'].font = Font(name=FONT, italic=True, size=9, color='FF555555')
     return {sh: (cap, wb[sh]._taks_kc) for sh, cap in caps.items()}
 
 
@@ -1257,8 +1306,8 @@ def build_balance(wb):
     ws['A2'] = org_line()
     ws['A3'] = '=HYPERLINK("#\'Баланс\'!A4:H8","▶ Выделить таблицу баланса для AutoCAD (затем Ctrl+C; в AutoCAD: Правка → Специальная вставка → Объекты AutoCAD)")'
     ws['A10'] = '=HYPERLINK("#\'Баланс\'!A12:F14","▶ Выделить таблицу объёмов отходов для AutoCAD")'
-    ws['A10'].font = Font(name=FONT, color='1F5FBF', underline='single')
-    ws['A3'].font = Font(name=FONT, color='1F5FBF', underline='single')
+    ws['A10'].font = Font(name=FONT, color='FF1F5FBF', underline='single')
+    ws['A3'].font = Font(name=FONT, color='FF1F5FBF', underline='single')
     widths = [22, 20, 16, 12, 12, 20, 20, 20]
     for i, w in enumerate(widths):
         ws.column_dimensions[get_column_letter(i + 1)].width = w
@@ -1434,6 +1483,14 @@ def expand_shared(src, dst, sheets):
         x = x[:sd0] + ''.join(out) + x[sd1:]
         x = re.sub(r'<dimension ref="[^"]*"/>', '', x, count=1)
         files[path] = x.encode('utf-8')
+    for path in [n for n in names if re.match(r'xl/worksheets/sheet\d+\.xml$', n)]:
+        x = files[path].decode('utf-8')
+        if '<ignoredErrors' not in x:
+            ie = ('<ignoredErrors><ignoredError sqref="A1:XFD1048576" numberStoredAsText="1" formula="1" formulaRange="1" '
+                  'emptyCellReference="1" unlockedFormula="1"/></ignoredErrors>')
+            pos = min([x.find(t) for t in ('<drawing', '<legacyDrawing', '</worksheet>') if x.find(t) >= 0])
+            x = x[:pos] + ie + x[pos:]
+            files[path] = x.encode('utf-8')
     with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED) as z:
         for n in names:
             z.writestr(n, files[n])

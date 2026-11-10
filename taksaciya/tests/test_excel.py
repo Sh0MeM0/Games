@@ -27,12 +27,13 @@ from core import engine as E  # noqa: E402
 import build_excel as BX  # noqa: E402
 
 REF = E.load_reference()
+LOCALE = os.environ.get('TAKS_LOCALE', 'ru-RU')     # en-US — проверка с точкой как десятичным разделителем
 XCU = """<?xml version="1.0" encoding="UTF-8"?>
 <oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-<item oor:path="/org.openoffice.Setup/L10N"><prop oor:name="ooSetupSystemLocale" oor:op="fuse"><value>ru-RU</value></prop></item>
-<item oor:path="/org.openoffice.Setup/L10N"><prop oor:name="ooLocale" oor:op="fuse"><value>ru-RU</value></prop></item>
+<item oor:path="/org.openoffice.Setup/L10N"><prop oor:name="ooSetupSystemLocale" oor:op="fuse"><value>LOCALE</value></prop></item>
+<item oor:path="/org.openoffice.Setup/L10N"><prop oor:name="ooLocale" oor:op="fuse"><value>LOCALE</value></prop></item>
 <item oor:path="/org.openoffice.Office.Calc/Formula/Load"><prop oor:name="OOXMLRecalcMode" oor:op="fuse"><value>0</value></prop></item>
-</oor:items>"""
+</oor:items>""".replace('LOCALE', LOCALE)
 
 
 # ------------------------------------------------------------------ xlsx editing (regex, без openpyxl — быстро)
@@ -155,7 +156,8 @@ def fill_workbook(src, dst, project):
         put('Ведомость', L['noin'] + str(r), str(noin) if noin not in (None, '') else None)
         put('Ведомость', L['sp'] + str(r), num_or_text(t['species']))
         put('Ведомость', L['h'] + str(r), t.get('height'))
-        put('Ведомость', L['d'] + str(r), num_or_text(t.get('diam')) if t.get('diam') not in (None, '') else None)
+        dv = t.get('diam')
+        put('Ведомость', L['d'] + str(r), (str(dv) if t.get('diamAsText') else num_or_text(dv)) if dv not in (None, '') else None)
         put('Ведомость', L['cond'] + str(r), t.get('cond') or None)
         put('Ведомость', L['act'] + str(r), t.get('action') or None)
         put('Ведомость', L['rsn'] + str(r), t.get('reason') or None)
@@ -223,7 +225,7 @@ End Sub
 
 
 def lo_profile():
-    prof = os.path.join(tempfile.gettempdir(), 'taks_lo_profile')
+    prof = os.path.join(tempfile.gettempdir(), 'taks_lo_profile' + ('' if LOCALE == 'ru-RU' else '_' + LOCALE))
     if not os.path.exists(os.path.join(prof, 'user', 'basic', 'Standard', 'Module1.xba')):
         subprocess.run(['soffice', '--headless', '--terminate_after_init', '-env:UserInstallation=file://' + prof], capture_output=True, timeout=180)
         open(os.path.join(prof, 'user', 'basic', 'Standard', 'Module1.xba'), 'w').write(MACRO)
@@ -312,8 +314,19 @@ def norm(v):
     return s
 
 
+def loc_norm(s, excel):
+    """Тексты с числами к виду ядра (ru-RU): без разделителей тысяч, десятичная запятая."""
+    if not isinstance(s, str):
+        return s
+    s = re.sub(r'(?<=\d)[ \u00a0\u202f](?=\d{3}(?!\d))', '', s)
+    if excel and LOCALE != 'ru-RU':
+        s = re.sub(r'(?<=\d),(?=\d{3}(?!\d))', '', s)
+        s = re.sub(r'(?<=\d)\.(?=\d)', ',', s)
+    return s
+
+
 def same(a, b):
-    a, b = norm(a), norm(b)
+    a, b = norm(loc_norm(a, False)), norm(loc_norm(b, True))
     if a == '' and b in ('', 0.0):
         return True
     if b == '' and a in ('', 0.0):
@@ -464,6 +477,12 @@ def compare(vec_name, project, verbose=False):
     for i, b in enumerate(vol['stemsByDiameter']):
         for j, col in enumerate('STUV'):
             chk('ДР стволы %s %s' % (b['label'], col), b[j + 1] if j < 3 else b['all'], WD.get('%s%d' % (col, 25 + i)))
+    # «Баланс существующих деревьев и кустарников» для AutoCAD (лист «Древесина», колонки S–AA, строки 38–41)
+    b = res['balance']
+    for i, key in enumerate(['kept', 'transplanted', 'removed', 'total']):
+        for j, f in enumerate(['trees', 'leafy', 'fruit', 'conif', 'shrubs', 'hedge1', 'hedge2', 'treePlots', 'shrubPlots']):
+            col = ['S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'AA'][j]
+            chk('ДР баланс %s %s' % (key, f), b[key][f], WD.get('%s%d' % (col, 38 + i)))
     # существующие и сохраняемые
     WE, WK = V['Существующие'], V['Сохраняемые']
     kept = [r for r in res['rows'] if r['H'] == 'сохранить']
@@ -610,6 +629,80 @@ def deletion_case(first, cnt, own=False):
     return checked, len(diffs)
 
 
+def random_project(seed, money):
+    """Случайный набор на правила Таксации Лайт: все виды строк, номера и диапазоны, № породы и неполные названия, К1–К4,
+    пустые причины и кол-во, поросль больше и меньше 10 м², изгороди, кусты, пересадка, ошибки ввода, цветники и газоны."""
+    import random
+    rnd = random.Random(seed)
+    lib = REF['special'] + REF['species']
+    trees = [s for s in REF['species'] if not s['shrub'] and s.get('hard')]
+    shrubs = [s for s in REF['species'] if s['shrub']]
+    T = []
+    for i in range(140):
+        kind = rnd.choices(['tree', 'multi', 'small', 'shrub', 'tplot', 'splot', 'hedge', 'num', 'partial', 'bad'],
+                           [30, 12, 6, 14, 6, 5, 5, 8, 3, 2])[0]
+        t = {}
+        if kind in ('tree', 'multi', 'small'):
+            sp = rnd.choice(trees)['name']
+            t['diam'] = {'tree': lambda: rnd.randint(4, 80), 'multi': lambda: ','.join(str(rnd.randint(4, 45)) for _ in range(rnd.randint(2, 5))),
+                         'small': lambda: rnd.choice(['до1', 'до4', '**до1', '**до4'])}[kind]()
+            t['diamAsText'] = kind == 'tree' and rnd.random() < 0.3
+            t['height'] = rnd.choice([None, rnd.randint(2, 30), round(rnd.uniform(1, 25), 1)])
+        elif kind == 'shrub':
+            sp, t['diam'], t['height'] = rnd.choice(shrubs)['name'], '-', rnd.choice([None, round(rnd.uniform(0.3, 4), 1)])
+        elif kind == 'tplot':
+            sp, t['diam'], t['height'] = rnd.choice(['Уч-к поросли дер.', '*Уч-к поросли дер. у дорог']), '0-4', 1
+        elif kind == 'splot':
+            sp, t['diam'], t['height'] = rnd.choice(['Уч-к поросли куст.', '*Уч-к поросли куст. у дорог']), '-', 1
+        elif kind == 'hedge':
+            sp, t['diam'], t['height'] = rnd.choice(['Однорядная живая изгородь', 'Двухрядная живая изгородь']), '-', round(rnd.uniform(0.5, 2), 1)
+        elif kind == 'num':
+            n = rnd.randint(7, len(lib))
+            s0 = lib[n - 1]
+            sp, t['diam'], t['height'] = str(n), ('-' if s0['shrub'] else rnd.randint(8, 50)), rnd.randint(1, 20)
+        elif kind == 'partial':
+            sp, t['diam'] = rnd.choice(['берез', 'дуб', 'липа', 'клен']), rnd.randint(8, 40)
+        else:
+            sp, t['diam'] = rnd.choice(['Неизвестная порода', '9999']), rnd.randint(8, 40)
+        t['species'] = sp
+        if kind in ('tplot', 'splot'):
+            t['a'] = rnd.choice([rnd.randint(1, 9), rnd.randint(10, 60), round(rnd.uniform(2, 30), 1)])
+        elif kind == 'hedge':
+            t['a'] = rnd.randint(1, 30)
+        else:
+            t['a'] = rnd.choice(['', '', '', 1, rnd.randint(2, 6)])
+        u = rnd.random()
+        if u < 0.08:
+            a = rnd.randint(1, 300)
+            t['noIn'] = '%d-%d' % (a, a + rnd.randint(0, 5))
+            t['a'] = ''
+        elif u < 0.14:
+            t['noIn'] = str(rnd.randint(1, 500))
+        elif u < 0.16:
+            t['noIn'] = rnd.choice(['12а', '7б'])
+        t['cond'] = rnd.choice(['', '', 'хор.', 'уд.', 'плох.', 'ненадл.'])
+        t['action'] = rnd.choices(['В', 'П', ''], [65, 10, 25])[0]
+        t['reason'] = rnd.choice(['', '', 'СЕТИ', 'БЛАГОУСТРОЙСТТВО'])
+        for k in range(1, 5):
+            if rnd.random() < 0.12:
+                t['k%d' % k] = rnd.choice(['да', 'нет'])
+        if kind == 'shrub' and rnd.random() < 0.2:
+            t['note'] = 'V=50%'
+        T.append(t)
+    S = {'date': rnd.choice(['2025-06-01', '2026-03-01']), 'k1': rnd.random() < 0.3, 'k2': rnd.random() < 0.6, 'k3': rnd.random() < 0.3,
+         'k4': rnd.random() < 0.3, 'money': money, 'unit': rnd.choice(['баз.в.', 'баз.в. (руб.)', 'руб.']),
+         'view': rnd.choice(['формула + итог', 'итог']), 'defaultCond': rnd.choice(['уд.', 'хор.']), 'shrubMassKg': 5,
+         'flowerMode': rnd.choice(['метрами', 'стоимостью']), 'showPlots': True, 'hedgePieces': True,
+         'reasons': [{'name': 'СЕТИ', 'group': '', 'replace': ''}, {'name': 'БЛАГОУСТРОЙСТТВО', 'group': '', 'replace': rnd.choice(['', '2'])}],
+         'compMap': dict(E.default_settings(E.prepare_ref(REF))['compMap'], plotTree=rnd.choice(['хвой.', 'медл.', 'быст.'])),
+         'bushArea': rnd.choice([1, 1.5]), 'plotDensity': rnd.choice(['редкий', 'средний', 'густой'])}
+    fl = [{'kind': rnd.choice(list(REF['flowers'])[:2]), 'cond': rnd.choice(['хор.', 'уд.']), 'area': rnd.randint(1, 40), 'reason': rnd.choice(['', 'СЕТИ'])}
+          for _ in range(rnd.randint(0, 4))]
+    lw = [{'kind': rnd.choice(list(REF['lawns'])), 'cond': rnd.choice(['хор.', 'уд.', 'плох.']), 'area': rnd.randint(5, 200), 'reason': ''}
+          for _ in range(rnd.randint(0, 5))]
+    return {'settings': S, 'trees': T, 'flowers': fl, 'lawns': lw, 'grass': [], 'projected': {}}
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith('-')]
     verbose = '-v' in sys.argv
@@ -621,6 +714,8 @@ def main():
     cases = [(f, json.load(open(os.path.join(vdir, f), encoding='utf-8'))['project']) for f in files]
     if not args or any('new' in a for a in args):
         cases += [('new_rules_money', new_rules_project(True)), ('new_rules_planting', new_rules_project(False))]
+    if not args or any('rand' in a for a in args):
+        cases += [('random_%d_%s' % (sd, 'money' if m else 'planting'), random_project(sd, m)) for sd, m in ((1, True), (2, False), (3, True))]
     for f, project in cases:
         c, d = compare(f, project, verbose)
         total += c
