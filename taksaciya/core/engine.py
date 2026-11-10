@@ -1,8 +1,8 @@
-"""Таксация Лайт — расчётное ядро (Python).
+"""Таксация Лайт — расчётное ядро (Python), эталон для проверки книги Excel.
 
-Построчный перенос core/engine.js: те же функции, те же ссылки на ячейки оригинала
-«ТАКСАЦИЯ-АВТО 4.2». Обе версии проверяются одними и теми же эталонными векторами
-(tests/vectors), полученными пересчётом оригинального файла.
+compute(project, ref, compat=True) повторяет «ТАКСАЦИЯ-АВТО 4.2» ячейка в ячейку и сверяется с эталонными
+векторами (tests/vectors), полученными пересчётом оригинального файла. compute(project, ref) без compat —
+правила Таксации Лайт (их считает книга Excel; tests/test_excel.py сверяет книгу с этим режимом).
 Только стандартная библиотека Python 3.8+.
 """
 from __future__ import annotations
@@ -216,7 +216,14 @@ def default_settings(ref):
 
 
 # ------------------------------------------------------------------ coefficients
-def coefficients(settings, reason_name, k_repl):
+def yes_no(v):
+    t = lc(v).strip() if isinstance(v, str) else ''
+    return True if t == 'да' else False if t == 'нет' else None
+
+
+def coefficients(settings, reason_name, k_repl, row_k=None):
+    """К1–К4 строки. row_k — ответы «да»/«нет» из колонок К1–К4 ведомости (новые правила Таксации Лайт):
+    указанный ответ для строки окончательный, пустой — как в настройках (с заменой по причине и «Инд. К»)."""
     reason = None
     for r in settings.get('reasons') or []:
         if reason is None and eqi(r.get('name'), reason_name):
@@ -233,6 +240,14 @@ def coefficients(settings, reason_name, k_repl):
     k2 = (0.5 if same(2) else 1) if settings['k2'] else (1 if same(2) else 0.5)
     k3 = (0.5 if same(3) else 1) if settings['k3'] else (1 if same(3) else 0.5)
     k4 = (0.1 if same(4) else 1) if settings['k4'] else (1 if same(4) else 0.1)
+    if row_k:
+        on_off = [(2, 1), (0.5, 1), (0.5, 1), (0.1, 1)]
+        ks = [k1, k2, k3, k4]
+        for i, v in enumerate(row_k):
+            yn = yes_no(v)
+            if yn is not None:
+                ks[i] = on_off[i][0] if yn else on_off[i][1]
+        k1, k2, k3, k4 = ks
 
     def f(v, last=False):
         t = '   1' if v == 1 else '   2' if v == 2 else ' 0,5' if v == 0.5 else ' 0,1'
@@ -599,6 +614,44 @@ def number_from_a(A, prev_b):
     return xnum(first) + ('' if math.isnan(av) else '-' + xnum(av - 1 + first))
 
 
+def split_a(src):
+    """(кол-во, № нач.) из поля a («N№S» оригинала) или из полей count/start."""
+    a = src.get('a')
+    if not is_blank(a):
+        t = cell_text(a)
+        p = t.find('№')
+        return (t[:p], t[p + 1:]) if p >= 0 else (a, '')
+    return ('' if is_blank(src.get('count')) else src.get('count'), '' if is_blank(src.get('start')) else src.get('start'))
+
+
+def lite_number(src, prev_end):
+    """Номер по плану и количество (Таксация Лайт). Ввод «№ по плану»: пусто — продолжить нумерацию; «4» — начать с 4;
+    «4-10» — диапазон (при пустом «Кол-во» кол-во = 10 − 4 + 1 = 7); иной текст — как есть.
+    Возвращает (номер, кол-во | None, конец нумерации, ошибка | None)."""
+    cnt, start = split_a(src)
+    noin = src.get('noIn') if not is_blank(src.get('noIn')) else start
+    nt = '' if is_blank(noin) else cell_text(noin).strip()
+    m = re.fullmatch(r'(\d+)\s*-\s*(\d+)', nt)
+    cblank = is_blank(cnt) or cell_text(cnt) == ''
+    if cblank:
+        q = (int(m.group(2)) - int(m.group(1)) + 1 if int(m.group(2)) >= int(m.group(1)) else None) if m else 1
+    else:
+        v = ru_value(cell_text(cnt))
+        q = None if math.isnan(v) else v
+    err = None
+    if m:
+        ra, rb = int(m.group(1)), int(m.group(2))
+        if not cblank and q is not None and q != rb - ra + 1:
+            err = 'кол-во не совпадает с номерами'
+        return '%d-%d' % (ra, rb), q, rb, err
+    if nt and not re.fullmatch(r'\d+', nt):
+        return nt, q, prev_end, err
+    st = int(nt) if nt else prev_end + 1
+    if cblank or q is None:
+        return xnum(st), q, st, err
+    return xnum(st) + '-' + xnum(_norm_num(st + q - 1)), q, st + q - 1, err
+
+
 def _norm_num(v):
     """Целые значения — int, чтобы xnum и сравнения вели себя как в JS."""
     if is_num(v) and float(v) == int(v) and abs(v) < 1e15:
@@ -610,19 +663,26 @@ def _norm_num(v):
 def compute_trees(project, ref, S):
     rows = []
     prev_b = 'Номер по плану'
+    prev_end = 0
     for i, src in enumerate(project.get('trees') or []):
         if is_blank(src.get('species')):
             continue
         r = {'idx': i, 'src': src, 'errors': [], 'warnings': []}
-        A = column_a(src)
-        r['A'] = A
-        q = qty_from_a(A)
+        if S.get('compat'):
+            A = column_a(src)
+            r['A'] = A
+            q = qty_from_a(A)
+            r['no'] = number_from_a(A, prev_b)
+            prev_b = r['no']
+        else:
+            r['no'], q, prev_end, nerr = lite_number(src, prev_end)
+            prev_end = _norm_num(prev_end)
+            if nerr:
+                r['errors'].append(nerr)
         if q is None:
             r['errors'].append('количество не распознано')
             q = 0
         r['qty'] = _norm_num(q)
-        r['no'] = number_from_a(A, prev_b)
-        prev_b = r['no']
         r['species'] = str(src['species']).strip()
         r['info'] = species_info(ref, r['species'])
         r['N'] = r['info']['type']
@@ -642,6 +702,7 @@ def compute_trees(project, ref, S):
         r['note'] = src.get('note') or ''
         r['reason'] = src.get('reason') or ''
         r['kRepl'] = '' if src.get('kRepl') is None else src.get('kRepl')
+        r['kRow'] = None if S.get('compat') else [src.get('k1'), src.get('k2'), src.get('k3'), src.get('k4')]
         shrub_type = r['N'] in SHRUB_TYPES
         title = r['species']
         nst = -1 if is_num(diam) else r['diamText'].find(',', 1)
@@ -659,17 +720,18 @@ def compute_trees(project, ref, S):
         elif not shrub_type and r['diamText'] == '-':
             r['H'] = ERR_TREE_D
         else:
-            r['H'] = ('вырубить (' + r['reason'] + ')' if r['action'] == 'в' else
-                      'пересадить (' + r['reason'] + ')' if r['action'] == 'п' else 'сохранить')
+            rs = (' (' + r['reason'] + ')') if (S.get('compat') or r['reason']) else ''
+            r['H'] = ('вырубить' + rs if r['action'] == 'в' else
+                      'пересадить' + rs if r['action'] == 'п' else 'сохранить')
         if r['H'] in (ERR_SHRUB_D, ERR_TREE_D):
             r['errors'].append(r['H'])
         r['removed'] = lc(r['H']).startswith('вырубить')
         r['transplanted'] = lc(r['H']).startswith('пересадить')
         r['coef'] = None
-        if not is_blank(r['reason']) and r['action'] == 'в' and r['info']['found']:
-            r['coef'] = coefficients(S, r['reason'], r['kRepl'])
+        if (not S.get('compat') or not is_blank(r['reason'])) and r['action'] == 'в' and r['info']['found']:
+            r['coef'] = coefficients(S, r['reason'], r['kRepl'], r['kRow'])
         r['O'] = r['coef']['str'] if r['coef'] else ''
-        if r['removed'] and not r['coef']:
+        if r['removed'] and not r['coef'] and S.get('compat'):
             r['errors'].append('не указана причина вырубки')
         r['rm'] = None
         rows.append(r)
@@ -711,7 +773,8 @@ def removal_row(r, ref, S):
     mx = max_of(cols) if cols else {'max': None, 'pos': -1}
     k = r['coef']['k'] if r['coef'] else None
     Y, yerr = None, None
-    if k and not r['coef']['zero'] and is_plot:
+    compat = S.get('compat')
+    if compat and k and not r['coef']['zero'] and is_plot:
         Y = '-'
     elif invasive:
         Y = 0
@@ -721,7 +784,8 @@ def removal_row(r, ref, S):
         if tr['v'] is None:
             Y, yerr = None, tr.get('err') or 'нет тарифа'
         else:
-            Y = xround(tr['v'] * (r['qty'] if max(r['qty'], 0) > 1 else 1) * Nc * k[0] * k[1] * k[2] * k[3], 3)
+            qm = r['qty'] if (is_plot and not compat) else (r['qty'] if max(r['qty'], 0) > 1 else 1)
+            Y = xround(tr['v'] * qm * Nc * k[0] * k[1] * k[2] * k[3], 3)
     else:
         if not cols:
             Y, yerr = None, 'нет нормы посадок'
@@ -739,7 +803,13 @@ def removal_row(r, ref, S):
     elif S['view'] == 'итог':
         G = '(' + xnum(tr['v']) + ') баз.в.' if S['money'] else Z
     elif S['money']:
-        G = ('(' + tr['text'] + ') баз.в. ' + (' х' + xnum(r['qty']) + 'шт. ' if max(r['qty'], 0) > 1 else '') +
+        if not compat and is_plot:
+            qt = ' х' + xnum(r['qty']) + 'м² '
+        elif not compat and J in (16, 17):
+            qt = ' х' + xnum(r['qty']) + 'п.м. ' if max(r['qty'], 0) > 1 else ''
+        else:
+            qt = ' х' + xnum(r['qty']) + 'шт. ' if max(r['qty'], 0) > 1 else ''
+        G = ('(' + tr['text'] + ') баз.в. ' + qt +
              'х' + xnum(Nc) + 'х' + xnum(k[0]) + 'х' + xnum(k[1]) + 'х' + xnum(k[2]) + 'х' + xnum(k[3]) +
              ' =' + (' + др. уч-ки поросли' if Y == '-' else xnum(Y)))
     else:
@@ -753,7 +823,7 @@ def removal_row(r, ref, S):
     return {'J': J, 'K': K, 'L': L, 'F': F, 'N': Nc, 'M': M, 'isPlot': is_plot, 'AO': AO, 'AQ': AQ,
             'invasive': invasive, 'stems': stems, 'AR': tr['v'], 'AS': tr['text'], 'cols': cols,
             'maxPlant': mx['max'], 'Y': Y, 'Z': Z, 'G': G,
-            'E': '-' if r['diamText'] == '0-4' else r['diamText'], 'Hnote': '(' + r['reason'] + ')', 'wood': w}
+            'E': '-' if r['diamText'] == '0-4' else r['diamText'], 'Hnote': '(' + r['reason'] + ')' if (compat or r['reason']) else '', 'wood': w}
 
 
 def plot_groups(rows, S, ref, shrub):
@@ -800,8 +870,15 @@ def removal_totals(rows, S, ref, base):
 
     def csum(pred):
         return fsum(r['qty'] for r in rem if pred(r))
-    tp = plot_groups(rows, S, ref, False)
-    sp = plot_groups(rows, S, ref, True)
+    compat = S.get('compat')
+    if compat:
+        tp = plot_groups(rows, S, ref, False)
+        sp = plot_groups(rows, S, ref, True)
+    else:   # поросль считается по строкам (Таксация Лайт)
+        tp = {'type': S['compMap'].get('plotTree') or '', 'groups': [],
+              'total': ysum(lambda r: r['rm']['J'] in (60, 70))}
+        sp = {'type': S['compMap'].get('plotShrub') or '', 'groups': [],
+              'total': ysum(lambda r: r['rm']['J'] in (18, 19))}
     t = {'treePlots': tp, 'shrubPlots': sp}
 
     def af_t(ty):
@@ -817,14 +894,19 @@ def removal_totals(rows, S, ref, base):
     AP['treePlots'] = tp['total']
     AP['trees'] = AP['хвой.'] + AP['медл.'] + AP['быст.'] + AP['плод.'] + AP['малоц.']
     for ty in ('лиан.', 'хвой..', 'вечз.', 'крас.', 'медл..', 'быст..', 'плод..', 'ж.и.1', 'ж.и.2'):
-        AP[ty] = ysum(lambda r, ty=ty: r['N'] == ty) + af_s(ty)
+        AP[ty] = ysum(lambda r, ty=ty: r['N'] == ty and not r['rm']['isPlot']) + af_s(ty)
     AP['shrubs'] = sum(AP[x] for x in ('лиан.', 'хвой..', 'вечз.', 'крас.', 'медл..', 'быст..', 'плод..'))
     AP['shrubPlots'] = sp['total']
-    AP['total'] = AP['treePlots'] + AP['trees'] + AP['ж.и.1'] + AP['ж.и.2'] + AP['shrubs'] + AP['shrubPlots']
+    if compat:   # оригинал добавляет поросль второй раз (она уже вошла в деревья/кустарники по типу)
+        AP['total'] = AP['treePlots'] + AP['trees'] + AP['ж.и.1'] + AP['ж.и.2'] + AP['shrubs'] + AP['shrubPlots']
+    else:
+        AP['total'] = AP['trees'] + AP['ж.и.1'] + AP['ж.и.2'] + AP['shrubs']
     t['money'] = AP
 
     def zsum(prefix):
         return ysum(lambda r: r['rm']['Z'].startswith(prefix))
+    if not compat:   # строки поросли уже вошли в суммы по подписи типа посадок
+        af_t = af_s = lambda ty: 0
     AN = {}
     AN['хвой.'] = zsum('Д.хв') + af_t('хвой.')
     AN['медл.'] = zsum('Д.лис.м') + af_t('медл.')
@@ -1169,8 +1251,10 @@ def area_section(lst, tariffs, projected_area, projected_value, S, base, leftove
         tprev = T
         r['T'] = T
         r['U'] = r['area'] if T < 0 else (0 if T == r['area'] else r['area'] - T)
-        r['F'] = ('Пересадить (' + r['reason'] + ')') if r['transplant'] else ('(' + r['reason'] + ') ' + (src.get('note') or ''))
-        r['coef'] = None if is_blank(r['reason']) else coefficients(S, r['reason'], src.get('kRepl'))
+        compat = S.get('compat')
+        rs = '(' + r['reason'] + ')' if (compat or r['reason']) else ''
+        r['F'] = ('Пересадить ' + rs).strip() if r['transplant'] else ((rs + ' ') if rs else '') + (src.get('note') or '')
+        r['coef'] = None if (compat and is_blank(r['reason'])) else coefficients(S, r['reason'], src.get('kRepl'))
         if not r['coef'] and not r['transplant']:
             r['errors'].append('не указана причина')
         r['q'] = quality_k2(r['cond'])
@@ -1273,7 +1357,9 @@ def _merged_ref(project, ref):
     return cache[key]
 
 
-def compute(project, ref):
+def compute(project, ref, compat=False):
+    """compat=True — точно как ТАКСАЦИЯ-АВТО 4.2 (для сверки с эталонами); False — правила Таксации Лайт:
+    причина вырубки необязательна, К1–К4 по строке, поросль по строкам без двойного счёта в итоге."""
     ref0 = prepare_ref(ref)
     ref = _merged_ref(project, ref0)
     d = default_settings(ref)
@@ -1284,6 +1370,7 @@ def compute(project, ref):
             S[k] = v
     S['compMap'] = dict(d['compMap'])
     S['compMap'].update(ps.get('compMap') or {})
+    S['compat'] = compat
     bv_row = base_value_for(S['date'], project.get('baseValues') or ref['baseValues'])
     base = float(S['baseValue']) if not is_blank(S.get('baseValue')) else (bv_row['rub'] if bv_row else 0)
     base = _norm_num(base)

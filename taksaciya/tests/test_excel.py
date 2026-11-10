@@ -151,7 +151,8 @@ def fill_workbook(src, dst, project):
             p = a.index('№')
             cnt, start = a[:p], a[p + 1:]
         put('Ведомость', L['cnt'] + str(r), num_or_text(cnt) if cnt != '' else None)
-        put('Ведомость', L['start'] + str(r), num_or_text(start) if start != '' else None)
+        noin = t.get('noIn') if t.get('noIn') not in (None, '') else start
+        put('Ведомость', L['noin'] + str(r), str(noin) if noin not in (None, '') else None)
         put('Ведомость', L['sp'] + str(r), t['species'])
         put('Ведомость', L['h'] + str(r), t.get('height'))
         put('Ведомость', L['d'] + str(r), num_or_text(t.get('diam')) if t.get('diam') not in (None, '') else None)
@@ -161,6 +162,8 @@ def fill_workbook(src, dst, project):
         kr = t.get('kRepl')
         put('Ведомость', L['kr'] + str(r), num_or_text(kr) if kr not in (None, '') else None)
         put('Ведомость', L['note'] + str(r), t.get('note') or None)
+        for k in range(1, 5):
+            put('Ведомость', L['k%din' % k] + str(r), t.get('k%d' % k) or None)
     # цветники
     area_rows = {}
     for key, title, n, tk in BX.AREA_BLOCKS:
@@ -314,7 +317,8 @@ def compare(vec_name, project, verbose=False):
     filled = os.path.join(tmp, 'case.xlsx')
     fill_workbook(tpl, filled, project)
     out = recalc(filled)
-    V, names = read_values(out, {'Ведомость', 'Итоги', 'Удаляемые', 'Баланс', 'Цветники и газоны', 'Пересаживаемые', 'Настройки'})
+    V, names = read_values(out, {'Ведомость', 'Итоги', 'Удаляемые', 'Баланс', 'Цветники и газоны', 'Пересаживаемые', 'Настройки',
+                                 'Существующие', 'Сохраняемые', 'Древесина'})
     res = E.compute(project, REF)
     L = BX.letters(BX.cols_spec())
     diffs = []
@@ -381,11 +385,58 @@ def compare(vec_name, project, verbose=False):
     for j, key in enumerate(keys):
         for c, col in enumerate('BCD'):
             chk('vol %s %d' % (key, c + 1), vol[key][c + 1], ws_it.get('%s%d' % (col, vr0 + j)))
-    # итоговые строки ведомости удаляемых
+    # ведомость удаляемых: перечень, под ним итоги
     WR = V['Удаляемые']
+    F0 = BX.LFIRST
+    rem = [r for r in res['rows'] if r['removed']]
+    for i, r in enumerate(rem):
+        rr = F0 + i
+        chk('УД no %d' % rr, r['no'], WR.get('A%d' % rr))
+        chk('УД title %d' % rr, r['title'], WR.get('B%d' % rr))
+        chk('УД qty %d' % rr, r['qty'], WR.get('C%d' % rr))
+        if E.is_num(r['rm']['Y']):
+            chk('УД G %d' % rr, r['rm']['G'], WR.get('G%d' % rr))
+        chk('УД прим %d' % rr, r['rm']['Hnote'], WR.get('H%d' % rr))
+    chk('УД пустая строка', '', WR.get('A%d' % (F0 + len(rem))))
     for i, rowv in enumerate(res['removalReport']):
         for j, col in enumerate('ABCDEFGH'):
-            chk('rep %s%d' % (col, 5 + i), rowv[j], WR.get('%s%d' % (col, 5 + i)))
+            rr = F0 + len(rem) + 1 + i
+            chk('rep %s%d' % (col, rr), rowv[j], WR.get('%s%d' % (col, rr)))
+    chk('УД после итогов', '', WR.get('B%d' % (F0 + len(rem) + 1 + len(res['removalReport']))))
+    # древесина по позициям
+    WD = V['Древесина']
+    for i, r in enumerate(rem):
+        rr = F0 + i
+        w = r['rm']['wood']
+        if w['err']:
+            continue
+        num = lambda v, m=1: '' if v is None else v * m
+        for col, val in (('G', num(w['BZ'])), ('H', num(w['BX'])), ('I', num(w['BZ'], 0.2)), ('J', num(w['BX'], 0.2)),
+                         ('K', num(w['BY'])), ('L', num(w['BW'])), ('M', num(w['BV']))):
+            chk('ДР %s%d' % (col, rr), val, WD.get('%s%d' % (col, rr)))
+    vol = res['volume']
+    tr0 = F0 + len(rem) + 1
+    for col, val in (('G', vol['stemsM3']['all']), ('H', vol['stemsT']['all']), ('I', vol['stumpsM3']['all']), ('J', vol['stumpsT']['all']),
+                     ('K', vol['branchesM3']['all']), ('L', vol['branchesT']['all']), ('M', vol['shrubT']['all']), ('N', vol['shrubM3'])):
+        chk('ДР итого %s' % col, val, WD.get('%s%d' % (col, tr0)))
+    # существующие и сохраняемые
+    WE, WK = V['Существующие'], V['Сохраняемые']
+    kept = [r for r in res['rows'] if r['H'] == 'сохранить']
+    for i, r in enumerate(res['rows']):
+        chk('СУЩ no %d' % i, r['no'], WE.get('A%d' % (F0 + i)))
+    for i, r in enumerate(kept):
+        chk('СОХР title %d' % i, r['title'], WK.get('B%d' % (F0 + i)))
+    kb = res['balance']['kept']
+    for j, key in enumerate(['trees', 'leafy', 'fruit', 'conif', 'shrubs', 'treePlots', 'shrubPlots', 'hedge1', 'hedge2']):
+        chk('СОХР итог %s' % key, kb[key], WK.get('C%d' % (F0 + len(kept) + 1 + j)))
+    # пересаживаемые
+    WT = V['Пересаживаемые']
+    trs = [r for r in res['rows'] if r['transplanted']]
+    for i, r in enumerate(trs):
+        chk('ПЕР ком %d' % i, r['ball'], WT.get('G%d' % (F0 + i)))
+    trt = res['transplant']
+    for j, val in enumerate([trt['trees'], trt['byType']['хвой.'], trt['byType']['плод.'], trt['shrubs'], trt['hedge1'], trt['hedge2']]):
+        chk('ПЕР итог %d' % j, val, WT.get('C%d' % (F0 + len(trs) + 1 + j)))
     # баланс
     WB = V['Баланс']
     for i, rowv in enumerate(res['balanceReport']):
@@ -416,6 +467,34 @@ def compare(vec_name, project, verbose=False):
     return checked, len(diffs)
 
 
+def new_rules_project(money=True):
+    """Набор на правила Таксации Лайт: К1–К4 по строке, пустая причина, пустое кол-во, поросль по строкам (в т.ч. «у дорог»,
+    менее 10 м²), живая изгородь, пересадка без причины."""
+    T = [
+        {'a': '', 'noIn': '4-10', 'species': 'Береза бородавчатая', 'height': 21, 'diam': 22, 'cond': 'уд.', 'action': 'В', 'reason': ''},
+        {'a': '', 'species': 'Береза бородавчатая', 'height': 21, 'diam': 22, 'cond': 'уд.', 'action': 'В', 'reason': 'СЕТИ', 'k4': 'да'},
+        {'a': 3, 'species': 'Ель колючая', 'height': 15, 'diam': '30,24,14', 'cond': 'хор.', 'action': 'В', 'k1': 'да', 'k2': 'нет'},
+        {'a': 20, 'species': 'Уч-к поросли дер.', 'height': 1, 'diam': '0-4', 'action': 'В', 'reason': 'СЕТИ'},
+        {'a': 5, 'species': 'Уч-к поросли дер.', 'height': 1, 'diam': '0-4', 'action': 'В'},
+        {'a': 12, 'species': '*Уч-к поросли дер. у дорог', 'height': 1, 'diam': '0-4', 'action': 'В', 'k3': 'да'},
+        {'a': 15, 'species': 'Уч-к поросли куст.', 'height': 1, 'diam': '-', 'action': 'В'},
+        {'a': 8, 'species': 'Однорядная живая изгородь', 'height': 1.2, 'diam': '-', 'action': 'В'},
+        {'a': 1, 'species': 'Сирень обыкновенная', 'height': 2.5, 'diam': '-', 'action': 'В', 'note': 'V=50%'},
+        {'a': '', 'species': 'Дуб черешчатый', 'height': 18, 'diam': 56, 'cond': 'хор.', 'action': 'В', 'k1': 'нет'},
+        {'a': '', 'species': 'Липа мелколистная', 'height': 8, 'diam': 14, 'cond': 'хор.', 'action': 'П'},
+        {'a': 2, 'noIn': '50', 'species': 'Яблоня домашняя', 'height': 4, 'diam': 16, 'cond': 'уд.', 'action': ''},
+        {'a': 4, 'noIn': '60-62', 'species': 'Яблоня домашняя', 'height': 4, 'diam': 16, 'cond': 'уд.', 'action': ''},
+        {'a': '', 'noIn': '12а', 'species': 'Клен остролистный', 'height': 9, 'diam': 18, 'cond': 'хор.', 'action': 'В'},
+        {'a': '', 'species': 'Сосна обыкновенная', 'height': 12, 'diam': 28, 'action': ''},
+    ]
+    S = {'date': '2026-03-01', 'k1': False, 'k2': True, 'k3': False, 'k4': False, 'money': money, 'unit': 'баз.в. (руб.)',
+         'view': 'формула + итог', 'defaultCond': 'уд.', 'shrubMassKg': 5, 'flowerMode': 'метрами', 'showPlots': True, 'hedgePieces': True,
+         'reasons': [{'name': 'СЕТИ', 'group': '', 'replace': ''}, {'name': 'БЛАГОУСТРОЙСТТВО', 'group': '', 'replace': ''}],
+         'compMap': dict(E.default_settings(E.prepare_ref(REF))['compMap'])}
+    return {'settings': S, 'trees': T, 'flowers': [{'kind': 'Композиция из многолетников', 'cond': 'хор.', 'area': 4}],
+            'lawns': [{'kind': 'Обыкновенный', 'cond': 'уд.', 'area': 30, 'reason': ''}], 'grass': [], 'projected': {}}
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith('-')]
     verbose = '-v' in sys.argv
@@ -424,9 +503,11 @@ def main():
     if args:
         files = [f for f in files if any(a in f for a in args)]
     total = fails = 0
-    for f in files:
-        vec = json.load(open(os.path.join(vdir, f), encoding='utf-8'))
-        c, d = compare(f, vec['project'], verbose)
+    cases = [(f, json.load(open(os.path.join(vdir, f), encoding='utf-8'))['project']) for f in files]
+    if not args or any('new' in a for a in args):
+        cases += [('new_rules_money', new_rules_project(True)), ('new_rules_planting', new_rules_project(False))]
+    for f, project in cases:
+        c, d = compare(f, project, verbose)
         total += c
         fails += d
     print('Итого: проверено %d, расхождений %d' % (total, fails))

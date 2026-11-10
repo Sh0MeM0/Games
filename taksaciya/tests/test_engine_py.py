@@ -121,7 +121,7 @@ def main():
     for f in sorted(os.listdir(d)):
         if not f.endswith('.json'): continue
         vec = json.load(open(os.path.join(d, f), encoding='utf-8'))
-        res = E.compute(vec['project'], ref)
+        res = E.compute(vec['project'], ref, compat=True)
         exp = cells_from_result(res)
         known = vec.get('knownDiffs') or {}
         diffs = []
