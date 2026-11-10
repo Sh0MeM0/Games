@@ -126,7 +126,7 @@ def fill_workbook(src, dst, project):
     d = datetime.date.fromisoformat(S['date'])
     vals = {'S_DATE': (d - datetime.date(1899, 12, 30)).days, 'S_K1': yn(S['k1']), 'S_K2': yn(S['k2']), 'S_K3': yn(S['k3']), 'S_K4': yn(S['k4']),
             'S_MONEY': 'выплатами' if S['money'] else 'посадками', 'S_UNIT': S['unit'], 'S_VIEW': S['view'], 'S_COND': S['defaultCond'],
-            'S_MASS': S['shrubMassKg'], 'S_SHSTUMP': S.get('shrubStumpPct', 20), 'S_FMODE': S['flowerMode'], 'S_PLOTS': yn(S['showPlots']), 'S_HEDGE': yn(S['hedgePieces']),
+            'S_BUSHM2': S.get('bushArea', 1), 'S_PLOTDENS': S.get('plotDensity', 'редкий'), 'S_FMODE': S['flowerMode'], 'S_PLOTS': yn(S['showPlots']), 'S_HEDGE': yn(S['hedgePieces']),
             'S_PLOTTREE': S['compMap']['plotTree'], 'S_PLOTSHRUB': S['compMap']['plotShrub']}
     for k, v in vals.items():
         sh, ref = cell_of(k)
@@ -365,7 +365,7 @@ def compare(vec_name, project, verbose=False):
             chk('M %d' % rr, m['M'], g('M'))
             w = m['wood']
             if not w['err']:
-                for k in ('BV', 'BW', 'BX', 'BY', 'BZ', 'CB', 'CC', 'CD'):
+                for k in ('BW', 'BX', 'BY', 'BZ', 'CB', 'CC', 'CD', 'SBm3', 'SBt', 'SSm3', 'SSt'):
                     chk('%s %d' % (k, rr), '' if w[k] is None else w[k], g(k))
         if r['transplanted']:
             chk('ball %d' % rr, r['ball'], g('ball'))
@@ -386,7 +386,7 @@ def compare(vec_name, project, verbose=False):
              ('EX_PK', res['existing']['shrubPlots']), ('EX_H1', res['existing']['hedge1']), ('EX_H2', res['existing']['hedge2']),
              ('TR_TREES', res['transplant']['trees']), ('TR_SHRUBS', res['transplant']['shrubs']), ('TR_H1', res['transplant']['hedge1']),
              ('TR_H2', res['transplant']['hedge2']), ('TR_X', res['transplant']['byType']['хвой.']), ('TR_P', res['transplant']['byType']['плод.']),
-             ('VOL_BV', res['volume']['shrubT']['all']), ('BASE', res['baseValue'])]
+             ('VOL_SBM3', res['volume']['shrub']['branchesM3']), ('VOL_SBT', res['volume']['shrub']['branchesT']), ('VOL_SSM3', res['volume']['shrub']['stumpsM3']), ('VOL_SST', res['volume']['shrub']['stumpsT']), ('BASE', res['baseValue'])]
     for nm, val in pairs:
         chk(nm, val, named(nm))
     # таблица древесины в «Итогах»
@@ -423,11 +423,9 @@ def compare(vec_name, project, verbose=False):
         if w['err']:
             continue
         num = lambda v, m=1: '' if v is None else v * m
-        spp = res['settings']['shrubStumpPct'] / 100
-        bvm3 = None if w['BV'] is None else w['BV'] * 1000 / REF['volumes']['density']['soft'] / 0.1
         for col, val in (('G', num(w['BY'])), ('H', num(w['BW'])), ('I', num(w['BZ'], 0.2)), ('J', num(w['BX'], 0.2)),
-                         ('K', num(w['BZ'])), ('L', num(w['BX'])), ('M', num(bvm3, 1 - spp)), ('N', num(w['BV'], 1 - spp)),
-                         ('O', num(bvm3, spp)), ('P', num(w['BV'], spp))):
+                         ('K', num(w['BZ'])), ('L', num(w['BX'])), ('M', num(w['SBm3'])), ('N', num(w['SBt'])),
+                         ('O', num(w['SSm3'])), ('P', num(w['SSt']))):
             chk('ДР %s%d' % (col, rr), val, WD.get('%s%d' % (col, rr)))
     vol = res['volume']
     tr0 = F0 + len(rem) + 1
@@ -462,8 +460,8 @@ def compare(vec_name, project, verbose=False):
         chk('vtab m3 %s' % col, vol['table']['m3'][j], WB.get('%s13' % col))
         chk('vtab t %s' % col, vol['table']['t'][j], WB.get('%s14' % col))
     for col, m3, t in (('E', vol['shrub']['branchesM3'], vol['shrub']['branchesT']), ('F', vol['shrub']['stumpsM3'], vol['shrub']['stumpsT'])):
-        chk('vtab m3 %s' % col, E.xround(m3, 2), WB.get('%s13' % col))
-        chk('vtab t %s' % col, E.xround(t, 2), WB.get('%s14' % col))
+        chk('vtab m3 %s' % col, E.xround(m3, 3), WB.get('%s13' % col))
+        chk('vtab t %s' % col, E.xround(t, 3), WB.get('%s14' % col))
     # цветники
     WA = V['Цветники и газоны']
     for key, title, nn, tk in BX.AREA_BLOCKS:
@@ -515,7 +513,8 @@ def new_rules_project(money=True):
     S = {'date': '2026-03-01', 'k1': False, 'k2': True, 'k3': False, 'k4': False, 'money': money, 'unit': 'баз.в. (руб.)',
          'view': 'формула + итог', 'defaultCond': 'уд.', 'shrubMassKg': 5, 'flowerMode': 'метрами', 'showPlots': True, 'hedgePieces': True,
          'reasons': [{'name': 'СЕТИ', 'group': '', 'replace': ''}, {'name': 'БЛАГОУСТРОЙСТТВО', 'group': '', 'replace': ''}],
-         'compMap': dict(E.default_settings(E.prepare_ref(REF))['compMap']), 'shrubStumpPct': 20 if money else 35}
+         'compMap': dict(E.default_settings(E.prepare_ref(REF))['compMap']), 'bushArea': 1 if money else 1.5,
+         'plotDensity': 'редкий' if money else 'густой'}
     return {'settings': S, 'trees': T, 'flowers': [{'kind': 'Композиция из многолетников', 'cond': 'хор.', 'area': 4}],
             'lawns': [{'kind': 'Обыкновенный', 'cond': 'уд.', 'area': 30, 'reason': ''}], 'grass': [], 'projected': {}}
 

@@ -207,7 +207,8 @@ def default_settings(ref):
         'view': d.get('formulaView') or 'формула + итог',
         'defaultCond': d.get('defaultCondition') or 'уд.',
         'shrubMassKg': d.get('shrubMassKg', 5) if d.get('shrubMassKg') is not None else 5,
-        'shrubStumpPct': 20,   # Таксация Лайт: доля пней в массе кустарника, % (по аналогии с пнями деревьев оригинала)
+        'bushArea': 1,              # Таксация Лайт: площадь одного куста при подсчёте поштучно, м² (редкий кустарник)
+        'plotDensity': 'редкий',    # Таксация Лайт: густота поросли для норм отходов: редкий / средний / густой
         'showPlots': d.get('showPlots') != 'нет', 'hedgePieces': d.get('hedgeAsPieces') != 'нет',
         'flowerMode': d.get('flowerOffset') or 'метрами',
         'reasons': [{'name': r['name'], 'group': r.get('group') or '', 'replace': r.get('replace') or ''}
@@ -523,7 +524,8 @@ def percent_from_note(note):
 
 def wood(ref, settings, info, row, K, L, stems, H, qty, J=None):
     res = {'ce': 0, 'BV': None, 'BW': None, 'BX': None, 'BY': None, 'BZ': None, 'CA': 0,
-           'CB': None, 'CC': None, 'CD': None, 'perStem': [], 'err': None}
+           'CB': None, 'CC': None, 'CD': None, 'perStem': [], 'err': None,
+           'SBm3': None, 'SBt': None, 'SSm3': None, 'SSt': None}
     CA = 0
     for d in stems:
         if d is not None and d < 8:
@@ -531,13 +533,24 @@ def wood(ref, settings, info, row, K, L, stems, H, qty, J=None):
     res['CA'] = CA
     hh = row['height']
     lite = not settings.get('compat')
-    # оригинал: масса куста только для строки с 1 шт.; Таксация Лайт — для каждой строки кустарника
-    # (живая изгородь: 1 п.м. = 3 куста в однорядной и 5 в двухрядной, как в балансе оригинала)
-    if (0.1 < CA < 8) or L == 1 or (lite and L is not None):
+    if lite:
+        # Таксация Лайт: кустарник (и мелкие деревья) — по нормам «сводка 1 га кустарника» (лист «кусты» файла пользователя).
+        # Поросль — по площади и густоте из настроек; поштучно — 1 куст = «Площадь одного куста» м² редкого кустарника;
+        # живая изгородь: 1 п.м. = 3 куста (однорядная) или 5 (двухрядная).
+        if (0.1 < CA < 8) or L is not None:
+            q = qty if is_num(qty) else 0
+            if J in (60, 18):
+                ha, dens = q / 10000, settings.get('plotDensity') or 'редкий'
+            else:
+                ha = q * (3 if J == 16 else 5 if J == 17 else 1) * float(settings.get('bushArea') or 0) / 10000
+                dens = 'редкий'
+            k = ha * percent_from_note(row['note'])
+            nrm = ref['shrubWaste'][dens]
+            res['SBm3'], res['SBt'], res['SSm3'], res['SSt'] = k * nrm['m3s'], k * nrm['t'], k * nrm['rm3s'], k * nrm['rt']
+    elif (0.1 < CA < 8) or L == 1:
         h = hh if is_num(hh) else 0
         hk = h + (h - 1) / 3 if h > 1 else h
-        per = (3 if J == 16 else 5 if J == 17 else 1) if (lite and L is not None) else 1
-        res['BV'] = hk * (settings['shrubMassKg'] * percent_from_note(row['note'])) * qty * per / 1000
+        res['BV'] = hk * (settings['shrubMassKg'] * percent_from_note(row['note'])) * qty / 1000
     if K is None:
         return res
     ce = hardness_index(info)
@@ -1077,6 +1090,7 @@ def volume_totals(rows, ref):
                     o[w['ce']] += v
         return o
     BZ, BX, BY, BW, BV = acc('BZ'), acc('BX'), acc('BY'), acc('BW'), acc('BV')
+    shrub = {'branchesM3': acc('SBm3')['all'], 'branchesT': acc('SBt')['all'], 'stumpsM3': acc('SSm3')['all'], 'stumpsT': acc('SSt')['all']}
     big = {1: 0, 2: 0, 3: 0}
     for r in rem:
         w = r['rm']['wood']
@@ -1110,7 +1124,7 @@ def volume_totals(rows, ref):
     return {
         'stemsM3': BZ, 'stemsT': BX, 'branchesM3': BY, 'branchesT': BW, 'shrubT': BV,
         'stumpsM3': {k: v * 0.2 for k, v in BZ.items()}, 'stumpsT': {k: v * 0.2 for k, v in BX.items()},
-        'shrubM3': ((BV['all'] * 1000) / dens) / 0.1,
+        'shrubM3': ((BV['all'] * 1000) / dens) / 0.1, 'shrub': shrub,
         'le50': {c: BZ[c] - big[c] for c in (1, 2, 3)}, 'gt50': big, 'stemsByDiameter': table,
         'table': {'m3': [xround(BZ['all'], 2), xround(BZ['all'] * 0.2, 2), xround(BY['all'], 2),
                          xround(((BV['all'] * 1000) / dens) / 0.1, 2)],
@@ -1401,9 +1415,6 @@ def compute(project, ref, compat=False):
             r['rm'] = removal_row(r, ref, S)
     rmT = removal_totals(rows, S, ref, base)
     vol = volume_totals(rows, ref)
-    sp = float(S.get('shrubStumpPct') or 0) / 100     # кустарник: сучья, ветви, вершины и пни
-    vol['shrub'] = {'branchesT': vol['shrubT']['all'] * (1 - sp), 'stumpsT': vol['shrubT']['all'] * sp,
-                    'branchesM3': vol['shrubM3'] * (1 - sp), 'stumpsM3': vol['shrubM3'] * sp}
     trT = transplant_totals(rows, ref, S)
     ex = existing_totals(rows)
     bal = balance(rows, ex, rmT, trT, S)
