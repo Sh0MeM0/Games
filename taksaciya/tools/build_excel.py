@@ -18,7 +18,9 @@ import zipfile
 
 from openpyxl import Workbook
 from openpyxl.comments import Comment
-from openpyxl.formatting.rule import FormulaRule
+from openpyxl.formatting.rule import FormulaRule, Rule
+from openpyxl.styles.differential import DifferentialStyle
+from openpyxl.styles.numbers import NumberFormat
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.workbook.defined_name import DefinedName
@@ -27,7 +29,8 @@ from openpyxl.worksheet.formula import ArrayFormula
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REF = json.load(open(os.path.join(ROOT, 'core', 'reference.json'), encoding='utf-8'))
-FIRST = 5            # первая строка данных ведомости
+FIRST = 9            # первая строка данных ведомости (выше — заголовок и панель подсказки породы)
+HROW = FIRST - 1     # строка заголовков ведомости
 LFIRST = 7           # первая строка перечня на листах-ведомостях (Существующие, Удаляемые …)
 AUTHOR = 'Таксация Лайт'
 NSTEM = 27           # стволов в одной строке (как в оригинале)
@@ -407,17 +410,15 @@ def cols_spec():
     add('cnt', 'Кол-во (шт., м², п.м.)', None, 8,
         tip='Количество. Деревья и кусты — шт.; участок поросли — площадь, м²; живая изгородь — длина, п.м. '
             'Пусто — 1 шт., а если в «№ по плану» диапазон «4-10» — число номеров (7).')
-    add('sp', 'Порода, вид', None, 30,
-        tip='Порода: название или его № из справочника (лист «Справочник», колонка «№»).\n'
-            '• Введите № (например 14) — в расчёт и во все ведомости пойдёт порода №14, её название видно в соседней колонке.\n'
-            '• Введите начало названия (например «берез») — соседняя колонка покажет подходящие породы с номерами; введите нужный номер.\n'
-            '• Можно выбрать из списка (стрелка справа от ячейки, если Excel её показывает).\n'
-            'Служебные строки: «Уч-к поросли дер.», «Уч-к поросли куст.», «*Уч-к поросли дер. у дорог», «*Уч-к поросли куст. у дорог», «Однорядная живая изгородь», «Двухрядная живая изгородь».')
-    add('sphint', 'Порода по справочнику (№)', 'IF({sp}&""="","",IF({libi}>0,"№"&{libi}&" "&INDEX(Lib_Name,{libi}),IF({hc}>0,"подходит "&{hc}&": "&INDEX(SPN,{hp})&" "&INDEX(SPV,{hp})'
-        + ''.join('&IF({hc}>%d,"; "&INDEX(SPN,{hp}+%d)&" "&INDEX(SPV,{hp}+%d),"")' % (i, i, i) for i in range(1, 6))
-        + '&IF({hc}>6,"; …","")&" — введите №",IF(ISNUMBER({spnum}),"нет породы с № "&{spnum},"нет в справочнике"))))', 40,
-        tip='Считается само. Если порода найдена — её № и название по справочнику. Если введено начало названия — подходящие породы с номерами: '
-            'введите в колонку «Порода» нужный №.')
+    add('sp', 'Порода, вид (№ или название)', None, 32,
+        tip='Порода: № из справочника или название.\n'
+            '• Введите № (например 199) — в ячейке появится название породы («Береза повислая»), в расчёт пойдёт эта порода.\n'
+            '• Введите начало названия (например «берез») — вверху листа, в жёлтой панели, появятся подходящие породы с номерами; '
+            'затем введите в эту же ячейку нужный №.\n'
+            '• Номера — лист «Справочник», колонка «№» (там есть фильтр для поиска).\n'
+            'Служебные строки: №1 «Уч-к поросли дер.», №2 «Уч-к поросли куст.», №3–4 — то же «у дорог», №5–6 — живая изгородь.')
+    add('sphint', '№ по справочнику', 'IF({sp}&""="","",IF({libi}>0,"№"&{libi},IF({hc}>0,"подходит "&{hc}&" — список вверху ↑",IF(ISNUMBER({spnum}),"нет № "&{spnum},"нет в справочнике"))))', 18,
+        tip='Считается само: № породы по справочнику. Если введено начало названия — сколько пород подходит; сам список с номерами — в жёлтой панели вверху листа.')
     add('h', 'Высота, м', None, 8, tip='Высота, м. Нужна для тарифа кустарников, объёмов древесины (таблицы по высоте) и размера кома при пересадке.')
     add('d', 'Диаметр, см', None, 12,
         tip='Диаметр ствола на высоте 1,3 м, см:\n• целое число — один ствол;\n• «20,15,12» — многоствольное (до 27 стволов);\n• «-» — кустарник и живая изгородь;\n'
@@ -465,6 +466,7 @@ def cols_spec():
     add('spn', 'порода по справочнику', 'IF({sp}&""="","",IF(ISNUMBER({spnum}),IF(AND({spnum}>=1,{spnum}<=ROWS(Lib_Name)),IF(INDEX(Lib_Name,{spnum})&""="","№"&{spnum},INDEX(Lib_Name,{spnum})&""),"№"&{spnum}),TRIM({sp}&"")))', 20, h)
     add('hc', 'подходит пород', 'IF(OR({sp}&""="",ISNUMBER({spnum})),0,COUNTIF(SPK,{sp}&"*"))', 4, h)
     add('hp', 'первая подходящая', 'IF({hc}>0,MATCH({sp}&"*",SPK,0),0)', 4, h)
+    add('need', 'порода не выбрана (№ строки)', 'IF(AND({sp}&""<>"",{libi}=0,{hc}>0),ROWS({sp:top}:{sp}),"")', 5, h)
     add('libi', 'строка справочника', 'IF({spn}="",0,IFERROR(MATCH({spn},Lib_Name,0),0))', 6, h)
     add('found', 'найдена', '{libi}>0', 6, h)
     add('special', 'служебная', 'IF({libi}>0,INDEX(Lib_Special,{libi})=1,FALSE)', 6, h)
@@ -500,7 +502,7 @@ def cols_spec():
         seg = 'TRIM(MID({segs},%d,200))' % ((k - 1) * 200 + 1)
         first = '{d}' if k == 1 else '""'
         add('d%d' % k, 'ствол %d' % k, 'IF({rem}<>1,"",IF({dnum},%s,IF(%s="","",IF(RIGHT(%s,3)="до1",0.8,IF(RIGHT(%s,3)="до4",3.8,IFERROR(VALUE(RIGHT(SUBSTITUTE(%s,"-","  "),3)),""))))))' % (first, seg, seg, seg, seg), 5, h)
-    add('tc', 'колонка тарифа', 'IFERROR(MATCH({J},{10,20,30,40},0),"")', 4, h)
+    add('tc', 'колонка тарифа', 'IF({J}=10,1,IF({J}=20,2,IF({J}=30,3,IF({J}=40,4,""))))', 4, h)
     for k in range(1, NSTEM + 1):
         add('t%d' % k, 'тариф %d' % k, 'IF(N({d%d})>=12,IFERROR(LOOKUP({d%d},INDEX(TarThr,0,{tc}),INDEX(TarVal,0,{tc})),0),0)' % (k, k), 4, h)
     add('AQ', 'стволов ≥12', 'IF(OR({rem}<>1,{shrubRow}),"",MAX(1,COUNTIF({d1}:{d%d},">"&11.9)))' % NSTEM, 5, h)
@@ -527,7 +529,7 @@ def cols_spec():
     add('Kq', 'деревья, шт.', 'IF(AND({rem}=1,NOT({shrubRow})),{qty},"")', 5, h)
     add('Lq', 'кусты, шт.', 'IF(AND({rem}=1,{shrubRow}),{qty},"")', 5, h)
     # древесина: объёмы по таблицам «Мягк/Хвой/Твер» — одна формула массива на строку вместо 54 колонок
-    add('CE', 'класс твёрдости', 'IF(OR({rem}<>1,{shrubRow}),0,IF({special},1,IFERROR(MATCH({hard},{"мяг.","хвн.","твд."},0),-1)))', 4, h)
+    add('CE', 'класс твёрдости', 'IF(OR({rem}<>1,{shrubRow}),0,IF({special},1,IF({hard}="мяг.",1,IF({hard}="хвн.",2,IF({hard}="твд.",3,-1)))))', 4, h)
     add('wtype', 'древесина', 'IF({CE}=1,"мягкая",IF({CE}=2,"хвойная",IF({CE}=3,"твёрдая","")))', 7, h)
     D = '{d1}:{d%d}' % NSTEM
 
@@ -585,7 +587,7 @@ def cols_spec():
     add('keepC', 'счётчик сохраняемых', 'N({keepC:prev})+{keep}', 5, h)
     add('remC', 'счётчик удаляемых', 'N({remC:prev})+{rem}', 5, h)
     add('trC', 'счётчик пересаживаемых', 'N({trC:prev})+{trn}', 5, h)
-    keep_sp = {'spnum', 'spn', 'hc', 'hp', 'sphint', 'libi'}
+    keep_sp = {'spnum', 'spn', 'hc', 'hp', 'sphint', 'libi', 'need'}
     C = [(n, t, (f.replace('{sp}', '{spn}') if (f and n not in keep_sp) else f), w, hd, tip, arr) for n, t, f, w, hd, tip, arr in C]
     return C
 
@@ -595,14 +597,14 @@ def letters(spec):
 
 
 def render(tpl, L, row=FIRST, last=None):
-    """{x} → $X5; {x:prev} → $X4; {x:top} → $X$5; {x:R} → $X$5:$X$last."""
+    """{x} → $X9; {x:prev} → значение строки выше через INDEX($X$8:$X8,…) (устойчиво к удалению строк); {x:top} → $X$9; {x:R} → $X$9:$X$last."""
     def rep(m):
         name, mod = m.group(1), m.group(2)
         if name not in L:
             return m.group(0)
         col = L[name]
         if mod == ':prev':
-            return '$%s%d' % (col, row - 1)
+            return 'INDEX($%s$%d:$%s%d,ROWS($%s$%d:$%s%d))' % (col, HROW, col, row - 1, col, HROW, col, row - 1)
         if mod == ':top':
             return '$%s$%d' % (col, FIRST)
         if mod == ':R':
@@ -619,18 +621,30 @@ def build_main(wb, nrows):
     inputs = [n for n, t, f, *_ in spec if f is None]
     ws['A1'] = 'Ведомость существующих деревьев и кустарников (ввод) — Таксация Лайт'
     ws['A1'].font = Font(name=FONT, bold=True, size=13, color=GREEN)
-    ws['A2'] = ('Вводите данные в колонки с жёлтым заголовком. Породу можно ввести номером из справочника. Наведите мышь на заголовок колонки — '
-                'появится пояснение. Пустые строки допускаются. Чтобы убрать дерево, проще очистить его строку (выделить и нажать Delete), чем удалять строку целиком.')
-    ws['A2'].alignment = Alignment(wrap_text=True, vertical='top')
-    ws.merge_cells('A2:T2')
-    ws.row_dimensions[2].height = 30
-    ws['A3'] = ('="Строк в книге: "&ROWS(\'Ведомость\'!$%s$%d:$%s$%d)&", заполнено: "&COUNTA(\'Ведомость\'!$%s$%d:$%s$%d)&". '
-                'Служебные колонки справа скрыты (группа «+» над заголовком)."'
-                % (L['sp'], FIRST, L['sp'], last, L['sp'], FIRST, L['sp'], last))
-    ws['A3'].font = Font(name=FONT, italic=True, size=9, color='666666')
+    note(ws['A1'], 'Вводите данные в колонки с жёлтым заголовком. Наведите мышь на заголовок колонки — появится пояснение. '
+                   'Пустые строки допускаются. Лишнюю позицию можно удалить целиком (правый щелчок по номеру строки → «Удалить») или очистить (Delete).', 320)
+    ws['J1'] = ('="Строк в книге: "&ROWS(R_sp)&", заполнено: "&COUNTA(R_sp)&". Служебные колонки справа скрыты (группа «+» над заголовком)."')
+    ws['J1'].font = Font(name=FONT, italic=True, size=9, color='666666')
+    # панель подсказки: подходящие породы с номерами для последней строки, где порода введена не полностью
+    PANEL = PatternFill('solid', fgColor='FFF7D6')
+    ws['A2'] = ('=IF(SP_PEND=0,"Поиск породы: введите в колонку «Порода» номер из справочника или начало названия (например «берез») — '
+                'здесь появятся подходящие породы с номерами.","Строка "&(SP_PEND+%d)&": «"&SP_TXT&"» — подходит "&SP_HC&'
+                '". Введите в колонку «Порода» нужный номер:")' % (FIRST - 1))
+    ws['A2'].font = Font(name=FONT, bold=True, size=10, color='7A4A00')
+    for rr in range(2, HROW):
+        for cc in range(1, 15):
+            ws.cell(row=rr, column=cc).fill = PANEL
+    slot = 0
+    for cc in (1, 4, 7, 10):
+        for rr in range(3, HROW):
+            slot += 1
+            f = ('=IF(SP_HC>={i},IF(AND({i}=20,SP_HC>20),"… и ещё "&(SP_HC-19)&" — уточните начало названия",'
+                 'INDEX(SPN,SP_HP+{j})&"   "&INDEX(SPV,SP_HP+{j})),"")').format(i=slot, j=slot - 1)
+            c = ws.cell(row=rr, column=cc, value=f)
+            c.font = Font(name=FONT, size=10, color='1F3F7A')
     for i, (name, title, f, w, hidden, tip, arr) in enumerate(spec):
         col = get_column_letter(i + 1)
-        c = ws.cell(row=4, column=i + 1, value=title)
+        c = ws.cell(row=HROW, column=i + 1, value=title)
         style_header(c)
         if f is None:
             c.fill = PatternFill('solid', fgColor='FFE9A8')
@@ -644,9 +658,10 @@ def build_main(wb, nrows):
             ref = '%s%d' % (col, FIRST)
             ws[ref] = ArrayFormula(ref, '=' + render(f, L)) if arr else '=' + render(f, L)
             ws[ref].fill = F_CALC
-    ws.row_dimensions[4].height = 44
+    ws.row_dimensions[HROW].height = 44
     ws.freeze_panes = '%s5' % get_column_letter(spec.index(next(x for x in spec if x[0] == 'sphint')) + 2)
     ws.column_dimensions[L['noin']].number_format = '@'     # «4-10» остаётся текстом, а не датой
+    ws.column_dimensions[L['sp']].alignment = Alignment(horizontal='left')   # № породы показывается названием — по левому краю
     rng = lambda c: '%s%d:%s%d' % (L[c], FIRST, L[c], last)
     dv_cond = DataValidation(type='list', formula1='"хор.,уд.,плох.,ненадл."', allow_blank=True)
     dv_act = DataValidation(type='list', formula1='"В,П"', allow_blank=True)
@@ -663,6 +678,10 @@ def build_main(wb, nrows):
             dv.add(rng(c))
     for name, col in L.items():
         defname(wb, 'R_' + name, "'Ведомость'!$%s$%d:$%s$%d" % (col, FIRST, col, last))
+    for i, s0 in enumerate(REF['special'] + REF['species'], 1):
+        nm = s0['name'].replace('"', "'")
+        dxf = DifferentialStyle(numFmt=NumberFormat(numFmtId=400 + i, formatCode='"%s"' % nm))
+        ws.conditional_formatting.add(rng('sp'), Rule(type='cellIs', operator='equal', formula=[str(i)], dxf=dxf))
     return ws, spec, L, last
 
 
@@ -674,7 +693,7 @@ def org_line(extra=''):
     return '=S_ORG&IF(S_NO<>""," · "&S_NO,"")&IF(S_NAME<>""," · "&S_NAME,"")&IF(S_STAGE<>""," · стадия "&S_STAGE,"")' + extra
 
 
-def build_list(wb, sheet, title, cols, counter, nname, totals, cap, top_note=None):
+def build_list(wb, sheet, title, cols, counter, nname, totals, cap, top_note=None, hidden_at=None):
     """Лист-ведомость. cols: [(заголовок, выражение через {I} — номер строки «Ведомости», ширина, примечание, формат)].
     Строки перечня идут подряд с LFIRST; сразу под последней позицией — пустая строка и строки итогов (totals: список строк
     по len(cols) формул без «=» или None). Итоги считаются в скрытых колонках справа."""
@@ -701,8 +720,8 @@ def build_list(wb, sheet, title, cols, counter, nname, totals, cap, top_note=Non
             note(c, tip)
         ws.column_dimensions[get_column_letter(i + 1)].width = w
     ws.row_dimensions[HDR_ROW].height = 40
-    kc = nc + 2                        # скрытая колонка: номер строки «Ведомости»
-    t0 = nc + 4                        # скрытый блок итогов
+    kc = hidden_at or nc + 2           # скрытая колонка: номер строки «Ведомости»
+    t0 = kc + 2                        # скрытый блок итогов
     K = get_column_letter(kc)
     ws.column_dimensions[K].hidden = True
     ws.cell(row=HDR_ROW, column=kc, value='строка')
@@ -730,7 +749,7 @@ def build_list(wb, sheet, title, cols, counter, nname, totals, cap, top_note=Non
     ws.conditional_formatting.add(rng, FormulaRule(formula=['AND(ROWS($A$%d:$A%d)>%s+1,ROWS($A$%d:$A%d)<=%s+1+%d)' % (LFIRST, LFIRST, nname, LFIRST, LFIRST, nname, T)],
                                                    font=Font(bold=True), fill=PatternFill('solid', fgColor='EEF3EE', bgColor='EEF3EE')))
     ws.freeze_panes = 'A%d' % LFIRST
-    ws._taks_kc = kc
+    ws._taks_kc = (nc, kc)
     return ws
 
 
@@ -809,6 +828,52 @@ def simple_lines(items, first='"Итого:"'):
     return out
 
 
+def wood_summary(ws, c0):
+    """Сводные таблицы справа от перечня: объёмы выхода древесины и отходов, объёмы по типам древесины, стволы по диаметрам."""
+    L0 = get_column_letter(c0)
+    ws.column_dimensions[L0].width = 30
+    for j in range(1, 6):
+        ws.column_dimensions[get_column_letter(c0 + j)].width = 14
+    side = Side(style='thin', color='9AA79C')
+    box = Border(side, side, side, side)
+
+    def table(r, title, heads, rows, fmt, tip=None):
+        last = get_column_letter(c0 + len(heads) - 1)
+        link = ws.cell(row=r, column=c0, value='=HYPERLINK("#\'Древесина\'!%s%d:%s%d","▶ для AutoCAD")' % (L0, r + 2, last, r + 2 + len(rows)))
+        link.font = Font(name=FONT, size=9, color='1F5FBF', underline='single')
+        t = ws.cell(row=r + 1, column=c0, value=title)
+        t.font = Font(name=FONT, bold=True)
+        if tip:
+            note(t, tip, 300)
+        for j, h in enumerate(heads):
+            style_header(ws.cell(row=r + 2, column=c0 + j, value=h))
+        for i, row in enumerate(rows):
+            for j, v in enumerate(row):
+                c = ws.cell(row=r + 3 + i, column=c0 + j, value=v)
+                c.border = box
+                c.font = Font(name=FONT, size=9, bold=(j == 0))
+                if j:
+                    c.number_format = fmt
+        return r + 4 + len(rows)
+    r = 4
+    r = table(r, 'Таблица объёмов выхода древесины и древесных отходов',
+              ['Единицы измерения', 'Стволы', 'Пни', 'Сучья, ветви, вершины', 'Кустарник (сучья, ветви, вершины)', 'Кустарник (пни)'],
+              [['складочный объём, м³', '=ROUND(VOL_BZ_ALL,2)', '=ROUND(VOL_STM3_ALL,2)', '=ROUND(VOL_BY_ALL,2)', '=ROUND(VOL_SBM3,3)', '=ROUND(VOL_SSM3,3)'],
+               ['масса, тонн', '=ROUND(VOL_BX_ALL,3)', '=ROUND(VOL_STT_ALL,2)', '=ROUND(VOL_BW_ALL,2)', '=ROUND(VOL_SBT,3)', '=ROUND(VOL_SST,3)']],
+              '0.0000', 'Как «Таблица объёмов выхода древесины и древесных отходов» оригинала (лист БАЛАНСЫ), с тем же округлением. '
+              'Кустарник — по нормам «сводка 1 га кустарника» (лист «Справочник»).')
+    vt = lambda i: ['=INDEX(VOL_TBL,%d,%d)' % (i, j) for j in range(1, 5)]
+    r = table(r, 'Объёмы по типам древесины', ['', 'Мягкая', 'Хвойная', 'Твёрдая', 'Итого'],
+              [['Стволы, м³: диаметр ≤ 50 см'] + vt(1), ['Стволы, м³: диаметр > 50 см'] + vt(2), ['Стволы, м³: все диаметры'] + vt(3),
+               ['Пни, м³'] + vt(5), ['Сучья, ветви, вершины, м³'] + vt(7), ['Стволы, тонн'] + vt(4), ['Пни, тонн'] + vt(6),
+               ['Сучья, ветви, вершины, тонн'] + vt(8)], '0.0000',
+              'Объёмы (м³ — складочные) и масса по мягкой, хвойной и твёрдой древесине, как на листе БАЛАНСЫ оригинала.')
+    labels = ['до 12', '12-16', '16-20', '20-24', '24-28', '28-32', 'более 32']
+    table(r, 'Число стволов по диаметрам, шт.', ['Диаметр стволов, см', 'Мягкая', 'Хвойная', 'Твёрдая', 'Итого'],
+          [[lb] + ['=INDEX(STEMS_TBL,%d,%d)' % (i + 1, j) for j in range(1, 5)] for i, lb in enumerate(labels)], '0',
+          'Число удаляемых стволов по диаметрам и типам древесины (как на листе БАЛАНСЫ оригинала).')
+
+
 def build_lists(wb, nrows):
     caps = {}
     err = '=IF(N_ERR>0,"Внимание: строк с ошибками — "&N_ERR&". Они не вошли в итоги (колонка «Ошибка» на листе «Ведомость»).","")'
@@ -874,7 +939,9 @@ def build_lists(wb, nrows):
                    'ROUND(VOL_BX_ALL*0.2,2)', 'ROUND(VOL_BZ_ALL,2)', 'ROUND(VOL_BX_ALL,3)',
                    'ROUND(VOL_SBM3,3)', 'ROUND(VOL_SBT,3)', 'ROUND(VOL_SSM3,3)', 'ROUND(VOL_SST,3)'])
     caps['Древесина'] = nrows + len(wd_tot) + 2
-    ws = build_list(wb, 'Древесина', 'Отходы по удаляемым деревьям и кустарникам: сучья, ветви, вершины; пни; древесина', wd_cols, 'remC', 'N_REM', wd_tot, caps['Древесина'])
+    ws = build_list(wb, 'Древесина', 'Отходы по удаляемым деревьям и кустарникам: сучья, ветви, вершины; пни; древесина', wd_cols, 'remC', 'N_REM', wd_tot,
+                    caps['Древесина'], hidden_at=40)
+    wood_summary(ws, 18)
     ws['A5'] = ('Объёмы — по таблицам «Мягк», «Хвой», «Твер» оригинала (лист «Справочник»), по диаметру каждого ствола и высоте. '
                 'Пни = 20 % от древесины стволов. Корни отдельно не считаются.')
     ws['A5'].font = Font(name=FONT, italic=True, size=9, color='555555')
@@ -907,6 +974,10 @@ def build_totals(wb, L):
     put('N_KEEP', 'сохраняемых', 'INDEX(R_keepC,ROWS(R_keepC))')
     put('N_REM', 'удаляемых', 'INDEX(R_remC,ROWS(R_remC))')
     put('N_TR', 'пересаживаемых', 'INDEX(R_trC,ROWS(R_trC))')
+    put('SP_PEND', 'панель «Порода»: строка с неполным названием (последняя)', 'MAX(R_need)')
+    put('SP_HC', 'панель «Порода»: подходит пород', 'IF(SP_PEND>0,INDEX(R_hc,SP_PEND),0)')
+    put('SP_HP', 'панель «Порода»: первая подходящая', 'IF(SP_PEND>0,INDEX(R_hp,SP_PEND),0)')
+    put('SP_TXT', 'панель «Порода»: введённый текст', 'IF(SP_PEND>0,INDEX(R_sp,SP_PEND)&"","")')
     r += 1
     ws.cell(row=r, column=1, value='Поросль (считается по каждой строке)').font = Font(name=FONT, bold=True)
     r += 1
@@ -1006,6 +1077,7 @@ def build_totals(wb, L):
     r += 1
     buckets = [('до 12', None, 12), ('12-16', 12, 16), ('16-20', 16, 20), ('20-24', 20, 24), ('24-28', 24, 28), ('28-32', 28, 32), ('более 32', 32, None)]
     T['stems0'] = r
+    defname(wb, 'STEMS_TBL', "'Итоги'!$B$%d:$E$%d" % (r, r + 6))
     for bi, (label, lo, hi) in enumerate(buckets):
         ws.cell(row=r, column=1, value=label)
         for j, col in enumerate('BCD'):
@@ -1340,7 +1412,7 @@ def expand_shared(src, dst, sheets):
         si = max([int(v) for v in re.findall(r'si="(\d+)"', x)] + [-1]) + 1
         deps = []
         for col in sorted(master, key=col_num):
-            if maxcol and col_num(col) > maxcol:
+            if maxcol and col_num(col) > maxcol[0] and col_num(col) != maxcol[1]:
                 continue
             cm = CELL_RE.match(master[col])
             attrs, inner = cm.group(3), cm.group(4) or ''

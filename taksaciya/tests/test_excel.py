@@ -153,7 +153,7 @@ def fill_workbook(src, dst, project):
         put('Ведомость', L['cnt'] + str(r), num_or_text(cnt) if cnt != '' else None)
         noin = t.get('noIn') if t.get('noIn') not in (None, '') else start
         put('Ведомость', L['noin'] + str(r), str(noin) if noin not in (None, '') else None)
-        put('Ведомость', L['sp'] + str(r), t['species'])
+        put('Ведомость', L['sp'] + str(r), num_or_text(t['species']))
         put('Ведомость', L['h'] + str(r), t.get('height'))
         put('Ведомость', L['d'] + str(r), num_or_text(t.get('diam')) if t.get('diam') not in (None, '') else None)
         put('Ведомость', L['cond'] + str(r), t.get('cond') or None)
@@ -210,6 +210,15 @@ Sub RecalcSave()
   ThisComponent.storeToURL(ThisComponent.getURL() &amp; ".out.xlsx", a())
   ThisComponent.close(True)
 End Sub
+Sub DelRecalcSave()
+  ThisComponent.Sheets.getByName("Ведомость").Rows.removeByIndex(CLng(Environ("TAKS_DEL_START")), CLng(Environ("TAKS_DEL_COUNT")))
+  ThisComponent.calculateAll()
+  Dim a(0) As New com.sun.star.beans.PropertyValue
+  a(0).Name = "FilterName"
+  a(0).Value = "Calc MS Excel 2007 XML"
+  ThisComponent.storeToURL(ThisComponent.getURL() &amp; ".out.xlsx", a())
+  ThisComponent.close(True)
+End Sub
 </script:module>"""
 
 
@@ -225,14 +234,20 @@ def lo_profile():
     return prof
 
 
-def recalc(path):
+def recalc(path, delete=None):
+    """Пересчитать книгу в LibreOffice; delete=(первая строка листа «Ведомость», сколько строк) — сначала удалить строки."""
     prof = lo_profile()
+    open(os.path.join(prof, 'user', 'basic', 'Standard', 'Module1.xba'), 'w').write(MACRO)
     out = path + '.out.xlsx'
     if os.path.exists(out):
         os.remove(out)
     env = dict(os.environ, SAL_USE_VCLPLUGIN='svp')
+    sub = 'RecalcSave'
+    if delete:
+        env.update(TAKS_DEL_START=str(delete[0] - 1), TAKS_DEL_COUNT=str(delete[1]))
+        sub = 'DelRecalcSave'
     subprocess.run(['soffice', '--headless', '--norestore', '-env:UserInstallation=file://' + prof,
-                    'vnd.sun.star.script:Standard.Module1.RecalcSave?language=Basic&location=application', path],
+                    'vnd.sun.star.script:Standard.Module1.%s?language=Basic&location=application' % sub, path],
                    capture_output=True, timeout=1800, env=env)
     if not os.path.exists(out):
         raise RuntimeError('LibreOffice не пересчитал книгу')
@@ -342,7 +357,7 @@ def compare(vec_name, project, verbose=False):
         e = W.get('%s%d' % (L['err'], rr))
         chk('Ошибка (есть/нет) %d' % rr, bool(r['errors']), e not in (None, ''))
         if r['info']['found']:
-            chk('Порода по справочнику %d' % rr, '№%d %s' % numbers[r['species'].lower()], W.get('%s%d' % (L['sphint'], rr)))
+            chk('Порода по справочнику %d' % rr, '№%d' % numbers[r['species'].lower()][0], W.get('%s%d' % (L['sphint'], rr)))
     for i in range(n):
         r = rows_by_idx.get(i)
         rr = BX.FIRST + i
@@ -433,6 +448,22 @@ def compare(vec_name, project, verbose=False):
                      ('K', vol['stemsM3']['all']), ('L', vol['stemsT']['all']), ('M', vol['shrub']['branchesM3']), ('N', vol['shrub']['branchesT']),
                      ('O', vol['shrub']['stumpsM3']), ('P', vol['shrub']['stumpsT'])):
         chk('ДР итого %s' % col, val, WD.get('%s%d' % (col, tr0)))
+    # сводные таблицы справа на листе «Древесина» (колонки S–W)
+    sh = vol['shrub']
+    for col, m3, t in (('S', E.xround(vol['stemsM3']['all'], 2), E.xround(vol['stemsT']['all'], 3)),
+                       ('T', E.xround(vol['stumpsM3']['all'], 2), E.xround(vol['stumpsT']['all'], 2)),
+                       ('U', E.xround(vol['branchesM3']['all'], 2), E.xround(vol['branchesT']['all'], 2)),
+                       ('V', E.xround(sh['branchesM3'], 3), E.xround(sh['branchesT'], 3)), ('W', E.xround(sh['stumpsM3'], 3), E.xround(sh['stumpsT'], 3))):
+        chk('ДР сводка м3 %s' % col, m3, WD.get('%s7' % col))
+        chk('ДР сводка т %s' % col, t, WD.get('%s8' % col))
+    for i, key in enumerate(['le50', 'gt50', 'stemsM3', 'stumpsM3', 'branchesM3', 'stemsT', 'stumpsT', 'branchesT']):
+        d = vol[key]
+        for j, col in enumerate('STUV'):
+            v = d[j + 1] if j < 3 else d.get('all', d[1] + d[2] + d[3])
+            chk('ДР типы %s %s' % (key, col), v, WD.get('%s%d' % (col, 13 + i)))
+    for i, b in enumerate(vol['stemsByDiameter']):
+        for j, col in enumerate('STUV'):
+            chk('ДР стволы %s %s' % (b['label'], col), b[j + 1] if j < 3 else b['all'], WD.get('%s%d' % (col, 25 + i)))
     # существующие и сохраняемые
     WE, WK = V['Существующие'], V['Сохраняемые']
     kept = [r for r in res['rows'] if r['H'] == 'сохранить']
@@ -519,6 +550,56 @@ def new_rules_project(money=True):
             'lawns': [{'kind': 'Обыкновенный', 'cond': 'уд.', 'area': 30, 'reason': ''}], 'grass': [], 'projected': {}}
 
 
+def deletion_check():
+    total = fails = 0
+    for first, cnt in ((BX.FIRST + 2, 3), (BX.FIRST, 1)):        # три строки в середине; первая строка данных
+        c, d = deletion_case(first, cnt)
+        total += c
+        fails += d
+    return total, fails
+
+
+def deletion_case(first, cnt):
+    """Удалить строки «Ведомости» целиком: ни одной ошибки формул, итоги совпадают с ядром без этих деревьев."""
+    tmp = tempfile.mkdtemp(prefix='taksd_')
+    project = new_rules_project(True)
+    tpl = BX.build(len(project['trees']) + 5, os.path.join(tmp, 'tpl.xlsx'))
+    filled = os.path.join(tmp, 'case.xlsx')
+    fill_workbook(tpl, filled, project)
+    out = recalc(filled, delete=(first, cnt))
+    gone = set(range(first - BX.FIRST, first - BX.FIRST + cnt))
+    all_sheets = {'Ведомость', 'Итоги', 'Удаляемые', 'Баланс', 'Цветники и газоны', 'Пересаживаемые', 'Настройки',
+                  'Существующие', 'Сохраняемые', 'Древесина', 'Справочник'}
+    V, names = read_values(out, all_sheets)
+    reduced = dict(project, trees=[t for i, t in enumerate(project['trees']) if i not in gone])
+    res = E.compute(reduced, REF)
+    diffs, checked = [], 0
+
+    def chk(label, x, y):
+        nonlocal checked
+        checked += 1
+        if not same(x, y):
+            diffs.append((label, x, y))
+    for sh in sorted(all_sheets):
+        chk('ошибки формул на листе %s' % sh, [], sorted(r for r, v in V[sh].items() if isinstance(v, str) and v.startswith('#ERR'))[:5])
+
+    def named(nm):
+        m = re.match(r"'?([^'!]+)'?!\$([A-Z]+)\$(\d+)$", names[nm])
+        return V[m.group(1)].get(m.group(2) + m.group(3))
+    T = res['removal']
+    for nm, val in (('C_TREES', T['count']['trees']), ('AP_TOTAL', T['money']['total']), ('N_REM', sum(1 for r in res['rows'] if r['removed'])),
+                    ('N_EX', len(res['rows'])), ('VOL_BZ_ALL', res['volume']['stemsM3']['all']), ('VOL_SBM3', res['volume']['shrub']['branchesM3'])):
+        chk(nm, val, named(nm))
+    L = BX.letters(BX.cols_spec())
+    for i, r in enumerate(res['rows']):
+        chk('№ строки %d' % i, r['no'], V['Ведомость'].get('%s%d' % (L['no'], BX.FIRST + i)))
+    shutil.rmtree(tmp, ignore_errors=True)
+    print('удаление строк %d–%d: проверено %d значений, расхождений %d' % (first, first + cnt - 1, checked, len(diffs)))
+    for d in diffs[:25]:
+        print('   %-18s ядро=%r  excel=%r' % d)
+    return checked, len(diffs)
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith('-')]
     verbose = '-v' in sys.argv
@@ -532,6 +613,10 @@ def main():
         cases += [('new_rules_money', new_rules_project(True)), ('new_rules_planting', new_rules_project(False))]
     for f, project in cases:
         c, d = compare(f, project, verbose)
+        total += c
+        fails += d
+    if not args or any('del' in a for a in args):
+        c, d = deletion_check()
         total += c
         fails += d
     print('Итого: проверено %d, расхождений %d' % (total, fails))
