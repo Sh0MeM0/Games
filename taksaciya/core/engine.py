@@ -219,7 +219,7 @@ def default_settings(ref):
 
 # ------------------------------------------------------------------ coefficients
 def yes_no(v):
-    t = lc(v).strip() if isinstance(v, str) else ''
+    t = lc(v).strip(' ') if isinstance(v, str) else ''   # как TRIM в Excel: только пробелы
     return True if t == 'да' else False if t == 'нет' else None
 
 
@@ -734,8 +734,8 @@ def compute_trees(project, ref, S):
         # «Инд. К» в ведомости Таксации Лайт нет (его заменяют колонки К1–К4); учитывается только в режиме оригинала
         r['kRepl'] = ('' if src.get('kRepl') is None else src.get('kRepl')) if S.get('compat') else ''
         r['kRow'] = None if S.get('compat') else [src.get('k1'), src.get('k2'), src.get('k3'), src.get('k4')]
-        pay = lc(src.get('pay') or '').strip()
-        # Таксация Лайт: «выплатами»/«посадками» в строке ведомости; пусто — как в настройках
+        pay = lc(src.get('pay') or '').strip(' ')
+        # Таксация Лайт: «выплатами»/«посадками» в строке ведомости; пусто или другое значение — как в настройках
         r['money'] = S['money'] if (S.get('compat') or pay not in ('выплатами', 'посадками')) else pay == 'выплатами'
         shrub_type = r['N'] in SHRUB_TYPES
         title = r['species']

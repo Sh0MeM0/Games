@@ -485,13 +485,13 @@ def cols_spec():
     add('zero', 'без компенсации', 'ISNUMBER(SEARCH("без*компен?ации",{rep}))', 6, h)
     for i, (on, off) in enumerate([(2, 1), (0.5, 1), (0.5, 1), (0.1, 1)], 1):
         same = 'NOT(ISNUMBER(FIND("%d",{rep})))' % i
-        add('K%d' % i, 'К%d' % i, 'IF({zero},0,IF({k%din}="да",%s,IF({k%din}="нет",%s,IF(K%dY,IF(%s,%s,%s),IF(%s,%s,%s)))))' % (i, on, i, off, i, same, on, off, same, off, on), 5, h)
+        add('K%d' % i, 'К%d' % i, 'IF({zero},0,IF(TRIM({k%din})="да",%s,IF(TRIM({k%din})="нет",%s,IF(K%dY,IF(%s,%s,%s),IF(%s,%s,%s)))))' % (i, on, i, off, i, same, on, off, same, off, on), 5, h)
     add('coefOK', 'коэф. есть', 'AND({act}="В",{found})', 5, h)
     add('Es', 'диаметр без пробелов', 'SUBSTITUTE({dtxt}," ","")', 8, h)
     add('J', 'код ТКП', 'IF({rem}<>1,"",IF(NOT({shrubRow}),IF(ISNUMBER(SEARCH("уч-к поросли дер.",{sp})),60,IF(OR({dnum},ISERROR(FIND("до1",{Es}))),IF({N}="хвой.",10,IF({N}="медл.",20,IF(OR({N}="быст.",{N}="плод."),30,IF({N}="малоц.",IF(AND(ISERROR(FIND("до4",{Es})),IF({dnum},{d},IFERROR(VALUE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE({Es},"1,",""),"2,",""),"3,","")),4))>3.99),40,IF(ISNUMBER(FIND("**до4",{Es})),50,1)),1)))),IF(AND(OR({N}="хвой.",{N}="медл.",{N}="быст.",{N}="плод."),ISNUMBER(FIND("**до1",{Es}))),50,1))),IF(ISNUMBER(SEARCH("уч-к поросли куст.",{sp})),18,IF(ISNUMBER(SEARCH("однорядная живая изгородь",{sp})),16,IF(ISNUMBER(SEARCH("двухрядная живая изгородь",{sp})),17,IF({N}="лиан.",11,IF(OR({N}="хвой..",{N}="вечз."),12,IF({N}="крас.",13,IF({N}="медл..",14,IF(OR({N}="быст..",{N}="плод.."),15,1))))))))))', 5, h)
     add('isPlot', 'поросль', 'OR({J}=60,{J}=70,{J}=18,{J}=19)', 5, h)
     add('qb', 'кол-во для расчёта', 'IF({isPlot},MAX({qty},10),{qty})', 5, h)
-    add('mon', 'выплатами (1) / посадками (0)', 'IF({pay}="",IF(MONEYY,1,0),IF({pay}="выплатами",1,0))', 4, h)
+    add('mon', 'выплатами (1) / посадками (0)', 'IF(TRIM({pay})="выплатами",1,IF(TRIM({pay})="посадками",0,IF(MONEYY,1,0)))', 4, h)
     add('pT', 'поросль деревьев (1)', 'IF(OR({J}=60,{J}=70),1,0)', 4, h)
     add('pS', 'поросль кустарников (1)', 'IF(OR({J}=18,{J}=19),1,0)', 4, h)
     add('plot', 'поросль (1)', 'IF({isPlot},1,0)', 4, h)
