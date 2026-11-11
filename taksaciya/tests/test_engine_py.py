@@ -115,6 +115,39 @@ def same(a, b):
     return str(a) == str(b)
 
 
+def mixed_pay_check(ref):
+    """Колонка «Компенсация»: итоги ведомости, где строки поочерёдно «выплатами» и «посадками»,
+    равны итогам двух отдельных ведомостей — только из строк с выплатами и только из строк с посадками."""
+    import copy, math
+    d = os.path.join(HERE, 'vectors'); fail = checked = 0
+    for f in ('c01_money_default.json', 'c02_money_mix.json', 'c03_planting.json', 'c04_planting_k.json', 'c07_money_k_all.json'):
+        base = json.load(open(os.path.join(d, f), encoding='utf-8'))['project']
+        for t in base['trees']: t.pop('pay', None)
+        n = len(base['trees'])
+
+        def run(money, idx, pays=None):
+            p = copy.deepcopy(base); p['settings']['money'] = money
+            p['trees'] = [copy.deepcopy(base['trees'][i]) for i in idx]
+            for t, i in zip(p['trees'], idx):
+                if pays and pays[i]: t['pay'] = pays[i]
+            return E.compute(p, ref)['removal']
+        ev = [i for i in range(n) if i % 2 == 0]; od = [i for i in range(n) if i % 2]
+        for money in (True, False):
+            other = 'посадками' if money else 'выплатами'
+            X = run(money, list(range(n)), [other if i % 2 else '' for i in range(n)])
+            A, B = run(money, ev), run(not money, od)       # чётные — способом из настроек, нечётные — другим
+            M, P = (A, B) if money else (B, A)
+            pairs = [('выплаты: итого', X['money']['total'], M['money']['total'])]
+            pairs += [('посадки: ' + k, X['plant'][k], P['plant'][k]) for k in X['plant']]
+            pairs += [('поросль посадками: ' + k, X['plotsPlant'][k], P['plotsPlant'][k]) for k in X['plotsPlant']]
+            bad = [(k, a, b) for k, a, b in pairs if not math.isclose(a, b, rel_tol=1e-12, abs_tol=1e-9)]
+            checked += len(pairs); fail += len(bad)
+            print(f'смешанная компенсация, {f}, в настройках {"выплатами" if money else "посадками"}: '
+                  f'{len(pairs)} итогов, расхождений: {len(bad)}')
+            for k, a, b in bad[:10]: print(f'   {k}: смешанная={a!r} раздельно={b!r}')
+    return checked, fail
+
+
 def main():
     ref = E.load_reference()
     d = os.path.join(HERE, 'vectors'); fail = checked = orig_err = 0
@@ -137,7 +170,9 @@ def main():
         fail += len(diffs)
     print(f'Итого проверено ячеек: {checked}, расхождений: {fail}' +
           (f'; ячеек, где оригинал выдаёт #ЗНАЧ!/#Н/Д из-за ошибок ввода: {orig_err}' if orig_err else ''))
-    return 1 if fail else 0
+    mc, mf = mixed_pay_check(ref)
+    print(f'Смешанная компенсация: проверено итогов {mc}, расхождений {mf}')
+    return 1 if fail or mf else 0
 
 
 if __name__ == '__main__':

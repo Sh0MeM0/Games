@@ -431,7 +431,11 @@ def cols_spec():
         add('k%din' % i, '%s %s?' % (nm, short), None, 9,
             tip='%s для этой строки — «%s?»: %s.\nПусто — как на листе «Настройки» (с учётом причины). Указанное здесь значение окончательное для строки.\n'
                 'Пример: часть деревьев в водоохранной зоне или вне населённого пункта — отметьте только их.' % (nm, short, rule))
-    add('note', 'Примечание', None, 14, tip='Попадает в наименование в скобках. Запись вида «V=50%» уменьшает массу кустарника.')
+    add('pay', 'Компенсация (выплатами / посадками)', None, 12,
+        tip='Способ компенсации для этой строки: «выплатами» — сумма в базовых величинах, «посадками» — число саженцев взамен.\n'
+            'Пусто — как на листе «Настройки». Итоги считаются отдельно: выплаты — по строкам с выплатами, посадки — по строкам с посадками; '
+            'на листе «Удаляемые» под итогами по способу из настроек появится блок по второму способу.')
+    add('note', 'Примечание', None, 14, tip='Попадает в наименование в скобках. Запись вида «V=50%» уменьшает объёмы кустарника.')
     # расчёт (видимые)
     add('no', '№ в ведомостях', 'IF({sp}="","",IF({rok},{ra}&"-"&{rb},IF({free},{nt},{s0}&IF({cnt}&""="","",IFERROR("-"&({s0}+VALUE({cnt}&"")-1),"")))))', 9,
         tip='Номер по плану, как он попадёт в ведомости: из колонки «№ по плану» или продолжение нумерации (для нескольких штук — диапазон).')
@@ -443,9 +447,9 @@ def cols_spec():
         tip='вырубить / пересадить / сохранить (с причиной, если указана) или текст ошибки ввода.')
     add('kdisp', 'К1; К2; К3; К4', 'IF({coefOK},IF({zero},"0; 0; 0; 0",{K1}&"; "&{K2}&"; "&{K3}&"; "&{K4}),"")', 13,
         tip='Коэффициенты, применённые к строке (после причины, «Инд. К» и колонок К1–К4).')
-    add('G', 'Компенсационные посадки (выплаты)', 'IF({rem}<>1,IF({trn}=1,"ком: "&{ball},""),IF(AND(ISNUMBER({Y}),{Y}=0),"Без компенсации",IF({Y}="ОШИБКА",{err},IF(S_VIEW="итог",IF(MONEYY,"("&{AR}&") баз.в.",{Z}),IF(MONEYY,"("&{AS}&") баз.в. "&IF({isPlot}," х"&{qb}&"м²"&IF({qb}<>{qty}," (факт "&{qty}&"м²)","")&" ",IF({qty}>1," х"&{qty}&IF(OR({J}=16,{J}=17),"п.м. ","шт. "),""))&"х"&{Nc}&"х"&{K1}&"х"&{K2}&"х"&{K3}&"х"&{K4}&" ="&{Y},{mx}&" "&IF({mpos}>0,INDEX(LBL_G,{mpos}),"")&IF(AND({AQ}<>"",N({AQ})>=2),"х"&{AQ}&"ств.","")&"х"&{Nc}&"х"&{K1}&"х"&{K2}&"х"&{K3}&"х"&{K4}&" ="&{Y})))))', 40,
+    add('G', 'Компенсационные посадки (выплаты)', 'IF({rem}<>1,IF({trn}=1,"ком: "&{ball},""),IF(AND(ISNUMBER({Y}),{Y}=0),"Без компенсации",IF({Y}="ОШИБКА",{err},IF(S_VIEW="итог",IF({mon}=1,"("&{AR}&") баз.в.",{Z}),IF({mon}=1,"("&{AS}&") баз.в. "&IF({isPlot}," х"&{qb}&"м²"&IF({qb}<>{qty}," (факт "&{qty}&"м²)","")&" ",IF({qty}>1," х"&{qty}&IF(OR({J}=16,{J}=17),"п.м. ","шт. "),""))&"х"&{Nc}&"х"&{K1}&"х"&{K2}&"х"&{K3}&"х"&{K4}&" ="&{Y},{mx}&" "&IF({mpos}>0,INDEX(LBL_G,{mpos}),"")&IF(AND({AQ}<>"",N({AQ})>=2),"х"&{AQ}&"ств.","")&"х"&{Nc}&"х"&{K1}&"х"&{K2}&"х"&{K3}&"х"&{K4}&" ="&{Y})))))', 40,
         tip='Расчёт строки: (тариф) баз.в. × кол-во (шт., м² или п.м.) × коэф. состояния × К1 × К2 × К3 × К4 = итог. В режиме «посадками» — число саженцев. Для пересадки — размер кома.')
-    add('Y', 'Итог', 'IF({rem}<>1,"",IF({inv},0,IF(OR(NOT({coefOK}),{Nc}=""),"ОШИБКА",IF(MONEYY,IF(ISNUMBER({AR}),ROUND({AR}*IF({isPlot},{qb},IF({qty}>1,{qty},1))*{Nc}*{K1}*{K2}*{K3}*{K4},3),"ОШИБКА"),IFERROR(ROUND({mx}*IF(LEN({AO})<2,1,{AQ})*{Nc}*{K1}*{K2}*{K3}*{K4},3),"ОШИБКА")))))', 9,
+    add('Y', 'Итог', 'IF({rem}<>1,"",IF({inv},0,IF(OR(NOT({coefOK}),{Nc}=""),"ОШИБКА",IF({mon}=1,IF(ISNUMBER({AR}),ROUND({AR}*IF({isPlot},{qb},IF({qty}>1,{qty},1))*{Nc}*{K1}*{K2}*{K3}*{K4},3),"ОШИБКА"),IFERROR(ROUND({mx}*IF(LEN({AO})<2,1,{AQ})*{Nc}*{K1}*{K2}*{K3}*{K4},3),"ОШИБКА")))))', 9,
         tip='Итог строки: базовых величин (выплаты) или штук саженцев (посадки). Поросль считается по каждой строке: площадь (не меньше 10 м²) × норма × коэффициенты.')
     add('err', 'Ошибка', 'IF({sp}="","",IF(LEFT({Htxt},6)="ОШИБКА",{Htxt},IF({qty}="ERR","ОШИБКА: количество не распознано",IF({nmis},"ОШИБКА: кол-во не совпадает с номерами",IF(NOT({found}),IF({hc}>0,"ВЫБЕРИТЕ породу: введите её № из колонки «Порода по справочнику» (подходит "&{hc}&")","ОШИБКА: породы нет в справочнике"),IF(AND({rem}=1,{Nc}=""),"ОШИБКА: неизвестное состояние",IF(AND({rem}=1,{Y}="ОШИБКА"),"ОШИБКА: нет тарифа","")))))))', 22,
         tip='Ошибка ввода в строке. Строка с ошибкой не входит в итоги; число таких строк показано на листе «Удаляемые».')
@@ -487,6 +491,7 @@ def cols_spec():
     add('J', 'код ТКП', 'IF({rem}<>1,"",IF(NOT({shrubRow}),IF(ISNUMBER(SEARCH("уч-к поросли дер.",{sp})),60,IF(OR({dnum},ISERROR(FIND("до1",{Es}))),IF({N}="хвой.",10,IF({N}="медл.",20,IF(OR({N}="быст.",{N}="плод."),30,IF({N}="малоц.",IF(AND(ISERROR(FIND("до4",{Es})),IF({dnum},{d},IFERROR(VALUE(SUBSTITUTE(SUBSTITUTE(SUBSTITUTE({Es},"1,",""),"2,",""),"3,","")),4))>3.99),40,IF(ISNUMBER(FIND("**до4",{Es})),50,1)),1)))),IF(AND(OR({N}="хвой.",{N}="медл.",{N}="быст.",{N}="плод."),ISNUMBER(FIND("**до1",{Es}))),50,1))),IF(ISNUMBER(SEARCH("уч-к поросли куст.",{sp})),18,IF(ISNUMBER(SEARCH("однорядная живая изгородь",{sp})),16,IF(ISNUMBER(SEARCH("двухрядная живая изгородь",{sp})),17,IF({N}="лиан.",11,IF(OR({N}="хвой..",{N}="вечз."),12,IF({N}="крас.",13,IF({N}="медл..",14,IF(OR({N}="быст..",{N}="плод.."),15,1))))))))))', 5, h)
     add('isPlot', 'поросль', 'OR({J}=60,{J}=70,{J}=18,{J}=19)', 5, h)
     add('qb', 'кол-во для расчёта', 'IF({isPlot},MAX({qty},10),{qty})', 5, h)
+    add('mon', 'выплатами (1) / посадками (0)', 'IF({pay}="",IF(MONEYY,1,0),IF({pay}="выплатами",1,0))', 4, h)
     add('pT', 'поросль деревьев (1)', 'IF(OR({J}=60,{J}=70),1,0)', 4, h)
     add('pS', 'поросль кустарников (1)', 'IF(OR({J}=18,{J}=19),1,0)', 4, h)
     add('plot', 'поросль (1)', 'IF({isPlot},1,0)', 4, h)
@@ -670,7 +675,9 @@ def build_main(wb, nrows):
     dv_rs = DataValidation(type='list', formula1='RS_Name', allow_blank=True, showErrorMessage=False)
     dv_yn = DataValidation(type='list', formula1='"да,нет"', allow_blank=True, showErrorMessage=True,
                            errorTitle='К1–К4', error='Выберите «да», «нет» или оставьте пусто (как в настройках).')
-    for dv, cols in ((dv_cond, ['cond']), (dv_act, ['act']), (dv_sp, ['sp']), (dv_rs, ['rsn']), (dv_yn, ['k1in', 'k2in', 'k3in', 'k4in'])):
+    dv_pay = DataValidation(type='list', formula1='"выплатами,посадками"', allow_blank=True, showErrorMessage=True,
+                            errorTitle='Компенсация', error='Выберите «выплатами», «посадками» или оставьте пусто (как в настройках).')
+    for dv, cols in ((dv_cond, ['cond']), (dv_act, ['act']), (dv_sp, ['sp']), (dv_rs, ['rsn']), (dv_yn, ['k1in', 'k2in', 'k3in', 'k4in']), (dv_pay, ['pay'])):
         ws.add_data_validation(dv)
         for c in cols:
             dv.add(rng(c))
@@ -687,13 +694,14 @@ def org_line(extra=''):
     return '=S_ORG&IF(S_NO<>""," · "&S_NO,"")&IF(S_NAME<>""," · "&S_NAME,"")&IF(S_STAGE<>""," · стадия "&S_STAGE,"")' + extra
 
 
-def build_list(wb, sheet, title, cols, counter, nname, totals, cap, top_note=None, hidden_at=None):
+def build_list(wb, sheet, title, cols, counter, nname, totals, cap, top_note=None, hidden_at=None, teff=None):
     """Лист-ведомость. cols: [(заголовок, выражение через {I} — номер строки «Ведомости», ширина, примечание, формат)].
     Строки перечня идут подряд с LFIRST; сразу под последней позицией — пустая строка и строки итогов (totals: список строк
     по len(cols) формул без «=» или None). Итоги считаются в скрытых колонках справа."""
     ws = wb.create_sheet(sheet)
     nc = len(cols)
     T = len(totals)
+    TE = teff or str(T)                # сколько строк итогов показывать (может зависеть от данных)
     ws['A1'] = title
     ws['A1'].font = Font(name=FONT, bold=True, size=13)
     ws['A2'] = org_line()
@@ -702,8 +710,8 @@ def build_list(wb, sheet, title, cols, counter, nname, totals, cap, top_note=Non
     ws['A3'] = '=' + over + ('&' + top_note[1:] if top_note else '')
     ws['A3'].font = Font(name=FONT, color='FFB42318', bold=True)
     last_col = get_column_letter(nc)
-    ws['A4'] = ('=HYPERLINK("#\'{s}\'!A{h}:{c}"&({h}+{n}+1+{t}),"▶ Выделить таблицу для AutoCAD (затем Ctrl+C; в AutoCAD: Правка → Специальная вставка → Объекты AutoCAD)")'
-                .format(s=sheet, h=HDR_ROW, c=last_col, n=nname, t=T))
+    ws['A4'] = ('=HYPERLINK("#\'{s}\'!A{h}:{c}"&({h}+{n}+1+{te}),"▶ Выделить таблицу для AutoCAD (затем Ctrl+C; в AutoCAD: Правка → Специальная вставка → Объекты AutoCAD)")'
+                .format(s=sheet, h=HDR_ROW, c=last_col, n=nname, te=TE))
     ws['A4'].font = Font(name=FONT, color='FF1F5FBF', underline='single')
     note(ws['A4'], 'Щелчок выделяет перечень вместе с итогами. Скопируйте (Ctrl+C), в AutoCAD выполните команду PASTESPEC '
                    '(«Правка → Специальная вставка») и выберите «Объекты AutoCAD» — получится таблица, которую можно править прямо в чертеже.', 300)
@@ -732,7 +740,7 @@ def build_list(wb, sheet, title, cols, counter, nname, totals, cap, top_note=Non
     j = '(%s-%s-1)' % (k, nname)
     for i, (h, expr, w, tip, fmt) in enumerate(cols):
         item = expr.replace('{I}', '$%s%d' % (K, r))
-        c = ws.cell(row=r, column=i + 1, value='=IF($%s%d<>"",%s,IF(AND(%s>=1,%s<=%d),INDEX(%s,%s,%d),""))' % (K, r, item, j, j, T, tb, j, i + 1))
+        c = ws.cell(row=r, column=i + 1, value='=IF($%s%d<>"",%s,IF(AND(%s>=1,%s<=%s),INDEX(%s,%s,%d),""))' % (K, r, item, j, j, TE, tb, j, i + 1))
         if fmt:
             c.number_format = fmt
         c.font = Font(name=FONT, size=9)
@@ -740,7 +748,7 @@ def build_list(wb, sheet, title, cols, counter, nname, totals, cap, top_note=Non
     rng = 'A%d:%s%d' % (LFIRST, last_col, LFIRST + cap - 1)
     side = Side(style='thin', color='FF9AA79C')
     ws.conditional_formatting.add(rng, FormulaRule(formula=['ROWS($A$%d:$A%d)<=%s' % (LFIRST, LFIRST, nname)], border=Border(side, side, side, side)))
-    ws.conditional_formatting.add(rng, FormulaRule(formula=['AND(ROWS($A$%d:$A%d)>%s+1,ROWS($A$%d:$A%d)<=%s+1+%d)' % (LFIRST, LFIRST, nname, LFIRST, LFIRST, nname, T)],
+    ws.conditional_formatting.add(rng, FormulaRule(formula=['AND(ROWS($A$%d:$A%d)>%s+1,ROWS($A$%d:$A%d)<=%s+1+%s)' % (LFIRST, LFIRST, nname, LFIRST, LFIRST, nname, TE)],
                                                    font=Font(bold=True), fill=PatternFill('solid', fgColor='FFEEF3EE', bgColor='FFEEF3EE')))
     ws.freeze_panes = 'A%d' % LFIRST
     ws._taks_kc = (nc, kc)
@@ -756,9 +764,9 @@ C_DT = ('Диаметр ствола, см', IDX('dtxt'), 14, 'Диаметр н
 C_COND = ('Качественное состояние', IDX('exCond'), 21, 'хор., уд., плох., ненадл.', None)
 
 
-def removal_lines():
-    """Итоговый блок ведомости удаляемых (УДд!A2037:H2049 оригинала): 13 строк × 8 колонок."""
-    P = 'NOT(MONEYY)'
+def removal_lines(P='NOT(MONEYY)', left=True):
+    """Итоговый блок ведомости удаляемых (УДд!A2037:H2049 оригинала): 13 строк × 8 колонок. P — условие «блок посадок»;
+    left=False — без левой части (количества): второй блок, когда в строках выбран другой способ компенсации."""
     rows = [['"-------"', '"-- Удаление --"', '"-------"', '"-------"', '"-------"', 'IF(%s,"--- Компенсация ","-------")' % P,
              'IF(%s,"--------------","Компенсация  выплатами -----")' % P, '"--------------"']]
 
@@ -766,52 +774,54 @@ def removal_lines():
         return ['IF((%s)="","",%s)' % (Cc, A), 'IF((%s)="","",%s)' % (Cc, B), Cc, 'IF((%s)="","",%s)' % (Cc, D),
                 'IF((%s)="","",%s)' % (G, E), 'IF((%s)="","",%s)' % (G, F), G, 'IF((%s)="","",%s)' % (G, H)]
     nz = lambda v: 'IF(%s=0,"",%s)' % (v, v)
-    pn = lambda t: 'IF(S_PLOTTREE="%s"," ("&PLOT_T&")","")' % t
-    pns = lambda ts: 'IF(OR(%s)," ("&PLOT_S&")","")' % ','.join('S_PLOTSHRUB="%s"' % t for t in ts)
+    pn = lambda t: 'IF(S_PLOTTREE="%s"," ("&ROUND(PLOTN_T,6)&")","")' % t
+    pns = lambda ts: 'IF(OR(%s)," ("&ROUND(PLOTN_S,6)&")","")' % ','.join('S_PLOTSHRUB="%s"' % t for t in ts)
     U = 'S_UNIT'
     rows.append(blk('"Итого"', '"_________деревьев:"', nz('C_TREES'), '"шт."', '"Итого"', 'IF(%s,"_______деревьев:","за деревья:")' % P,
                     'IF(%s,%s,IF(AP_TREES=0,"",%s))' % (P, nz('AN_TREES'), money_f('AP_TREES')), 'IF(%s,"шт. саженцев",%s)' % (P, U)))
     rows.append(blk('"в т.ч."', '"лиственные декор-е:"', nz('(C_TREES-C_X-C_P)'), '"шт."', 'IF(%s,"в т.ч.","--- в т.ч. за")' % P,
                     'IF(%s,"хвойн./ вечнозел.:","лиственные декор-е:")' % P,
-                    'IF(%s,IF(AN_X=0,"",AP_X&%s),IF(AP_M+AP_B+AP_L=0,"",%s))' % (P, pn('хвой.'), money_f('(AP_M+AP_B+AP_L)')),
+                    'IF(%s,IF(AN_X=0,"",ROUND(AN_X,6)&%s),IF(AP_M+AP_B+AP_L=0,"",%s))' % (P, pn('хвой.'), money_f('(AP_M+AP_B+AP_L)')),
                     'IF(%s,"шт. "&IF(S_PLOTTREE="хвой.","(в т.ч. за поросль)",""),%s)' % (P, U)))
     rows.append(blk('"в т.ч."', '"хвойные и вечнозел.:"', nz('C_X'), '"шт."', 'IF(%s,"в т.ч.","--- в т.ч. за")' % P,
                     'IF(%s,"листв. медл-раст-х:","хвойные и вечнозел.:")' % P,
-                    'IF(%s,IF(AN_M=0,"",AN_M&%s),IF(AP_X=0,"",%s))' % (P, pn('медл.'), money_f('AP_X')),
+                    'IF(%s,IF(AN_M=0,"",ROUND(AN_M,6)&%s),IF(AP_X=0,"",%s))' % (P, pn('медл.'), money_f('AP_X')),
                     'IF(%s,"шт. "&IF(S_PLOTTREE="медл.","(в т.ч. за поросль)",""),%s)' % (P, U)))
     rows.append(blk('"в т.ч."', '"плодовые:"', nz('C_P'), '"шт."', 'IF(%s,"в т.ч.","--- в т.ч. за")' % P,
                     'IF(%s,"листв. быст-раст-х:","плодовые:")' % P,
-                    'IF(%s,IF(AN_B=0,"",AN_B&%s),IF(AP_P=0,"",%s))' % (P, pn('быст.'), money_f('AP_P')),
+                    'IF(%s,IF(AN_B=0,"",ROUND(AN_B,6)&%s),IF(AP_P=0,"",%s))' % (P, pn('быст.'), money_f('AP_P')),
                     'IF(%s,"шт. "&IF(S_PLOTTREE="быст.","(в т.ч. за поросль)",""),%s)' % (P, U)))
     rows.append(blk('"Итого"', '"уч-ки поросли дер-ев:"', nz('C_TPLOT'), '"м²"', 'IF(%s,"Итого","--- Итого за")' % P,
                     'IF(%s,"_____кустарников:","уч-ки поросли дер-ев:")' % P,
                     'IF(%s,%s,IF(C_TPLOT=0,"",%s))' % (P, nz('AN_ALL'), money_f('PLOT_T')), 'IF(%s,"шт. (в т.ч. в жив. изг.)",%s)' % (P, U)))
     rows.append(blk('""', '""', '""', '""', 'IF(%s,"в т.ч.","")' % P, 'IF(%s,"древесных лиан:","")' % P,
-                    'IF(%s,IF(AP_S0+AN_S1=0,"",AN_S1&%s),"")' % (P, pns(['лиан.'])), 'IF(%s,"шт. ","")' % P))
+                    'IF(%s,IF(AP_S0+AN_S1=0,"",ROUND(AN_S1,6)&%s),"")' % (P, pns(['лиан.'])), 'IF(%s,"шт. ","")' % P))
     sh_cnt = '(C_H1+C_H2+C_SPLOT+C_S0+C_S1+C_S2+C_S3+C_S4+C_S5+C_S6)'
     rows.append(blk('"Итого"', '"_______кустарников:"', 'IF(%s=0,"",C_SH35)' % sh_cnt, '"шт."', 'IF(%s,"в т.ч.","--- Итого за")' % P,
                     'IF(%s,"хвойных/вечноз-х:","кустарники:")' % P,
-                    'IF(%s,IF(AN_S2=0,"",AN_S2&%s),IF(AP_SHRUBS=0,"",%s))' % (P, pns(['хвой..', 'вечз.']), money_f('AP_SHRUBS')), 'IF(%s,"шт. ",%s)' % (P, U)))
+                    'IF(%s,IF(AN_S2=0,"",ROUND(AN_S2,6)&%s),IF(AP_SHRUBS=0,"",%s))' % (P, pns(['хвой..', 'вечз.']), money_f('AP_SHRUBS')), 'IF(%s,"шт. ",%s)' % (P, U)))
     rows.append(blk('"Итого"', '"уч-ки поросли куст-ов:"', nz('C_SPLOT'), '"м²"', 'IF(%s,"в т.ч.","--- Итого за")' % P,
                     'IF(%s,"красивоцветущих:","поросль куст.")' % P,
-                    'IF(%s,IF(AN_S3=0,"",AN_S3&%s),IF(PLOT_S=0,"",%s))' % (P, pns(['крас.']), money_f('PLOT_S')), 'IF(%s,"шт. ",%s)' % (P, U)))
+                    'IF(%s,IF(AN_S3=0,"",ROUND(AN_S3,6)&%s),IF(PLOT_S=0,"",%s))' % (P, pns(['крас.']), money_f('PLOT_S')), 'IF(%s,"шт. ",%s)' % (P, U)))
     rows.append(blk('"Итого"', '"1-рядн. жив. изгородь:"', nz('C_H1'), '"п.м."', 'IF(%s,"в т.ч.","--- Итого за")' % P,
                     'IF(%s,"медл-растущих:","1-рядн. ж.изг.")' % P,
-                    'IF(%s,IF(AN_S4=0,"",AN_S4&%s),IF(AP_S7=0,"",%s))' % (P, pns(['медл..']), money_f('AP_S7')), 'IF(%s,"шт. ",%s)' % (P, U)))
+                    'IF(%s,IF(AN_S4=0,"",ROUND(AN_S4,6)&%s),IF(AP_S7=0,"",%s))' % (P, pns(['медл..']), money_f('AP_S7')), 'IF(%s,"шт. ",%s)' % (P, U)))
     rows.append(blk('"Итого"', '"2-рядн. жив. изгородь:"', nz('C_H2'), '"п.м."', 'IF(%s,"в т.ч.","--- Итого за")' % P,
                     'IF(%s,"быстр-х/плод-х:","2-рядн. ж.изг.")' % P,
-                    'IF(%s,IF(AN_S5=0,"",AN_S5&%s),IF(AP_S8=0,"",%s))' % (P, pns(['быст..', 'плод..']), money_f('AP_S8')), 'IF(%s,"шт. ",%s)' % (P, U)))
+                    'IF(%s,IF(AN_S5=0,"",ROUND(AN_S5,6)&%s),IF(AP_S8=0,"",%s))' % (P, pns(['быст..', 'плод..']), money_f('AP_S8')), 'IF(%s,"шт. ",%s)' % (P, U)))
     g48 = 'IF(%s,IF(AN_H1=0,"",ROUNDUP(AN_H1*3,3)&%s),%s)' % (P, pns(['ж.и.1']), money_f('AP_TOTAL'))
     rows.append(['""', '""', '""', '""', 'IF(%s,IF((%s)="","","в т.ч."),"ИТОГО всех")' % (P, g48), 'IF(%s,IF((%s)="","","1-рядн. жив. изг.:"),"выплат:")' % (P, g48),
                  g48, 'IF((%s)="","",IF(%s,"шт. ",%s))' % (g48, P, U)])
     g49 = 'IF(%s,IF(AN_H2=0,"",ROUNDUP(AN_H2*5,3)&%s),"")' % (P, pns(['ж.и.2']))
     rows.append(['""', '""', '""', '""', 'IF((%s)="","","в т.ч.")' % g49, 'IF((%s)="","","2-рядн. жив. изг.:")' % g49, g49, 'IF((%s)="","","шт. ")' % g49])
+    if not left:
+        rows = [['""'] * 4 + rw[4:] for rw in rows]
     return rows
 
 
 def money_f(v):
     """Текст суммы как в УДд!G2038 (с пересчётом по H2035)."""
-    return '{v}*IF(UNIT2035="руб.",BASE,1)&IF(UNIT2035="баз.в. (руб.)"," ("&{v}*BASE&")","")'.format(v=v)
+    return 'ROUND({v}*IF(UNIT2035="руб.",BASE,1),6)&IF(UNIT2035="баз.в. (руб.)"," ("&ROUND({v}*BASE,6)&")","")'.format(v=v)
 
 
 def simple_lines(items, first='"Итого:"'):
@@ -938,10 +948,11 @@ def build_lists(wb, nrows):
                ('Качественное состояние', IDX('Fx'), 21, 'хор., уд., плох., ненадл.; для поросли — «-».', None),
                ('Компенсационные посадки (выплаты)', IDX('G'), 42, 'Расчёт: (тариф) баз.в. × кол-во × коэф. состояния × К1 × К2 × К3 × К4 = итог. В режиме «посадками» — число саженцев.', None),
                ('Примечание', IDX('rsnP'), 16, 'Причина вырубки (если указана).', None)]
-    rm_tot = removal_lines()
+    rm_tot = removal_lines() + removal_lines('MONEYY', left=False)
     caps['Удаляемые'] = nrows + len(rm_tot) + 2
-    ws = build_list(wb, 'Удаляемые', 'Ведомость удаляемых деревьев и кустарников', rm_cols, 'remC', 'N_REM', rm_tot, caps['Удаляемые'], err)
-    ws['A2'] = org_line('&" · "&IF(MONEYY,"компенсационные выплаты, "&S_UNIT,"компенсационные посадки")&" · базовая величина "&BASE&" руб."')
+    ws = build_list(wb, 'Удаляемые', 'Ведомость удаляемых деревьев и кустарников', rm_cols, 'remC', 'N_REM', rm_tot, caps['Удаляемые'], err,
+                    teff='IF(N_OTHER>0,26,13)')
+    ws['A2'] = org_line('&" · "&IF(AND(N_MROWS>0,N_PROWS>0),"компенсационные выплаты, "&S_UNIT&", и посадки",IF(OR(N_MROWS>0,AND(N_PROWS=0,MONEYY)),"компенсационные выплаты, "&S_UNIT,"компенсационные посадки"))&" · базовая величина "&BASE&" руб."')
     # пересаживаемые
     tr_cols = [C_NO, C_TITLE, C_QTY, C_H, C_DT, C_COND, ('Размер кома, м', IDX('ball'), 14, 'Диаметр и высота кома по справочнику и высоте растения.', None),
                ('Примечание', IDX('rsnP'), 16, 'Причина пересадки (если указана).', None)]
@@ -1024,8 +1035,13 @@ def build_totals(wb, L):
     r += 1
     ws.cell(row=r, column=1, value='Поросль (считается по каждой строке)').font = Font(name=FONT, bold=True)
     r += 1
-    put('PLOT_T', 'Поросль деревьев, итого', 'SUMIFS(R_Y,R_pT,1)', 'Сумма строк «Уч-к поросли дер.» (в т.ч. «у дорог»): площадь × норма × коэффициенты.')
-    put('PLOT_S', 'Поросль кустарников, итого', 'SUMIFS(R_Y,R_pS,1)', 'Сумма строк «Уч-к поросли куст.» (в т.ч. «у дорог»).')
+    put('PLOT_T', 'Поросль деревьев, выплаты', 'SUMIFS(R_Y,R_pT,1,R_mon,1)', 'Строки «Уч-к поросли дер.» (в т.ч. «у дорог») с выплатами: площадь × норма × коэффициенты.')
+    put('PLOT_S', 'Поросль кустарников, выплаты', 'SUMIFS(R_Y,R_pS,1,R_mon,1)', 'Строки «Уч-к поросли куст.» (в т.ч. «у дорог») с выплатами.')
+    put('PLOTN_T', 'Поросль деревьев, посадки, шт.', 'SUMIFS(R_Y,R_pT,1,R_mon,0)')
+    put('PLOTN_S', 'Поросль кустарников, посадки, шт.', 'SUMIFS(R_Y,R_pS,1,R_mon,0)')
+    put('N_MROWS', 'удаляемых строк с выплатами', 'SUMIFS(R_rem,R_mon,1)')
+    put('N_PROWS', 'удаляемых строк с посадками', 'SUMIFS(R_rem,R_mon,0)')
+    put('N_OTHER', 'строк со способом не как в настройках', 'IF(MONEYY,N_PROWS,N_MROWS)')
     r += 1
     ws.cell(row=r, column=1, value='Количество удаляемых').font = Font(name=FONT, bold=True)
     r += 1
@@ -1051,12 +1067,12 @@ def build_totals(wb, L):
     ws.cell(row=r, column=1, value='Выплаты, баз.вел. (AP2011…)').font = Font(name=FONT, bold=True)
     r += 1
     for ty, nm in (('хвой.', 'AP_X'), ('медл.', 'AP_M'), ('быст.', 'AP_B')):
-        put(nm, 'деревья ' + ty + ' (+ поросль по типу)', 'SUMIFS(R_Y,R_AO,"%s")+IF(S_PLOTTREE="%s",PLOT_T,0)' % (ty, ty))
-    put('AP_P', 'деревья плод.', 'SUMIFS(R_Y,R_AO,"плод.")')
-    put('AP_L', 'деревья малоц.', 'SUMIFS(R_Y,R_AO,"малоц.")')
+        put(nm, 'деревья ' + ty + ' (+ поросль по типу)', 'SUMIFS(R_Y,R_AO,"%s",R_mon,1)+IF(S_PLOTTREE="%s",PLOT_T,0)' % (ty, ty))
+    put('AP_P', 'деревья плод.', 'SUMIFS(R_Y,R_AO,"плод.",R_mon,1)')
+    put('AP_L', 'деревья малоц.', 'SUMIFS(R_Y,R_AO,"малоц.",R_mon,1)')
     put('AP_TREES', 'за деревья (AP2017)', 'AP_X+AP_M+AP_B+AP_P+AP_L')
     for i, ty in enumerate(shrub_types + ['ж.и.1', 'ж.и.2']):
-        put('AP_S%d' % i, 'кусты ' + ty + ' (+ поросль по типу)', 'SUMIFS(R_Y,R_rem,1,R_N,"%s",R_plot,0)+IF(S_PLOTSHRUB="%s",PLOT_S,0)' % (ty, ty))
+        put('AP_S%d' % i, 'кусты ' + ty + ' (+ поросль по типу)', 'SUMIFS(R_Y,R_rem,1,R_N,"%s",R_plot,0,R_mon,1)+IF(S_PLOTSHRUB="%s",PLOT_S,0)' % (ty, ty))
     put('AP_SHRUBS', 'за кустарники (AP2042)', '+'.join('AP_S%d' % i for i in range(7)))
     put('AP_TOTAL', 'ИТОГО всех выплат', 'AP_TREES+AP_S7+AP_S8+AP_SHRUBS',
         'Деревья (с порослью деревьев по типу) + кустарники (с порослью кустарников по типу) + живая изгородь. '
@@ -1064,20 +1080,22 @@ def build_totals(wb, L):
     r += 1
     ws.cell(row=r, column=1, value='Посадки, шт. (AN2011…)').font = Font(name=FONT, bold=True)
     r += 1
-    put('AN_X', 'деревья хвойные', 'SUMIFS(R_Y,R_Z,"Д.хв*")')
-    put('AN_M', 'деревья медленнорастущие', 'SUMIFS(R_Y,R_Z,"Д.лис.м*")')
-    put('AN_B', 'деревья быстрорастущие', 'SUMIFS(R_Y,R_Z,"Д.лис.б.р*")')
+    put('AN_X', 'деревья хвойные', 'SUMIFS(R_Y,R_Z,"Д.хв*",R_mon,0)')
+    put('AN_M', 'деревья медленнорастущие', 'SUMIFS(R_Y,R_Z,"Д.лис.м*",R_mon,0)')
+    put('AN_B', 'деревья быстрорастущие', 'SUMIFS(R_Y,R_Z,"Д.лис.б.р*",R_mon,0)')
     put('AN_TREES', 'деревьев всего (AN2017)', 'AN_X+AN_M+AN_B')
-    put('AN_S1', 'кусты лианы', 'SUMIFS(R_Y,R_Z,"К.древ.лиан*")')
-    put('AN_S2', 'кусты хвойные/вечнозелёные', 'SUMIFS(R_Y,R_Z,"К.хв*")')
-    put('AN_S3', 'кусты красивоцветущие', 'SUMIFS(R_Y,R_Z,"К.лис.кр*")')
-    put('AN_S4', 'кусты медленнорастущие', 'SUMIFS(R_Y,R_Z,"К.лис.м.р*")')
-    put('AN_S5', 'кусты быстрорастущие/плодовые', 'SUMIFS(R_Y,R_Z,"К.л.б.р./плод*")')
-    put('AN_H1', 'живая изгородь 1-р., п.м.', 'SUMIFS(R_Y,R_Z,"жив.изг.1р*")')
-    put('AN_H2', 'живая изгородь 2-р., п.м.', 'SUMIFS(R_Y,R_Z,"жив.изг.2р*")')
+    put('AN_S1', 'кусты лианы', 'SUMIFS(R_Y,R_Z,"К.древ.лиан*",R_mon,0)')
+    put('AN_S2', 'кусты хвойные/вечнозелёные', 'SUMIFS(R_Y,R_Z,"К.хв*",R_mon,0)')
+    put('AN_S3', 'кусты красивоцветущие', 'SUMIFS(R_Y,R_Z,"К.лис.кр*",R_mon,0)')
+    put('AN_S4', 'кусты медленнорастущие', 'SUMIFS(R_Y,R_Z,"К.лис.м.р*",R_mon,0)')
+    put('AN_S5', 'кусты быстрорастущие/плодовые', 'SUMIFS(R_Y,R_Z,"К.л.б.р./плод*",R_mon,0)')
+    put('AN_H1', 'живая изгородь 1-р., п.м.', 'SUMIFS(R_Y,R_Z,"жив.изг.1р*",R_mon,0)')
+    put('AN_H2', 'живая изгородь 2-р., п.м.', 'SUMIFS(R_Y,R_Z,"жив.изг.2р*",R_mon,0)')
     put('AN_SHRUBS', 'кустов всего (AN2042)', 'AN_S1+AN_S2+AN_S3+AN_S4+AN_S5')
     put('AN_ALL', 'кустарников, шт. (в т.ч. в жив. изг.) (G2042)', 'AN_H1+AN_H2+AN_SHRUBS')
-    put('UNIT2035', 'единица пересчёта итогов (H2035)', 'IF(MONEYY,IF(AN_SHRUBS+AN_TREES=0,"",S_UNIT),"")')
+    put('ZM_TS', 'выплаты: сумма по подписям посадок (для H2035)', '+'.join('SUMIFS(R_Y,R_Z,"%s*",R_mon,1)' % p for p in
+        ('Д.хв', 'Д.лис.м', 'Д.лис.б.р', 'К.древ.лиан', 'К.хв', 'К.лис.кр', 'К.лис.м.р', 'К.л.б.р./плод')))
+    put('UNIT2035', 'единица пересчёта итогов выплат (H2035)', 'IF(ZM_TS=0,"",S_UNIT)')
     r += 1
     ws.cell(row=r, column=1, value='Древесина (УДд!AE72:AM83)').font = Font(name=FONT, bold=True)
     r += 1
@@ -1342,13 +1360,13 @@ def build_balance(wb):
             cf = '+'.join(conif[k] for k in ('kept', 'tr', 'rm'))
         else:
             lf, fr, cf = leafy[w], fruit[w], conif[w]
-        ws.cell(row=r, column=2, value='=IF(S_PLOTS="нет",{a},{a}&" + "&{b})'.format(a=v('trees', w), b=v('tplot', w)))
+        ws.cell(row=r, column=2, value='=IF(S_PLOTS="нет",{a},ROUND({a},6)&" + "&ROUND({b},6))'.format(a=v('trees', w), b=v('tplot', w)))
         ws.cell(row=r, column=3, value='=' + lf)
         ws.cell(row=r, column=4, value='=' + fr)
         ws.cell(row=r, column=5, value='=' + cf)
-        ws.cell(row=r, column=6, value='=IF(S_PLOTS="нет",{a},{a}&" + "&{b})'.format(a=v('shrubs', w), b=v('splot', w)))
-        ws.cell(row=r, column=7, value='=IF(S_HEDGE="нет",{a},{a}&" / "&{a}*3)'.format(a=v('h1', w)))
-        ws.cell(row=r, column=8, value='=IF(S_HEDGE="нет",{a},{a}&" / "&{a}*5)'.format(a=v('h2', w)))
+        ws.cell(row=r, column=6, value='=IF(S_PLOTS="нет",{a},ROUND({a},6)&" + "&ROUND({b},6))'.format(a=v('shrubs', w), b=v('splot', w)))
+        ws.cell(row=r, column=7, value='=IF(S_HEDGE="нет",{a},ROUND({a},6)&" / "&ROUND({a}*3,6))'.format(a=v('h1', w)))
+        ws.cell(row=r, column=8, value='=IF(S_HEDGE="нет",{a},ROUND({a},6)&" / "&ROUND({a}*5,6))'.format(a=v('h2', w)))
     ws['A11'] = 'Объёмы выхода древесины и древесных отходов'
     ws['A11'].font = Font(name=FONT, bold=True)
     vt = ['Единицы измерения', 'Сучья, ветви, вершины', 'Пни', 'Древесина', 'Кустарник (Сучья, ветви, вершины)', 'Кустарник (Пни)']

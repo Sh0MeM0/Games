@@ -734,6 +734,9 @@ def compute_trees(project, ref, S):
         # «Инд. К» в ведомости Таксации Лайт нет (его заменяют колонки К1–К4); учитывается только в режиме оригинала
         r['kRepl'] = ('' if src.get('kRepl') is None else src.get('kRepl')) if S.get('compat') else ''
         r['kRow'] = None if S.get('compat') else [src.get('k1'), src.get('k2'), src.get('k3'), src.get('k4')]
+        pay = lc(src.get('pay') or '').strip()
+        # Таксация Лайт: «выплатами»/«посадками» в строке ведомости; пусто — как в настройках
+        r['money'] = S['money'] if (S.get('compat') or pay not in ('выплатами', 'посадками')) else pay == 'выплатами'
         shrub_type = r['N'] in SHRUB_TYPES
         title = r['species']
         nst = -1 if is_num(diam) else r['diamText'].find(',', 1)
@@ -814,7 +817,7 @@ def removal_row(r, ref, S):
         Y = 0
     elif not k or Nc is None:
         Y, yerr = None, 'нет коэффициентов'
-    elif S['money']:
+    elif r['money']:
         if tr['v'] is None:
             Y, yerr = None, tr.get('err') or 'нет тарифа'
         else:
@@ -835,8 +838,8 @@ def removal_row(r, ref, S):
     elif Y is None:
         G = 'ОШИБКА: ' + (yerr or '')
     elif S['view'] == 'итог':
-        G = '(' + xnum(tr['v']) + ') баз.в.' if S['money'] else Z
-    elif S['money']:
+        G = '(' + xnum(tr['v']) + ') баз.в.' if r['money'] else Z
+    elif r['money']:
         if not compat and is_plot:
             qt = ' х' + xnum(qb) + 'м²' + (' (факт ' + xnum(r['qty']) + 'м²)' if qb != r['qty'] else '') + ' '
         elif not compat and J in (16, 17):
@@ -905,15 +908,25 @@ def removal_totals(rows, S, ref, base):
     def csum(pred):
         return fsum(r['qty'] for r in rem if pred(r))
     compat = S.get('compat')
+
+    def ysum_m(pred):      # выплаты: строки с выплатами (в режиме оригинала — все строки)
+        return ysum(lambda r: pred(r) and (compat or r['money']))
+
+    def ysum_p(pred):      # посадки: строки с посадками
+        return ysum(lambda r: pred(r) and (compat or not r['money']))
     if compat:
         tp = plot_groups(rows, S, ref, False)
         sp = plot_groups(rows, S, ref, True)
     else:   # поросль считается по строкам (Таксация Лайт)
         tp = {'type': S['compMap'].get('plotTree') or '', 'groups': [],
-              'total': ysum(lambda r: r['rm']['J'] in (60, 70))}
+              'total': ysum_m(lambda r: r['rm']['J'] in (60, 70))}
         sp = {'type': S['compMap'].get('plotShrub') or '', 'groups': [],
-              'total': ysum(lambda r: r['rm']['J'] in (18, 19))}
+              'total': ysum_m(lambda r: r['rm']['J'] in (18, 19))}
     t = {'treePlots': tp, 'shrubPlots': sp}
+    t['plotsPlant'] = ({'tree': tp['total'], 'shrub': sp['total']} if compat else
+                       {'tree': ysum_p(lambda r: r['rm']['J'] in (60, 70)), 'shrub': ysum_p(lambda r: r['rm']['J'] in (18, 19))})
+    t['nMoneyRows'] = sum(1 for r in rem if r['money'])
+    t['nPlantRows'] = sum(1 for r in rem if not r['money'])
 
     def af_t(ty):
         return tp['total'] if tp['type'] == ty else 0
@@ -922,13 +935,13 @@ def removal_totals(rows, S, ref, base):
         return sp['total'] if sp['type'] == ty else 0
     AP = {}
     for ty in ('хвой.', 'медл.', 'быст.'):
-        AP[ty] = ysum(lambda r, ty=ty: r['rm']['AO'] == ty) + af_t(ty)
+        AP[ty] = ysum_m(lambda r, ty=ty: r['rm']['AO'] == ty) + af_t(ty)
     for ty in ('плод.', 'малоц.'):
-        AP[ty] = ysum(lambda r, ty=ty: r['rm']['AO'] == ty)
+        AP[ty] = ysum_m(lambda r, ty=ty: r['rm']['AO'] == ty)
     AP['treePlots'] = tp['total']
     AP['trees'] = AP['хвой.'] + AP['медл.'] + AP['быст.'] + AP['плод.'] + AP['малоц.']
     for ty in ('лиан.', 'хвой..', 'вечз.', 'крас.', 'медл..', 'быст..', 'плод..', 'ж.и.1', 'ж.и.2'):
-        AP[ty] = ysum(lambda r, ty=ty: r['N'] == ty and not r['rm']['isPlot']) + af_s(ty)
+        AP[ty] = ysum_m(lambda r, ty=ty: r['N'] == ty and not r['rm']['isPlot']) + af_s(ty)
     AP['shrubs'] = sum(AP[x] for x in ('лиан.', 'хвой..', 'вечз.', 'крас.', 'медл..', 'быст..', 'плод..'))
     AP['shrubPlots'] = sp['total']
     if compat:   # оригинал добавляет поросль второй раз (она уже вошла в деревья/кустарники по типу)
@@ -938,7 +951,10 @@ def removal_totals(rows, S, ref, base):
     t['money'] = AP
 
     def zsum(prefix):
-        return ysum(lambda r: r['rm']['Z'].startswith(prefix))
+        return ysum_p(lambda r: r['rm']['Z'].startswith(prefix))
+    # для единицы итогов выплат (H2035 оригинала): сумма по подписям посадок в строках с выплатами
+    t['zMoney'] = sum(ysum_m(lambda r, p=p: r['rm']['Z'].startswith(p))
+                      for p in ('Д.хв', 'Д.лис.м', 'Д.лис.б.р', 'К.древ.лиан', 'К.хв', 'К.лис.кр', 'К.лис.м.р', 'К.л.б.р./плод'))
     if not compat:   # строки поросли уже вошли в суммы по подписи типа посадок
         af_t = af_s = lambda ty: 0
     AN = {}
@@ -986,18 +1002,26 @@ def removal_totals(rows, S, ref, base):
 
 def money_text(v, S, base, unit=None):
     u = S['unit'] if unit is None else unit
+    xn = xnum if S.get('compat') else (lambda x: xnum(xround(x, 6)))   # Таксация Лайт: без хвостов вида 22,0000000000001
     if u == 'руб.':
-        return xnum(v * base)
+        return xn(v * base)
     if u == 'баз.в. (руб.)':
-        return xnum(v) + ' (' + xnum(v * base) + ')'
-    return xnum(v)
+        return xn(v) + ' (' + xn(v * base) + ')'
+    return xn(v)
 
 
-def removal_report(res):
+def removal_report(res, plant=None, left=True):
+    """Итоговый блок ведомости удаляемых (УДд!A2037:H2049). plant — блок посадок (по умолчанию — способ из настроек);
+    left=False — без левой части (количества), для второго блока при разных способах компенсации в строках."""
     S, T = res['settings'], res['removal']
     AP, AN, C, base = T['money'], T['plant'], T['count'], res['baseValue']
-    plant = not S['money']
-    H2035 = '' if plant else ('' if AN['shrubs'] + AN['trees'] == 0 else S['unit'])
+    compat = S.get('compat')
+    xn = xnum if compat else (lambda x: xnum(xround(x, 6)))
+    plant = (not S['money']) if plant is None else plant
+    if compat:
+        H2035 = '' if plant else ('' if AN['shrubs'] + AN['trees'] == 0 else S['unit'])
+    else:
+        H2035 = '' if plant else ('' if T['zMoney'] == 0 else S['unit'])
     unit_lbl = S['unit']
 
     def m(v):
@@ -1005,7 +1029,7 @@ def removal_report(res):
 
     def nz(v):
         return '' if v == 0 else v
-    AF28, AF48 = T['treePlots']['total'], T['shrubPlots']['total']
+    AF28, AF48 = T['plotsPlant']['tree'], T['plotsPlant']['shrub']
     AG27, AG48 = T['treePlots']['type'], T['shrubPlots']['type']
     rows = []
 
@@ -1021,58 +1045,60 @@ def removal_report(res):
                  '--------------' if plant else 'Компенсация  выплатами -----', '--------------'])
 
     def pnote(t):
-        return ' (' + xnum(AF28) + ')' if AG27 == t else ''
+        return ' (' + xn(AF28) + ')' if AG27 == t else ''
 
     def pnote_s(ts):
-        return ' (' + xnum(AF48) + ')' if AG48 in ts else ''
+        return ' (' + xn(AF48) + ')' if AG48 in ts else ''
     row('Итого', '_________деревьев:', nz(C['trees']), 'шт.', 'Итого', '_______деревьев:' if plant else 'за деревья:',
         nz(AN['trees']) if plant else ('' if AP['trees'] == 0 else m(AP['trees'])),
         'шт. саженцев' if plant else unit_lbl)
     lv = AP['медл.'] + AP['быст.'] + AP['малоц.']
     row('в т.ч.', 'лиственные декор-е:', nz(C['trees'] - C['хвой.'] - C['плод.']), 'шт.',
         'в т.ч.' if plant else '--- в т.ч. за', 'хвойн./ вечнозел.:' if plant else 'лиственные декор-е:',
-        ('' if AN['хвой.'] == 0 else xnum(AP['хвой.']) + pnote('хвой.')) if plant else ('' if lv == 0 else m(lv)),
+        ('' if AN['хвой.'] == 0 else xn(AP['хвой.'] if compat else AN['хвой.']) + pnote('хвой.')) if plant else ('' if lv == 0 else m(lv)),
         ('шт. ' + ('(в т.ч. за поросль)' if AG27 == 'хвой.' else '')) if plant else unit_lbl)
     row('в т.ч.', 'хвойные и вечнозел.:', nz(C['хвой.']), 'шт.', 'в т.ч.' if plant else '--- в т.ч. за',
         'листв. медл-раст-х:' if plant else 'хвойные и вечнозел.:',
-        ('' if AN['медл.'] == 0 else xnum(AN['медл.']) + pnote('медл.')) if plant else ('' if AP['хвой.'] == 0 else m(AP['хвой.'])),
+        ('' if AN['медл.'] == 0 else xn(AN['медл.']) + pnote('медл.')) if plant else ('' if AP['хвой.'] == 0 else m(AP['хвой.'])),
         ('шт. ' + ('(в т.ч. за поросль)' if AG27 == 'медл.' else '')) if plant else unit_lbl)
     row('в т.ч.', 'плодовые:', nz(C['плод.']), 'шт.', 'в т.ч.' if plant else '--- в т.ч. за',
         'листв. быст-раст-х:' if plant else 'плодовые:',
-        ('' if AN['быст.'] == 0 else xnum(AN['быст.']) + pnote('быст.')) if plant else ('' if AP['плод.'] == 0 else m(AP['плод.'])),
+        ('' if AN['быст.'] == 0 else xn(AN['быст.']) + pnote('быст.')) if plant else ('' if AP['плод.'] == 0 else m(AP['плод.'])),
         ('шт. ' + ('(в т.ч. за поросль)' if AG27 == 'быст.' else '')) if plant else unit_lbl)
     c42 = nz(C['treePlots'])
     row('Итого', 'уч-ки поросли дер-ев:', c42, 'м²', 'Итого' if plant else '--- Итого за',
         '_____кустарников:' if plant else 'уч-ки поросли дер-ев:',
-        ('' if AN['shrubsAll'] == 0 else xnum(AN['shrubsAll'])) if plant else ('' if c42 == '' else m(AP['treePlots'])),
+        ('' if AN['shrubsAll'] == 0 else xn(AN['shrubsAll'])) if plant else ('' if c42 == '' else m(AP['treePlots'])),
         'шт. (в т.ч. в жив. изг.)' if plant else unit_lbl)
     row('', '', '', '', 'в т.ч.' if plant else '', 'древесных лиан:' if plant else '',
-        ('' if AP['лиан.'] + AN['лиан.'] == 0 else xnum(AN['лиан.']) + pnote_s(['лиан.'])) if plant else '',
+        ('' if AP['лиан.'] + AN['лиан.'] == 0 else xn(AN['лиан.']) + pnote_s(['лиан.'])) if plant else '',
         'шт. ' if plant else '')
     shrubs_cnt = C['hedge1'] + C['hedge2'] + C['shrubPlots'] + sum(C['shrubTypes'].values())
     row('Итого', '_______кустарников:', '' if shrubs_cnt == 0 else C['shrubsC2035'], 'шт.',
         'в т.ч.' if plant else '--- Итого за', 'хвойных/вечноз-х:' if plant else 'кустарники:',
-        ('' if AN['хвой/вечз'] == 0 else xnum(AN['хвой/вечз']) + pnote_s(['хвой..', 'вечз.'])) if plant else ('' if AP['shrubs'] == 0 else m(AP['shrubs'])),
+        ('' if AN['хвой/вечз'] == 0 else xn(AN['хвой/вечз']) + pnote_s(['хвой..', 'вечз.'])) if plant else ('' if AP['shrubs'] == 0 else m(AP['shrubs'])),
         'шт. ' if plant else unit_lbl)
     row('Итого', 'уч-ки поросли куст-ов:', nz(C['shrubPlots']), 'м²', 'в т.ч.' if plant else '--- Итого за',
         'красивоцветущих:' if plant else 'поросль куст.',
-        ('' if AN['крас.'] == 0 else xnum(AN['крас.']) + pnote_s(['крас.'])) if plant else ('' if AP['shrubPlots'] == 0 else m(AP['shrubPlots'])),
+        ('' if AN['крас.'] == 0 else xn(AN['крас.']) + pnote_s(['крас.'])) if plant else ('' if AP['shrubPlots'] == 0 else m(AP['shrubPlots'])),
         'шт. ' if plant else unit_lbl)
     row('Итого', '1-рядн. жив. изгородь:', nz(C['hedge1']), 'п.м.', 'в т.ч.' if plant else '--- Итого за',
         'медл-растущих:' if plant else '1-рядн. ж.изг.',
-        ('' if AN['медл..'] == 0 else xnum(AN['медл..']) + pnote_s(['медл..'])) if plant else ('' if AP['ж.и.1'] == 0 else m(AP['ж.и.1'])),
+        ('' if AN['медл..'] == 0 else xn(AN['медл..']) + pnote_s(['медл..'])) if plant else ('' if AP['ж.и.1'] == 0 else m(AP['ж.и.1'])),
         'шт. ' if plant else unit_lbl)
     row('Итого', '2-рядн. жив. изгородь:', nz(C['hedge2']), 'п.м.', 'в т.ч.' if plant else '--- Итого за',
         'быстр-х/плод-х:' if plant else '2-рядн. ж.изг.',
-        ('' if AN['быст/плод'] == 0 else xnum(AN['быст/плод']) + pnote_s(['быст..', 'плод..'])) if plant else ('' if AP['ж.и.2'] == 0 else m(AP['ж.и.2'])),
+        ('' if AN['быст/плод'] == 0 else xn(AN['быст/плод']) + pnote_s(['быст..', 'плод..'])) if plant else ('' if AP['ж.и.2'] == 0 else m(AP['ж.и.2'])),
         'шт. ' if plant else unit_lbl)
-    g48 = ('' if AN['hedge1'] == 0 else xnum(AN['hedge1Pcs']) + pnote_s(['ж.и.1'])) if plant else m(AP['total'])
+    g48 = ('' if AN['hedge1'] == 0 else xn(AN['hedge1Pcs']) + pnote_s(['ж.и.1'])) if plant else m(AP['total'])
     rows.append(['', '', '', '', ('' if g48 == '' else 'в т.ч.') if plant else 'ИТОГО всех',
                  ('' if g48 == '' else '1-рядн. жив. изг.:') if plant else 'выплат:', g48,
                  '' if g48 == '' else ('шт. ' if plant else unit_lbl)])
-    g49 = ('' if AN['hedge2'] == 0 else xnum(AN['hedge2Pcs']) + pnote_s(['ж.и.2'])) if plant else ''
+    g49 = ('' if AN['hedge2'] == 0 else xn(AN['hedge2Pcs']) + pnote_s(['ж.и.2'])) if plant else ''
     rows.append(['', '', '', '', '' if g49 == '' else 'в т.ч.', '' if g49 == '' else '2-рядн. жив. изг.:', g49,
                  '' if g49 == '' else 'шт. '])
+    if not left:
+        rows = [['', '', '', ''] + rw[4:] for rw in rows]
     return rows
 
 
@@ -1228,18 +1254,19 @@ def balance(rows, ex, rmT, trT, S):
 def balance_report(res):
     b = res['balance']
     P, Hp = b['showPlots'], b['hedgePieces']
+    xn = xnum if res['settings'].get('compat') else (lambda x: xnum(xround(x, 6)))
 
     def tr(o):
-        return xnum(o['trees']) + ' + ' + xnum(o['treePlots']) if P else xnum(o['trees'])
+        return xn(o['trees']) + ' + ' + xn(o['treePlots']) if P else xn(o['trees'])
 
     def sh(o):
-        return xnum(o['shrubs']) + ' + ' + xnum(o['shrubPlots']) if P else xnum(o['shrubs'])
+        return xn(o['shrubs']) + ' + ' + xn(o['shrubPlots']) if P else xn(o['shrubs'])
 
     def h1(o):
-        return xnum(o['hedge1']) + ' / ' + xnum(o['hedge1'] * 3) if Hp else xnum(o['hedge1'])
+        return xn(o['hedge1']) + ' / ' + xn(o['hedge1'] * 3) if Hp else xn(o['hedge1'])
 
     def h2(o):
-        return xnum(o['hedge2']) + ' / ' + xnum(o['hedge2'] * 5) if Hp else xnum(o['hedge2'])
+        return xn(o['hedge2']) + ' / ' + xn(o['hedge2'] * 5) if Hp else xn(o['hedge2'])
     out = []
     for name, key in (('Сохраняемые', 'kept'), ('Пересаживаемые', 'transplanted'), ('Удаляемые', 'removed'), ('Итого', 'total')):
         o = b[key]
@@ -1431,5 +1458,7 @@ def compute(project, ref, compat=False):
            'volume': vol, 'transplant': trT, 'balance': bal, 'flowers': areas['flowers'], 'lawns': areas['lawns'],
            'grass': areas['grass'], 'errors': errors}
     res['removalReport'] = removal_report(res)
+    if not compat and (rmT['nPlantRows'] if S['money'] else rmT['nMoneyRows']) > 0:
+        res['removalReport'] += removal_report(res, plant=S['money'], left=False)
     res['balanceReport'] = balance_report(res)
     return res

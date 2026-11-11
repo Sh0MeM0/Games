@@ -164,6 +164,7 @@ def fill_workbook(src, dst, project):
         put('Ведомость', L['note'] + str(r), t.get('note') or None)
         for k in range(1, 5):
             put('Ведомость', L['k%din' % k] + str(r), t.get('k%d' % k) or None)
+        put('Ведомость', L['pay'] + str(r), t.get('pay') or None)
     # цветники
     area_rows = {}
     for key, title, n, tk in BX.AREA_BLOCKS:
@@ -540,11 +541,12 @@ def new_rules_project(money=True):
     T = [
         {'a': '', 'noIn': '4-10', 'species': 'Береза бородавчатая', 'height': 21, 'diam': 22, 'cond': 'уд.', 'action': 'В', 'reason': ''},
         {'a': '', 'species': 'Береза бородавчатая', 'height': 21, 'diam': 22, 'cond': 'уд.', 'action': 'В', 'reason': 'СЕТИ', 'k4': 'да'},
-        {'a': 3, 'species': 'Ель колючая', 'height': 15, 'diam': '30,24,14', 'cond': 'хор.', 'action': 'В', 'k1': 'да', 'k2': 'нет'},
+        {'a': 3, 'species': 'Ель колючая', 'height': 15, 'diam': '30,24,14', 'cond': 'хор.', 'action': 'В', 'k1': 'да', 'k2': 'нет', 'pay': 'посадками'},
         {'a': 20, 'species': 'Уч-к поросли дер.', 'height': 1, 'diam': '0-4', 'action': 'В', 'reason': 'СЕТИ'},
         {'a': 5, 'species': 'Уч-к поросли дер.', 'height': 1, 'diam': '0-4', 'action': 'В'},
         {'a': 12, 'species': '*Уч-к поросли дер. у дорог', 'height': 1, 'diam': '0-4', 'action': 'В', 'k3': 'да'},
-        {'a': 15, 'species': 'Уч-к поросли куст.', 'height': 1, 'diam': '-', 'action': 'В'},
+        {'a': 15, 'species': 'Уч-к поросли куст.', 'height': 1, 'diam': '-', 'action': 'В', 'pay': 'посадками'},
+        {'a': 6, 'species': 'Уч-к поросли дер.', 'height': 1, 'diam': '0-4', 'action': 'В', 'pay': 'выплатами'},
         {'a': 8, 'species': 'Однорядная живая изгородь', 'height': 1.2, 'diam': '-', 'action': 'В'},
         {'a': 1, 'species': 'Сирень обыкновенная', 'height': 2.5, 'diam': '-', 'action': 'В', 'note': 'V=50%'},
         {'a': '', 'species': 'Дуб черешчатый', 'height': 18, 'diam': 56, 'cond': 'хор.', 'action': 'В', 'k1': 'нет'},
@@ -688,6 +690,8 @@ def random_project(seed, money):
                 t['k%d' % k] = rnd.choice(['да', 'нет'])
         if kind == 'shrub' and rnd.random() < 0.2:
             t['note'] = 'V=50%'
+        if rnd.random() < 0.18:
+            t['pay'] = rnd.choice(['выплатами', 'посадками'])
         T.append(t)
     S = {'date': rnd.choice(['2025-06-01', '2026-03-01']), 'k1': rnd.random() < 0.3, 'k2': rnd.random() < 0.6, 'k3': rnd.random() < 0.3,
          'k4': rnd.random() < 0.3, 'money': money, 'unit': rnd.choice(['баз.в.', 'баз.в. (руб.)', 'руб.']),
