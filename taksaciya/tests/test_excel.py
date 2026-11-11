@@ -27,6 +27,8 @@ from core import engine as E  # noqa: E402
 import build_excel as BX  # noqa: E402
 
 REF = E.load_reference()
+ALL_SHEETS = ['Настройки', 'Ведомость', 'Существующие', 'Сохраняемые', 'Удаляемые', 'Пересаживаемые', BX.SH_VOL, BX.SH_G, BX.SH_GL,
+              'Итоги', 'Справочник']
 LOCALE = os.environ.get('TAKS_LOCALE', 'ru-RU')     # en-US — проверка с точкой как десятичным разделителем
 XCU = """<?xml version="1.0" encoding="UTF-8"?>
 <oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
@@ -127,7 +129,7 @@ def fill_workbook(src, dst, project):
     d = datetime.date.fromisoformat(S['date'])
     vals = {'S_DATE': (d - datetime.date(1899, 12, 30)).days, 'S_K1': yn(S['k1']), 'S_K2': yn(S['k2']), 'S_K3': yn(S['k3']), 'S_K4': yn(S['k4']),
             'S_MONEY': 'выплатами' if S['money'] else 'посадками', 'S_UNIT': S['unit'], 'S_VIEW': S['view'], 'S_COND': S['defaultCond'],
-            'S_BUSHM2': S.get('bushArea', 1), 'S_PLOTDENS': S.get('plotDensity', 'редкий'), 'S_FMODE': S['flowerMode'], 'S_PLOTS': yn(S['showPlots']), 'S_HEDGE': yn(S['hedgePieces']),
+            'S_BUSHM2': S.get('bushArea', 1), 'S_PLOTDENS': S.get('plotDensity', 'редкий'),
             'S_PLOTTREE': S['compMap']['plotTree'], 'S_PLOTSHRUB': S['compMap']['plotShrub']}
     for k, v in vals.items():
         sh, ref = cell_of(k)
@@ -165,40 +167,28 @@ def fill_workbook(src, dst, project):
         for k in range(1, 5):
             put('Ведомость', L['k%din' % k] + str(r), t.get('k%d' % k) or None)
         put('Ведомость', L['pay'] + str(r), t.get('pay') or None)
-    # цветники
-    area_rows = {}
-    for key, title, n, tk in BX.AREA_BLOCKS:
-        nm = '%s_AREA' % tk
-        sh, ref = cell_of(nm)
-        tot_row = int(re.sub(r'\D', '', ref))
-        area_rows[key] = tot_row - n
-    srcs = {'fl': project.get('flowers', []), 'lw': project.get('lawns', []), 'gr': project.get('grass', [])}
-    for key, title, n, tk in BX.AREA_BLOCKS:
-        r0 = area_rows[key]
-        for i in range(n):
-            x = srcs[key][i] if i < len(srcs[key]) else None
-            r = r0 + i
-            if key != 'gr':
-                put('Цветники и газоны', 'B%d' % r, x.get('kind') if x else None)
-            put('Цветники и газоны', 'C%d' % r, (x.get('cond') or None) if x else None)
-            put('Цветники и газоны', 'D%d' % r, x.get('area') if x else None)
-            put('Цветники и газоны', 'E%d' % r, ('п' if x.get('transplant') else None) if x else None)
-            put('Цветники и газоны', 'F%d' % r, (x.get('reason') or None) if x else None)
-            put('Цветники и газоны', 'G%d' % r, (x.get('note') or None) if x else None)
-            kr = x.get('kRepl') if x else None
-            put('Цветники и газоны', 'H%d' % r, num_or_text(kr) if kr not in (None, '') else None)
-    pr = project.get('projected', {})
-    for nm, v in [('PR_PER', pr.get('perennial')), ('PR_ANN', pr.get('annual'))] + \
-                 [('PR_L%d' % i, (pr.get('lawns') or {}).get(k)) for i, k in enumerate(REF['lawns'])]:
-        sh, ref = cell_of(nm)
-        put(sh, ref, v)
+    # цветники, газоны, иной травяной покров — одна ведомость (старые блоки векторов переводятся так же, как в ядре)
+    GL = BX.letters(BX.greens_spec())
+    for i, g in enumerate(E.greens_input(project, REF)):
+        r = BX.G_FIRST + i
+        val = lambda k: (g.get(k) if g.get(k) not in (None, '') else None)
+        put(BX.SH_G, GL['gnoin'] + str(r), str(g['noIn']) if val('noIn') is not None else None)
+        put(BX.SH_G, GL['gkind'] + str(r), val('kind'))
+        put(BX.SH_G, GL['garea'] + str(r), val('area'))
+        put(BX.SH_G, GL['gcond'] + str(r), val('cond'))
+        put(BX.SH_G, GL['gact'] + str(r), val('action'))
+        put(BX.SH_G, GL['grsn'] + str(r), val('reason'))
+        for k in range(1, 5):
+            put(BX.SH_G, GL['gk%din' % k] + str(r), val('k%d' % k))
+        put(BX.SH_G, GL['gpay'] + str(r), val('pay'))
+        put(BX.SH_G, GL['gnote'] + str(r), val('note'))
     for sh, cells in edits.items():
         path = sheets[sh]
         files[path] = set_cells(files[path].decode('utf-8'), cells).encode('utf-8')
     with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED) as z:
         for n, b in files.items():
             z.writestr(n, b)
-    return sheets, names, area_rows
+    return sheets, names
 
 
 # ------------------------------------------------------------------ LibreOffice
@@ -214,7 +204,7 @@ Sub RecalcSave()
   ThisComponent.close(True)
 End Sub
 Sub DelRecalcSave()
-  ThisComponent.Sheets.getByName("Ведомость").Rows.removeByIndex(CLng(Environ("TAKS_DEL_START")), CLng(Environ("TAKS_DEL_COUNT")))
+  ThisComponent.Sheets.getByName(Environ("TAKS_DEL_SHEET")).Rows.removeByIndex(CLng(Environ("TAKS_DEL_START")), CLng(Environ("TAKS_DEL_COUNT")))
   ThisComponent.calculateAll()
   Dim a(0) As New com.sun.star.beans.PropertyValue
   a(0).Name = "FilterName"
@@ -237,8 +227,8 @@ def lo_profile():
     return prof
 
 
-def recalc(path, delete=None):
-    """Пересчитать книгу в LibreOffice; delete=(первая строка листа «Ведомость», сколько строк) — сначала удалить строки."""
+def recalc(path, delete=None, sheet='Ведомость'):
+    """Пересчитать книгу в LibreOffice; delete=(первая строка листа sheet, сколько строк) — сначала удалить строки."""
     prof = lo_profile()
     open(os.path.join(prof, 'user', 'basic', 'Standard', 'Module1.xba'), 'w').write(MACRO)
     out = path + '.out.xlsx'
@@ -247,7 +237,7 @@ def recalc(path, delete=None):
     env = dict(os.environ, SAL_USE_VCLPLUGIN='svp')
     sub = 'RecalcSave'
     if delete:
-        env.update(TAKS_DEL_START=str(delete[0] - 1), TAKS_DEL_COUNT=str(delete[1]))
+        env.update(TAKS_DEL_START=str(delete[0] - 1), TAKS_DEL_COUNT=str(delete[1]), TAKS_DEL_SHEET=sheet)
         sub = 'DelRecalcSave'
     subprocess.run(['soffice', '--headless', '--norestore', '-env:UserInstallation=file://' + prof,
                     'vnd.sun.star.script:Standard.Module1.%s?language=Basic&location=application' % sub, path],
@@ -344,8 +334,7 @@ def compare(vec_name, project, verbose=False):
     filled = os.path.join(tmp, 'case.xlsx')
     fill_workbook(tpl, filled, project)
     out = recalc(filled)
-    all_sheets = {'Ведомость', 'Итоги', 'Удаляемые', 'Баланс', 'Цветники и газоны', 'Пересаживаемые', 'Настройки',
-                  'Существующие', 'Сохраняемые', 'Древесина', 'Справочник'}
+    all_sheets = set(ALL_SHEETS)
     V, names = read_values(out, all_sheets)
     res = E.compute(project, REF)
     L = BX.letters(BX.cols_spec())
@@ -445,7 +434,7 @@ def compare(vec_name, project, verbose=False):
             chk('rep %s%d' % (col, rr), rowv[j], WR.get('%s%d' % (col, rr)))
     chk('УД после итогов', '', WR.get('B%d' % (F0 + len(rem) + 1 + len(res['removalReport']))))
     # древесина по позициям
-    WD = V['Древесина']
+    WD = V[BX.SH_VOL]
     for i, r in enumerate(rem):
         rr = F0 + i
         w = r['rm']['wood']
@@ -462,7 +451,7 @@ def compare(vec_name, project, verbose=False):
                      ('K', vol['stemsM3']['all']), ('L', vol['stemsT']['all']), ('M', vol['shrub']['branchesM3']), ('N', vol['shrub']['branchesT']),
                      ('O', vol['shrub']['stumpsM3']), ('P', vol['shrub']['stumpsT'])):
         chk('ДР итого %s' % col, val, WD.get('%s%d' % (col, tr0)))
-    # сводные таблицы справа на листе «Древесина» (колонки S–W)
+    # сводные таблицы справа на листе «Объемы» (колонки S–W)
     sh = vol['shrub']
     for col, m3, t in (('S', E.xround(vol['stemsM3']['all'], 2), E.xround(vol['stemsT']['all'], 3)),
                        ('T', E.xround(vol['stumpsM3']['all'], 2), E.xround(vol['stumpsT']['all'], 2)),
@@ -478,7 +467,7 @@ def compare(vec_name, project, verbose=False):
     for i, b in enumerate(vol['stemsByDiameter']):
         for j, col in enumerate('STUV'):
             chk('ДР стволы %s %s' % (b['label'], col), b[j + 1] if j < 3 else b['all'], WD.get('%s%d' % (col, 25 + i)))
-    # «Баланс существующих деревьев и кустарников» для AutoCAD (лист «Древесина», колонки S–AA, строки 38–41)
+    # «Баланс существующих деревьев и кустарников» для AutoCAD (лист «Объемы», колонки S–AA, строки 38–41)
     b = res['balance']
     for i, key in enumerate(['kept', 'transplanted', 'removed', 'total']):
         for j, f in enumerate(['trees', 'leafy', 'fruit', 'conif', 'shrubs', 'hedge1', 'hedge2', 'treePlots', 'shrubPlots']):
@@ -502,32 +491,40 @@ def compare(vec_name, project, verbose=False):
     trt = res['transplant']
     for j, val in enumerate([trt['trees'], trt['byType']['хвой.'], trt['byType']['плод.'], trt['shrubs'], trt['hedge1'], trt['hedge2']]):
         chk('ПЕР итог %d' % j, val, WT.get('C%d' % (F0 + len(trs) + 1 + j)))
-    # баланс
-    WB = V['Баланс']
-    for i, rowv in enumerate(res['balanceReport']):
-        for j, col in enumerate('BCDEFGH'):
-            chk('bal %s%d' % (col, 5 + i), rowv[j + 1], WB.get('%s%d' % (col, 5 + i)))
-    for j, col in zip((2, 1, 0), 'BCD'):     # сучья/ветви/вершины, пни, древесина
-        chk('vtab m3 %s' % col, vol['table']['m3'][j], WB.get('%s13' % col))
-        chk('vtab t %s' % col, vol['table']['t'][j], WB.get('%s14' % col))
-    for col, m3, t in (('E', vol['shrub']['branchesM3'], vol['shrub']['branchesT']), ('F', vol['shrub']['stumpsM3'], vol['shrub']['stumpsT'])):
-        chk('vtab m3 %s' % col, E.xround(m3, 3), WB.get('%s13' % col))
-        chk('vtab t %s' % col, E.xround(t, 3), WB.get('%s14' % col))
-    # цветники
-    WA = V['Цветники и газоны']
-    for key, title, nn, tk in BX.AREA_BLOCKS:
-        sec = res[{'fl': 'flowers', 'lw': 'lawns', 'gr': 'grass'}[key]]
-        m = re.match(r"'?([^'!]+)'?!\$([A-Z]+)\$(\d+)$", names['%s_AREA' % tk])
-        r0 = int(m.group(3)) - nn
-        for x in sec['rows']:
-            rr = r0 + x['idx']
-            chk('%s T %d' % (key, rr), x['T'], WA.get('L%d' % rr))
-            chk('%s U %d' % (key, rr), x['U'], WA.get('M%d' % rr))
-            if x['P'] is not None:
-                chk('%s P %d' % (key, rr), x['P'], WA.get('T%d' % rr))
-                chk('%s E %d' % (key, rr), x['E'], WA.get('I%d' % rr))
-        chk('%s total P' % key, sec['P'], named('%s_P' % tk))
-        chk('%s result' % key, sec['result'], named('%s_RES' % tk))
+    # цветники, газоны, иной травяной покров: лист ввода
+    G = res['greens']
+    WG, WL = V[BX.SH_G], V[BX.SH_GL]
+    GL = BX.letters(BX.greens_spec())
+    for r in G['rows']:
+        rr = BX.G_FIRST + r['idx']
+        g = lambda name: WG.get('%s%d' % (GL[name], rr))
+        chk('ЦГ № %d' % rr, r['no'], g('gno'))
+        chk('ЦГ решение %d' % rr, r['decision'], g('gdec'))
+        chk('ЦГ компенсация %d' % rr, r['comp'], g('gcomp'))
+        chk('ЦГ выплата %d' % rr, r['value'], g('gv'))
+        chk('ЦГ ошибка %d' % rr, r['error'], g('gerr'))
+    # готовая ведомость (для AutoCAD): перечень, под ним итоги, справа баланс
+    for i, r in enumerate(G['rows']):
+        rr = F0 + i
+        chk('ВЦГ № %d' % rr, r['no'], WL.get('A%d' % rr))
+        chk('ВЦГ вид %d' % rr, r['title'], WL.get('B%d' % rr))
+        chk('ВЦГ площадь %d' % rr, '' if r['area'] is None else r['area'], WL.get('C%d' % rr))
+        chk('ВЦГ состояние %d' % rr, r['condShow'], WL.get('D%d' % rr))
+        chk('ВЦГ решение %d' % rr, r['decision'], WL.get('E%d' % rr))
+        chk('ВЦГ компенсация %d' % rr, r['comp'], WL.get('F%d' % rr))
+    ng = len(G['rows'])
+    chk('ВЦГ пустая строка', '', WL.get('B%d' % (F0 + ng)))
+    for i, line in enumerate(res['greensReport']):
+        for j, col in enumerate('ABCDEF'):
+            chk('ВЦГ итог %s%d' % (col, i), line[j], WL.get('%s%d' % (col, F0 + ng + 1 + i)))
+    chk('ВЦГ после итогов', '', WL.get('B%d' % (F0 + ng + 1 + len(res['greensReport']))))
+    for i, key in enumerate(['kept', 'transplanted', 'removed', 'total']):
+        for j, cat in enumerate(E.GREEN_CATS):
+            chk('ВЦГ баланс %s %s' % (key, cat), G['balance'][cat][key], WL.get('%s%d' % ('IJK'[j], BX.HDR_ROW + 1 + i)))
+    gt = G['totals']
+    for nm, val in (('GZ_N', len(G['rows'])), ('GZ_ERR', gt['errors']), ('GZ_V', gt['payment']), ('GZ_PF', gt['plantFlower']),
+                    ('GZ_PL', gt['plantLawn']), ('GZ_NM', gt['nMoney']), ('GZ_NP', gt['nPlant'])):
+        chk(nm, val, named(nm))
     shutil.rmtree(tmp, ignore_errors=True)
     print('%s: проверено %d значений, расхождений %d' % (vec_name, checked, len(diffs)))
     for d in diffs[:200 if verbose else 25]:
@@ -564,11 +561,38 @@ def new_rules_project(money=True):
     ]
     S = {'date': '2026-03-01', 'k1': False, 'k2': True, 'k3': False, 'k4': False, 'money': money, 'unit': 'баз.в. (руб.)',
          'view': 'формула + итог', 'defaultCond': 'уд.', 'shrubMassKg': 5, 'flowerMode': 'метрами', 'showPlots': True, 'hedgePieces': True,
-         'reasons': [{'name': 'СЕТИ', 'group': '', 'replace': ''}, {'name': 'БЛАГОУСТРОЙСТТВО', 'group': '', 'replace': ''}],
+         'reasons': [{'name': 'СЕТИ', 'group': '', 'replace': ''}, {'name': 'БЛАГОУСТРОЙСТТВО', 'group': '', 'replace': ''},
+                     {'name': 'АВАРИЯ', 'group': '', 'replace': 'без компенcации'}],
          'compMap': dict(E.default_settings(E.prepare_ref(REF))['compMap']), 'bushArea': 1 if money else 1.5,
          'plotDensity': 'редкий' if money else 'густой'}
-    return {'settings': S, 'trees': T, 'flowers': [{'kind': 'Композиция из многолетников', 'cond': 'хор.', 'area': 4}],
-            'lawns': [{'kind': 'Обыкновенный', 'cond': 'уд.', 'area': 30, 'reason': ''}], 'grass': [], 'projected': {}}
+    return {'settings': S, 'trees': T, 'greens': GREENS_NEW}
+
+
+# цветники, газоны, иной травяной покров: все виды, состояние (пусто = хор.; для иного покрова не учитывается), В/П/сохранить,
+# причины (в т.ч. «без компенсации»), К1–К4 и способ компенсации в строке, свои номера, примечание, пустые строки и ошибки ввода
+GREENS_NEW = [
+    {'kind': 'Цветник из многолетников', 'area': 4, 'cond': 'хор.', 'action': 'В'},
+    {'kind': 'Газон обыкновенный', 'area': 30, 'cond': 'уд.', 'action': 'В'},
+    {'kind': 'Газон партерный', 'area': 12.5, 'action': 'В', 'pay': 'посадками'},
+    {'kind': 'Цветник из однолетников и двулетников', 'area': 6, 'action': 'В', 'pay': 'Посадками '},
+    {},
+    {'kind': 'Иной травяной покров', 'area': 40, 'cond': 'плох.', 'action': 'В', 'k4': 'да'},
+    {'kind': 'Иной травяной покров', 'area': 25, 'action': 'В', 'pay': 'посадками'},
+    {'kind': 'Газон спортивный', 'area': 100, 'cond': 'хор.', 'action': 'П', 'reason': 'СЕТИ'},
+    {'kind': 'Газон луговой', 'area': 200, 'cond': 'уд.'},
+    {'noIn': 'Г-1', 'kind': 'газон мавританский', 'area': 15, 'cond': 'хор.', 'action': 'в', 'k1': 'да', 'k2': 'нет'},
+    {'kind': 'Газон специального назначения', 'area': 8, 'cond': 'ненадл.', 'action': 'В'},
+    {'kind': 'Клумба', 'area': 5, 'action': 'В'},
+    {'kind': 'Газон партерный', 'action': 'В'},
+    {'area': 7, 'action': 'В'},
+    {'noIn': '20', 'kind': 'Газон обыкновенный', 'area': 'много', 'action': 'В'},
+    {'kind': 'Газон обыкновенный', 'area': 0, 'action': 'В'},
+    {'kind': 'Цветник из многолетников', 'area': 3, 'action': 'В', 'reason': 'АВАРИЯ'},
+    {'kind': 'Газон обыкновенный', 'area': 9, 'action': 'В', 'reason': 'АВАРИЯ', 'pay': 'посадками'},
+    {'noIn': '5', 'kind': 'Газон обыкновенный', 'area': 10.25, 'cond': 'хор.', 'action': 'В', 'pay': 'выплатами', 'note': 'у дома 3'},
+    {'kind': 'Газон партерный', 'area': 50, 'action': 'В', 'reason': 'СЕТИ', 'k3': 'да'},
+    {'kind': 'Цветник из многолетников', 'area': 2.5, 'cond': 'плох.', 'action': 'П'},
+]
 
 
 def deletion_check():
@@ -578,7 +602,50 @@ def deletion_check():
         c, d = deletion_case(first, cnt, own)
         total += c
         fails += d
+    for first, cnt in ((BX.G_FIRST + 1, 2), (BX.G_FIRST, 1), (BX.G_FIRST + 8, 3)):   # в середине; первая; вокруг своего номера «Г-1»
+        c, d = greens_deletion_case(first, cnt)
+        total += c
+        fails += d
     return total, fails
+
+
+def greens_deletion_case(first, cnt):
+    """Удалить строки листа «Цветники и газоны»: ни одной ошибки формул; ведомость, итоги и баланс — как у ядра без этих строк."""
+    tmp = tempfile.mkdtemp(prefix='taksg_')
+    project = new_rules_project(True)
+    tpl = BX.build(len(project['trees']) + 5, os.path.join(tmp, 'tpl.xlsx'))
+    filled = os.path.join(tmp, 'case.xlsx')
+    fill_workbook(tpl, filled, project)
+    out = recalc(filled, delete=(first, cnt), sheet=BX.SH_G)
+    gone = set(range(first - BX.G_FIRST, first - BX.G_FIRST + cnt))
+    V, names = read_values(out, set(ALL_SHEETS))
+    reduced = dict(project, greens=[g for i, g in enumerate(project['greens']) if i not in gone])
+    res = E.compute(reduced, REF)
+    diffs, checked = [], 0
+
+    def chk(label, x, y):
+        nonlocal checked
+        checked += 1
+        if not same(x, y):
+            diffs.append((label, x, y))
+    for sh in ALL_SHEETS:
+        chk('ошибки формул на листе %s' % sh, [], sorted(r for r, v in V[sh].items() if isinstance(v, str) and v.startswith('#ERR'))[:5])
+    G = res['greens']
+    WL = V[BX.SH_GL]
+    for i, r in enumerate(G['rows']):
+        chk('ВЦГ № %d' % i, r['no'], WL.get('A%d' % (BX.LFIRST + i)))
+        chk('ВЦГ компенсация %d' % i, r['comp'], WL.get('F%d' % (BX.LFIRST + i)))
+    for i, line in enumerate(res['greensReport']):
+        for j, col in enumerate('ABCDEF'):
+            chk('ВЦГ итог %s%d' % (col, i), line[j], WL.get('%s%d' % (col, BX.LFIRST + len(G['rows']) + 1 + i)))
+    for i, key in enumerate(['kept', 'transplanted', 'removed', 'total']):
+        for j, cat in enumerate(E.GREEN_CATS):
+            chk('ВЦГ баланс %s %s' % (key, cat), G['balance'][cat][key], WL.get('%s%d' % ('IJK'[j], BX.HDR_ROW + 1 + i)))
+    shutil.rmtree(tmp, ignore_errors=True)
+    print('удаление строк %d–%d листа «%s»: проверено %d значений, расхождений %d' % (first, first + cnt - 1, BX.SH_G, checked, len(diffs)))
+    for d in diffs[:25]:
+        print('   %-18s ядро=%r  excel=%r' % d)
+    return checked, len(diffs)
 
 
 def deletion_case(first, cnt, own=False):
@@ -592,8 +659,7 @@ def deletion_case(first, cnt, own=False):
     fill_workbook(tpl, filled, project)
     out = recalc(filled, delete=(first, cnt))
     gone = set(range(first - BX.FIRST, first - BX.FIRST + cnt))
-    all_sheets = {'Ведомость', 'Итоги', 'Удаляемые', 'Баланс', 'Цветники и газоны', 'Пересаживаемые', 'Настройки',
-                  'Существующие', 'Сохраняемые', 'Древесина', 'Справочник'}
+    all_sheets = set(ALL_SHEETS)
     V, names = read_values(out, all_sheets)
     reduced = dict(project, trees=[t for i, t in enumerate(project['trees']) if i not in gone])
     res = E.compute(reduced, REF)
@@ -704,7 +770,24 @@ def random_project(seed, money):
           for _ in range(rnd.randint(0, 4))]
     lw = [{'kind': rnd.choice(list(REF['lawns'])), 'cond': rnd.choice(['хор.', 'уд.', 'плох.']), 'area': rnd.randint(5, 200), 'reason': ''}
           for _ in range(rnd.randint(0, 5))]
-    return {'settings': S, 'trees': T, 'flowers': fl, 'lawns': lw, 'grass': [], 'projected': {}}
+    greens = []
+    names = [g['name'] for g in REF['greens']]
+    for _ in range(30):
+        g = {'kind': rnd.choices([rnd.choice(names), rnd.choice(names).lower(), 'Клумба', ''], [80, 8, 2, 2])[0],
+             'area': rnd.choices([rnd.randint(1, 300), round(rnd.uniform(0.5, 80), 2), None], [60, 38, 2])[0],
+             'cond': rnd.choice(['', '', 'хор.', 'уд.', 'плох.', 'ненадл.']),
+             'action': rnd.choices(['В', 'П', ''], [65, 10, 25])[0], 'reason': rnd.choice(['', '', 'СЕТИ', 'БЛАГОУСТРОЙСТТВО'])}
+        for k in range(1, 5):
+            if rnd.random() < 0.12:
+                g['k%d' % k] = rnd.choice(['да', 'нет'])
+        if rnd.random() < 0.3:
+            g['pay'] = rnd.choice(['выплатами', 'посадками'])
+        if rnd.random() < 0.1:
+            g['noIn'] = rnd.choice([str(rnd.randint(1, 99)), 'Г-%d' % rnd.randint(1, 9)])
+        if rnd.random() < 0.1:
+            g['note'] = 'у дома %d' % rnd.randint(1, 30)
+        greens.append(g)
+    return {'settings': S, 'trees': T, 'flowers': fl, 'lawns': lw, 'grass': [], 'projected': {}, 'greens': greens}
 
 
 def main():

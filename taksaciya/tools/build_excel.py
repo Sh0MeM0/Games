@@ -30,6 +30,12 @@ REF = json.load(open(os.path.join(ROOT, 'core', 'reference.json'), encoding='utf
 FIRST = 9            # первая строка данных ведомости (выше — заголовок и панель подсказки породы)
 HROW = FIRST - 1     # строка заголовков ведомости
 LFIRST = 7           # первая строка перечня на листах-ведомостях (Существующие, Удаляемые …)
+SH_VOL = 'Объемы'                           # отходы и объёмы древесины (раньше «Древесина»)
+SH_G = 'Цветники и газоны'                  # ввод: цветники, газоны, иной травяной покров
+SH_GL = 'Ведомость цветников и газонов'     # готовая ведомость цветников и газонов (для AutoCAD)
+G_HROW = 3           # строка заголовков листа «Цветники и газоны»
+G_FIRST = G_HROW + 1
+G_ROWS = 300         # строк ввода цветников и газонов
 AUTHOR = 'Таксация Лайт'
 NSTEM = 27           # стволов в одной строке (как в оригинале)
 GREEN = 'FF2C6A4C'
@@ -237,8 +243,12 @@ def build_ref(wb):
                     ['густота', 'древесина, пл. м³', 'древесина, скл. м³', 'древесина, т', 'корни, пл. м³', 'корни, скл. м³', 'корни, т'],
                     [[k, v['m3'], v['m3s'], v['t'], v['rm3'], v['rm3s'], v['rt']] for k, v in SW.items()],
                     ['SHW_Kind', None, 'SHW_M3', 'SHW_T', None, 'SHW_RM3', 'SHW_RT'])
-    row = put_table(row, c0, 'Цветники и травяной покров, баз.вел./м²', ['Вид', 'баз.вел.'], [[k, v] for k, v in REF['flowers'].items()], ['FL_Kind', 'FL_Val'])
-    row = put_table(row, c0, 'Газоны, баз.вел./м²', ['Вид', 'баз.вел.'], [[k, v] for k, v in REF['lawns'].items()], ['LW_Kind', 'LW_Val'])
+    gt = row
+    row = put_table(row, c0, 'Цветники, газоны, иной травяной покров: стоимость, баз.вел. за 1 м² (постановление Совмина № 1426, прил. 8 к Положению)',
+                    ['№', 'Вид (как в списке)', 'Категория', 'баз.вел./м²', 'коэф. состояния (1 — есть)'],
+                    [[i + 1, g['name'], g['cat'], g['value'], g['cond']] for i, g in enumerate(REF['greens'])],
+                    [None, 'GR_Name', 'GR_Cat', 'GR_Val', 'GR_Q'])
+    note(ws.cell(row=gt, column=c0), REF['sources']['greens'], 420)
     # календарь базовых величин (колонки X:Z)
     ws.cell(row=3, column=24, value='Календарь базовых величин — добавляйте новые значения в пустые строки').font = Font(name=FONT, bold=True)
     for i, h in enumerate(['Действует с', 'Рублей', 'Постановление']):
@@ -297,7 +307,8 @@ def build_settings(wb):
         rows.append(('S_K' + nm[1], '%s — «%s?» (%s)' % (nm, short, rule.split(',')[0]), dflt, 'yn',
                      'Ответ для всего объекта: %s. Для отдельных деревьев можно ответить иначе в колонке «%s» листа «Ведомость».' % (rule, nm)))
     rows += [
-        ('S_MONEY', 'Компенсация', 'выплатами', 'money', 'выплатами — сумма в базовых величинах; посадками — число саженцев взамен.'),
+        ('S_MONEY', 'Компенсация', 'выплатами', 'money', 'выплатами — сумма в базовых величинах; посадками — число саженцев взамен '
+         '(за цветники и газоны — восстановление на той же площади). В строках ведомостей способ можно изменить в колонке «Компенсация».'),
         ('S_UNIT', 'Единицы выплат', REF['defaults']['unit'], 'unit', 'баз.в. — в базовых величинах; руб. — в рублях; баз.в. (руб.) — оба значения.'),
         ('S_VIEW', 'Графа «компенсация»', REF['defaults']['formulaView'], 'view', 'формула + итог — расчёт по шагам; итог — только тариф/итог.'),
         ('S_COND', 'Состояние по умолчанию', REF['defaults']['defaultCondition'], 'cond', 'Используется, если в строке ведомости состояние не указано.'),
@@ -306,10 +317,6 @@ def build_settings(wb):
          '(нормы «сводка 1 га кустарника», лист «Справочник»). Живая изгородь: 1 п.м. = 3 куста (однорядная) или 5 (двухрядная).'),
         ('S_PLOTDENS', 'Густота поросли (для отходов)', 'редкий', 'dens',
          'По какой норме «сводка 1 га кустарника» считать отходы участков поросли (кустарников и деревьев): редкий, средний или густой.'),
-        ('S_FMODE', 'Учёт проектируемых цветников и газонов', REF['defaults']['flowerOffset'], 'fmode',
-         'метрами — проектируемая площадь уменьшает оплачиваемую; стоимостью — уменьшает сумму.'),
-        ('S_PLOTS', 'Показывать поросль в балансе', 'да', 'yn', 'да — в балансе «шт. + м²».'),
-        ('S_HEDGE', 'Живую изгородь также штуками', 'да', 'yn', 'да — в балансе «п.м. / шт.» (1-р. × 3, 2-р. × 5).'),
         ('S_PLOTTREE', 'Поросль деревьев компенсировать типом', REF['compMap']['plotTree'], 'ptree', 'В какую группу деревьев включается поросль деревьев в итогах и в посадках.'),
         ('S_PLOTSHRUB', 'Поросль кустарников компенсировать типом', REF['compMap']['plotShrub'], 'pshrub', 'В какую группу кустарников включается поросль кустарников.'),
     ]
@@ -319,7 +326,6 @@ def build_settings(wb):
         'unit': DataValidation(type='list', formula1='"баз.в.,баз.в. (руб.),руб."'),
         'view': DataValidation(type='list', formula1='"формула + итог,итог"'),
         'cond': DataValidation(type='list', formula1='"хор.,уд.,плох.,ненадл."'),
-        'fmode': DataValidation(type='list', formula1='"метрами,стоимостью"'),
         'ptree': DataValidation(type='list', formula1='"хвой.,медл.,быст."'),
         'pshrub': DataValidation(type='list', formula1='"лиан.,хвой..,вечз.,крас.,медл..,быст..,плод..,ж.и.1,ж.и.2"'),
         'dens': DataValidation(type='list', formula1='"редкий,средний,густой"'),
@@ -599,7 +605,7 @@ def letters(spec):
     return {name: get_column_letter(i + 1) for i, (name, *_rest) in enumerate(spec)}
 
 
-def render(tpl, L, row=FIRST, last=None):
+def render(tpl, L, row=FIRST, last=None, hrow=HROW, first=FIRST, sheet='Ведомость'):
     """{x} → $X9; {x:prev} → значение строки выше через INDEX($X$8:$X8,…) (устойчиво к удалению строк); {x:top} → $X$9; {x:R} → $X$9:$X$last."""
     def rep(m):
         name, mod = m.group(1), m.group(2)
@@ -607,11 +613,11 @@ def render(tpl, L, row=FIRST, last=None):
             return m.group(0)
         col = L[name]
         if mod == ':prev':
-            return 'INDEX($%s$%d:$%s%d,ROWS($%s$%d:$%s%d))' % (col, HROW, col, row - 1, col, HROW, col, row - 1)
+            return 'INDEX($%s$%d:$%s%d,ROWS($%s$%d:$%s%d))' % (col, hrow, col, row - 1, col, hrow, col, row - 1)
         if mod == ':top':
-            return '$%s$%d' % (col, FIRST)
+            return '$%s$%d' % (col, first)
         if mod == ':R':
-            return "'Ведомость'!$%s$%d:$%s$%d" % (col, FIRST, col, last)
+            return "'%s'!$%s$%d:$%s$%d" % (sheet, col, first, col, last)
         return '$%s%d' % (col, row)
     return re.sub(r'\{([A-Za-z_][A-Za-z0-9_]*)(:prev|:top|:R)?\}', rep, tpl)
 
@@ -659,7 +665,8 @@ def build_main(wb, nrows):
         if f is not None:
             ref = '%s%d' % (col, FIRST)
             ws[ref] = ArrayFormula(ref, '=' + render(f, L)) if arr else '=' + render(f, L)
-            ws[ref].fill = F_CALC
+            if not hidden:
+                ws[ref].fill = F_CALC      # скрытые колонки без оформления: файл меньше
     ws.row_dimensions[HROW].height = 44
     ws.freeze_panes = '%s5' % get_column_letter(spec.index(next(x for x in spec if x[0] == 'sphint')) + 2)
     ws.column_dimensions[L['noin']].number_format = '@'     # «4-10» остаётся текстом, а не датой
@@ -691,10 +698,12 @@ HDR_ROW = LFIRST - 1
 
 
 def org_line(extra=''):
-    return '=S_ORG&IF(S_NO<>""," · "&S_NO,"")&IF(S_NAME<>""," · "&S_NAME,"")&IF(S_STAGE<>""," · стадия "&S_STAGE,"")' + extra
+    """Шапка ведомости: организация · номер · объект · стадия (+ extra, начинается с « · »); без « · » в начале строки."""
+    return ('=MID(IF(S_ORG<>""," · "&S_ORG,"")&IF(S_NO<>""," · "&S_NO,"")&IF(S_NAME<>""," · "&S_NAME,"")&IF(S_STAGE<>""," · стадия "&S_STAGE,"")'
+            + extra + ',4,999)')
 
 
-def build_list(wb, sheet, title, cols, counter, nname, totals, cap, top_note=None, hidden_at=None, teff=None):
+def build_list(wb, sheet, title, cols, counter, nname, totals, cap, top_note=None, hidden_at=None, teff=None, src='Ведомость'):
     """Лист-ведомость. cols: [(заголовок, выражение через {I} — номер строки «Ведомости», ширина, примечание, формат)].
     Строки перечня идут подряд с LFIRST; сразу под последней позицией — пустая строка и строки итогов (totals: список строк
     по len(cols) формул без «=» или None). Итоги считаются в скрытых колонках справа."""
@@ -705,8 +714,8 @@ def build_list(wb, sheet, title, cols, counter, nname, totals, cap, top_note=Non
     ws['A1'] = title
     ws['A1'].font = Font(name=FONT, bold=True, size=13)
     ws['A2'] = org_line()
-    over = ('IF(%s+1+%d>%d,"Перечень не помещается (в нём %d строк). Возьмите книгу большего размера и перенесите туда колонки ввода «Ведомости». ","")'
-            % (nname, T, cap, cap))
+    over = ('IF(%s+1+%d>%d,"Перечень не помещается (в нём %d строк). Возьмите книгу большего размера и перенесите туда колонки ввода листа «%s». ","")'
+            % (nname, T, cap, cap, src))
     ws['A3'] = '=' + over + ('&' + top_note[1:] if top_note else '')
     ws['A3'].font = Font(name=FONT, color='FFB42318', bold=True)
     last_col = get_column_letter(nc)
@@ -843,7 +852,7 @@ def wood_summary(ws, c0):
 
     def table(r, title, heads, rows, fmt, tip=None):
         last = get_column_letter(c0 + len(heads) - 1)
-        link = ws.cell(row=r, column=c0, value='=HYPERLINK("#\'Древесина\'!%s%d:%s%d","▶ для AutoCAD")' % (L0, r + 2, last, r + 2 + len(rows)))
+        link = ws.cell(row=r, column=c0, value='=HYPERLINK("#\'%s\'!%s%d:%s%d","▶ для AutoCAD")' % (SH_VOL, L0, r + 2, last, r + 2 + len(rows)))
         link.font = Font(name=FONT, size=9, color='FF1F5FBF', underline='single')
         t = ws.cell(row=r + 1, column=c0, value=title)
         t.font = Font(name=FONT, bold=True)
@@ -888,9 +897,9 @@ def balance_table(ws, c0, r):
     for j in range(6, 10):
         ws.column_dimensions[col(j)].width = 14
     t, h1, h2, h3, d0 = r + 1, r + 2, r + 3, r + 4, r + 5
-    link = ws.cell(row=r, column=c0, value=('=HYPERLINK("#\'Древесина\'!{a}{t}:"&IF(EX_PK>0,"{j9}",IF(EX_PD>0,"{j8}","{j7}"))&"{e}",'
+    link = ws.cell(row=r, column=c0, value=('=HYPERLINK("#\'{sh}\'!{a}{t}:"&IF(EX_PK>0,"{j9}",IF(EX_PD>0,"{j8}","{j7}"))&"{e}",'
                                             '"▶ для AutoCAD (колонки поросли — только если она есть)")').format(
-        a=col(0), t=t, j7=col(7), j8=col(8), j9=col(9), e=d0 + 3))
+        sh=SH_VOL, a=col(0), t=t, j7=col(7), j8=col(8), j9=col(9), e=d0 + 3))
     link.font = Font(name=FONT, size=9, color='FF1F5FBF', underline='single')
     head = {(t, 0): 'Баланс существующих деревьев и кустарников',
             (h1, 0): 'Проектные предложения', (h1, 1): 'Деревья, шт.', (h1, 5): 'Кустарники',
@@ -992,9 +1001,9 @@ def build_lists(wb, nrows):
     wd_tot.append([None, '"округлённо (как в оригинале)"', None, None, None, None, 'ROUND(VOL_BY_ALL,2)', 'ROUND(VOL_BW_ALL,2)', 'ROUND(VOL_BZ_ALL*0.2,2)',
                    'ROUND(VOL_BX_ALL*0.2,2)', 'ROUND(VOL_BZ_ALL,2)', 'ROUND(VOL_BX_ALL,3)',
                    'ROUND(VOL_SBM3,3)', 'ROUND(VOL_SBT,3)', 'ROUND(VOL_SSM3,3)', 'ROUND(VOL_SST,3)'])
-    caps['Древесина'] = nrows + len(wd_tot) + 2
-    ws = build_list(wb, 'Древесина', 'Отходы по удаляемым деревьям и кустарникам: сучья, ветви, вершины; пни; древесина', wd_cols, 'remC', 'N_REM', wd_tot,
-                    caps['Древесина'], hidden_at=40)
+    caps[SH_VOL] = nrows + len(wd_tot) + 2
+    ws = build_list(wb, SH_VOL, 'Объемы: отходы по удаляемым деревьям и кустарникам — сучья, ветви, вершины; пни; древесина', wd_cols, 'remC', 'N_REM', wd_tot,
+                    caps[SH_VOL], hidden_at=40)
     wood_summary(ws, 18)
     ws['A5'] = ('Объёмы — по таблицам «Мягк», «Хвой», «Твер» оригинала (лист «Справочник»), по диаметру каждого ствола и высоте. '
                 'Пни = 20 % от древесины стволов. Корни отдельно не считаются.')
@@ -1187,224 +1196,241 @@ def build_totals(wb, L):
     put('KB_H1', 'сохраняемые: изгородь 1-р., п.м.', 'EX_H1-TR_H1-C_HH1')
     put('KB_H2', 'сохраняемые: изгородь 2-р., п.м.', 'EX_H2-TR_H2-C_HH2')
     put('N_ERR', 'строк с ошибками', 'COUNTIF(R_err,"?*")')
+    r += 1
+    ws.cell(row=r, column=1, value='Цветники, газоны, иной травяной покров (лист «%s»), м²' % SH_G).font = Font(name=FONT, bold=True)
+    r += 1
+    put('GZ_N', 'строк в ведомости цветников и газонов', 'INDEX(R_gC,ROWS(R_gC))')
+    put('GZ_ERR', 'строк с ошибками', 'COUNTIF(R_gerr,"?*")')
+    for k, flag, what in (('K', 'R_gkeep', 'сохраняемые'), ('T', 'R_gtrn', 'пересаживаемые'), ('R', 'R_grem', 'удаляемые')):
+        for c, cat in (('F', 'цветник'), ('L', 'газон'), ('G', 'иной травяной покров')):
+            put('GZ_%s%s' % (k, c), '%s: %s' % (what, cat), 'SUMIFS(R_garn,R_gok,1,%s,1,R_gcat,"%s")' % (flag, cat))
+    put('GZ_PF', 'посадками: восстановить цветники', 'SUMIFS(R_gpl,R_gcat,"цветник")', 'п. 10 Положения: за цветник — цветник на площади не менее удалённой.')
+    put('GZ_PL', 'посадками: восстановить газоны', 'SUMIFS(R_gpl,R_gcat,"газон")+SUMIFS(R_gpl,R_gcat,"иной травяной покров")', 'п. 10 Положения: за газон и иной травяной покров — газон на площади не менее удалённой.')
+    put('GZ_V', 'выплаты, баз.в.', 'SUM(R_gv)', 'п. 11 Положения: стоимость × площадь × коэф. состояния × К1 × К2 × К3 × К4.')
+    put('GZ_NM', 'удаляемых строк с выплатами', 'COUNTIFS(R_gok,1,R_grem,1,R_gmon,1)')
+    put('GZ_NP', 'удаляемых строк с посадками', 'COUNTIFS(R_gok,1,R_grem,1,R_gmon,0)')
     return ws, T
 
 
-# =============================================================== цветники, газоны, травяной покров
-AREA_BLOCKS = [('fl', 'Цветники', 13, 'FL'), ('lw', 'Газоны', 17, 'LW'), ('gr', 'Иной травяной покров', 17, 'GR')]
-AREA_TIPS = ['Номер позиции (считается сам).', 'Вид цветника или газона из справочника (лист «Справочник»).', 'Качественное состояние: хор. (×1), уд. (×0,75), плох. (×0,5).',
-             'Площадь, м².', '«п» — пересадить (без компенсации).', 'Причина удаления из списка (лист «Настройки»). Можно не указывать.', 'Примечание.',
-             'Номера коэффициентов, которые меняются на противоположные (например 24), или «без компенcации».',
-             'Расчёт: площадь × стоимость (баз.в./м²) × коэф. состояния × К1 × К2 × К3 × К4.', 'Применённые коэффициенты.']
+# =============================================================== цветники, газоны, иной травяной покров
+def greens_spec():
+    """Колонки листа «Цветники и газоны» (формат как у cols_spec). Правила — постановление Совмина РБ № 1426,
+    Положение о порядке определения условий осуществления компенсационных мероприятий (п. 9–11, приложение 8)."""
+    C = []
+
+    def add(name, title, f=None, w=10, hidden=False, tip=None):
+        C.append((name, title, f, w, hidden, tip, False))
+    h = True
+    kinds = '\n'.join('• %s — %s баз.вел./м²' % (g['name'], str(g['value']).replace('.', ',')) for g in REF['greens'])
+    add('gnoin', '№ по плану', None, 9,
+        tip='Номер по плану (текст):\n• пусто — следующий номер (предыдущий + 1);\n• целое число — начать нумерацию с него;\n'
+            '• другой текст (например «Г-1») — как есть.')
+    add('gkind', 'Вид (выбор из списка)', None, 30,
+        tip='Выберите из списка. Стоимость (приложение 8 к Положению, постановление Совмина № 1426):\n' + kinds)
+    add('garea', 'Площадь, м²', None, 9, tip='Площадь цветника, газона, иного травяного покрова, м² (число).')
+    add('gcond', 'Состояние', None, 9,
+        tip='Для цветников и газонов: хор. (×1), уд. (×0,75), плох. (×0,5) — сноска к приложению 8.\n'
+            'Пусто — хор.: по п. 9 Положения, если состояние определить нельзя (окончание вегетации, снег), цветник, газон признаются '
+            'находящимися в хорошем состоянии.\nДля иного травяного покрова состояние на расчёт не влияет.')
+    add('gact', 'Действие (В/П)', None, 8, tip='В — удалить, П — пересадить (без компенсации), пусто — сохранить.')
+    add('grsn', 'Причина', None, 14,
+        tip='Причина из списка причин (лист «Настройки»). Можно не указывать. Причина с «без компенсации» снимает компенсацию; '
+            'номера коэффициентов в списке причин меняют К1–К4 на противоположные.')
+    for i, (nm, short, rule) in enumerate(K_INFO, 1):
+        add('gk%din' % i, '%s %s?' % (nm, short), None, 9,
+            tip='%s для этой строки — «%s?»: %s.\nПусто — как на листе «Настройки» (с учётом причины). Применяется к выплатам; '
+                'к посадкам за цветники и газоны коэффициенты не применяются (п. 10 Положения).' % (nm, short, rule))
+    add('gpay', 'Компенсация (выплатами / посадками)', None, 12,
+        tip='выплатами — стоимость × площадь × коэф. состояния × К1 × К2 × К3 × К4 (п. 11 Положения);\n'
+            'посадками — восстановить цветник (за цветник) или газон (за газон и иной травяной покров) на площади не менее удалённой, '
+            'без коэффициентов (п. 10 Положения).\nПусто — как на листе «Настройки».\n'
+            'Если восстановить можно только часть площади, разбейте позицию на две строки: восстанавливаемую площадь — «посадками», '
+            'остаток — «выплатами» (по п. 10 за невосстановленную площадь — выплаты).')
+    add('gnote', 'Примечание', None, 14, tip='Попадает в наименование в скобках.')
+    # расчёт (видимые)
+    add('gno', '№ в ведомости', 'IF(NOT({gpres}),"",IF({gnt}="",{gne},IF(ISNUMBER({gn1}),{gn1},{gnt})))', 9,
+        tip='Номер, который пойдёт в ведомость: свой или следующий по порядку.')
+    add('gdec', 'Решение', 'IF(NOT({gpres}),"",IF({grem}=1,"удалить",IF({gtrn}=1,"пересадить","сохранить"))&IF(AND({grsn}&""<>"",{grem}+{gtrn}>0)," ("&{grsn}&")",""))', 18,
+        tip='Сохранить, удалить или пересадить (с причиной).')
+    add('gcomp', 'Компенсационные посадки (выплаты)',
+        'IF(NOT({gpres}),"",IF({gerrt}<>"","ОШИБКА: "&{gerrt},IF({gtrn}=1,"-",IF({grem}=0,"",IF({gzero},"Без компенсации",IF({gmon}=0,'
+        'IF({gcat}="цветник","цветник","газон")&" не менее "&ROUND({garea},6)&" м²",IF(S_VIEW="итог",ROUND({gv},6)&" баз.в.",'
+        '"("&{gtar}&") баз.в. х"&ROUND({garea},6)&"м² х"&{gq}&"х"&{gK1}&"х"&{gK2}&"х"&{gK3}&"х"&{gK4}&" ="&ROUND({gv},6))))))))', 40,
+        tip='Выплаты: (стоимость) баз.в. × площадь × коэф. состояния × К1 × К2 × К3 × К4 = итог (п. 11 Положения).\n'
+            'Посадки: восстановить цветник или газон на площади не менее удалённой (п. 10 Положения).\nПересадка — без компенсации («-»).')
+    add('gv', 'Выплата, баз.в.', 'IF(AND({gok}=1,{grem}=1,{gmon}=1),IF({gzero},0,{garea}*{gtar}*{gq}*{gK1}*{gK2}*{gK3}*{gK4}),"")', 10,
+        tip='Сумма выплаты по строке в базовых величинах (для строк удаления с выплатами).')
+    add('gerr', 'Ошибка', 'IF({gerrt}="","","ОШИБКА: "&{gerrt})', 30, tip='Ошибка ввода. Строка с ошибкой не входит в итоги и баланс.')
+    # служебные (скрытые)
+    add('gkt', 'вид текстом', 'TRIM({gkind}&"")', 8, h)
+    add('gpres', 'строка заполнена', 'OR({gkt}<>"",TRIM({garea}&"")<>"")', 5, h)
+    add('ggi', 'строка справочника', 'IF({gkt}="",0,IFERROR(MATCH({gkt},GR_Name,0),0))', 5, h)
+    add('gcat', 'категория', 'IF({ggi}>0,INDEX(GR_Cat,{ggi}),"")', 8, h)
+    add('gtar', 'стоимость, баз.в./м²', 'IF({ggi}>0,INDEX(GR_Val,{ggi}),"")', 5, h)
+    add('guseq', 'коэф. состояния есть', 'IF({ggi}>0,INDEX(GR_Q,{ggi})=1,FALSE)', 5, h)
+    add('gct', 'состояние текстом', 'TRIM({gcond}&"")', 6, h)
+    add('gcs', 'состояние (ведомость)', 'IF(NOT({gpres}),"",IF({guseq},IF({gct}="","хор.",{gct}),IF({gct}="","-",{gct})))', 6, h)
+    qk = REF['greensCondK']
+    add('gq', 'коэф. состояния', 'IF({guseq},IF({gcs}="хор.",%s,IF({gcs}="уд.",%s,IF({gcs}="плох.",%s,""))),1)' % (qk['хор.'], qk['уд.'], qk['плох.']), 5, h)
+    add('gat', 'действие текстом', 'TRIM({gact}&"")', 4, h)
+    add('grem', 'удаляется (1)', 'IF(AND({gpres},{gat}="В"),1,0)', 4, h)
+    add('gtrn', 'пересаживается (1)', 'IF(AND({gpres},{gat}="П"),1,0)', 4, h)
+    add('gkeep', 'сохраняется (1)', 'IF(AND({gpres},{grem}=0,{gtrn}=0),1,0)', 4, h)
+    add('gnt', '№ текстом', 'TRIM({gnoin}&"")', 6, h)
+    add('gn1', '№ числом', 'IFERROR(IF(AND(VALUE({gnt})>=0,VALUE({gnt})=INT(VALUE({gnt})),VALUE({gnt})&""={gnt}),VALUE({gnt}),""),"")', 5, h)
+    add('gpe', 'номер строки выше', 'N({gne:prev})', 5, h)      # ссылка на строку выше — один раз (пересчёт после удаления строк)
+    add('gne', 'конец нумерации', 'IF(NOT({gpres}),{gpe},IF(ISNUMBER({gn1}),{gn1},IF({gnt}<>"",{gpe},{gpe}+1)))', 5, h)
+    add('garn', 'площадь числом', 'IF(ISNUMBER({garea}),{garea},"")', 6, h)
+    add('gerrt', 'ошибка (текст)',
+        'IF(NOT({gpres}),"",IF({gkt}="","выберите вид из списка",IF({ggi}=0,"вида нет в списке — выберите из списка",'
+        'IF(TRIM({garea}&"")="","укажите площадь, м²",IF(NOT(ISNUMBER({garea})),"площадь — не число",IF({garea}<=0,"площадь должна быть больше 0",'
+        'IF(AND({guseq},NOT(ISNUMBER({gq}))),"состояние цветника, газона — хор., уд. или плох.","")))))))', 10, h)
+    add('gok', 'без ошибок (1)', 'IF(AND({gpres},{gerrt}=""),1,0)', 4, h)
+    add('grep', 'замена по причине', 'IFERROR(INDEX(RS_Repl,MATCH({grsn},RS_Name,0))&"","")', 6, h)
+    add('gzero', 'без компенсации', 'ISNUMBER(SEARCH("без*компен?ации",{grep}))', 5, h)
+    for i, (on, off) in enumerate([(2, 1), (0.5, 1), (0.5, 1), (0.1, 1)], 1):
+        add('gK%d' % i, 'К%d' % i,
+            'IF({gzero},0,IF(TRIM({gk%din})="да",%s,IF(TRIM({gk%din})="нет",%s,IF(K%dY,IF(NOT(ISNUMBER(FIND("%d",{grep}))),%s,%s),IF(NOT(ISNUMBER(FIND("%d",{grep}))),%s,%s)))))'
+            % (i, on, i, off, i, i, on, off, i, off, on), 4, h)
+    add('gmon', 'выплатами (1) / посадками (0)', 'IF(TRIM({gpay}&"")="выплатами",1,IF(TRIM({gpay}&"")="посадками",0,IF(MONEYY,1,0)))', 4, h)
+    add('gpl', 'восстановить, м²', 'IF(AND({gok}=1,{grem}=1,{gmon}=0,NOT({gzero})),{garea},0)', 5, h)
+    add('gtitle', 'вид (ведомость)', 'IF(NOT({gpres}),"",IF({ggi}>0,INDEX(GR_Name,{ggi}),{gkt})&IF({gnote}&""<>""," ("&{gnote}&")",""))', 10, h)
+    add('gC', 'счётчик строк', 'N({gC:prev})+IF({gpres},1,0)', 4, h)
+    return C
 
 
-def build_areas(wb):
-    ws = wb.create_sheet('Цветники и газоны')
-    ws['A1'] = 'Удаляемые цветники, газоны и иной травяной покров (лист «ЦвГаТр» оригинала)'
-    ws['A1'].font = Font(name=FONT, bold=True, size=13)
-    ws['A2'] = 'Ввод — в жёлтые колонки. Пересадить: «п». Стоимость, баз.вел./м²: многолетники 10, 1-2-летники 2, газоны 0,5–2, иной травяной покров 0,25.'
-    widths = [5, 30, 11, 11, 9, 16, 14, 7, 44, 13, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9]
-    for i, w in enumerate(widths):
-        ws.column_dimensions[get_column_letter(i + 1)].width = w
-    ws['K3'] = 'Проектируемое озеленение, м²'
-    ws['K3'].font = Font(name=FONT, bold=True)
-    note(ws['K3'], 'Площади проектируемых цветников и газонов. В режиме «метрами» они уменьшают оплачиваемую площадь, в режиме «стоимостью» — сумму.')
-    proj = [('PR_PER', 'цветники из многолетников'), ('PR_ANN', 'цветники из 1-2-летников')] + \
-           [('PR_L%d' % i, 'газон «%s»' % k) for i, k in enumerate(REF['lawns'])]
-    for i, (nm, label) in enumerate(proj):
-        ws.cell(row=4 + i, column=11, value=label)
-        c = ws.cell(row=4 + i, column=14)
-        c.fill = F_SET
-        c.border = B_THIN
-        defname(wb, nm, "'Цветники и газоны'!$N$%d" % (4 + i))
-    lawn_vals = list(REF['lawns'].values())
-    r = 14
-    tot = {}
-    for key, title, n, tk in AREA_BLOCKS:
-        ws.cell(row=r, column=1, value=title).font = Font(name=FONT, bold=True, size=11)
-        r += 1
-        heads = ['Поз.', 'Вид', 'Качественное состояние', 'Площадь, м²', 'Пересадить (п)', 'Причина', 'Примечание', 'Инд. К',
-                 'Компенсационные посадки (выплаты)', 'К1;К2;К3;К4', 'есть', 'T', 'U', 'K1', 'K2', 'K3', 'K4', 'тариф', 'кач.', 'P, б.в.', 'Q, руб.', 'Tc']
-        for i, hh in enumerate(heads):
-            c = ws.cell(row=r, column=i + 1, value=hh)
-            style_header(c)
-            if i < len(AREA_TIPS) and not (key == 'gr' and i == 1):
-                note(c, AREA_TIPS[i])
-        hdr = r
-        r0 = r + 1
-        for i in range(n):
-            rr = r0 + i
-            for c in (2, 3, 4, 5, 6, 7, 8):
-                if key == 'gr' and c == 2:
-                    continue
-                ws.cell(row=rr, column=c).fill = F_SET
-                ws.cell(row=rr, column=c).border = B_THIN
-            if key == 'gr':
-                ws.cell(row=rr, column=2, value='=IF(AND(C{r}="",D{r}=""),"","Иной травяной покров")'.format(r=rr))
-                pres = 'OR(D{r}<>"",C{r}<>"")'.format(r=rr)
-            else:
-                pres = 'OR(B{r}<>"",D{r}<>"",C{r}<>"")'.format(r=rr)
-            ws.cell(row=rr, column=11, value='=' + pres)
-            ws.cell(row=rr, column=1, value='=IF(K{r},COUNTIF(K${f}:K{r},TRUE),"")'.format(r=rr, f=r0))
-            trn = 'LOWER(E{r})="п"'.format(r=rr)
-            if key == 'gr':
-                Tf = 'IF(NOT(K{r}),"",IF(V{p}="",N(D{r})-GR_LEFT,IF(V{p}>0,N(D{r}),N(D{r})+V{p})))'.format(r=rr, p=rr - 1)
-            else:
-                proj_area = '(PR_PER+PR_ANN)' if key == 'fl' else '(' + '+'.join('PR_L%d' % i for i in range(len(lawn_vals))) + ')'
-                Tf = 'IF(NOT(K{r}),"",IF(V{p}="",IF({t},0,N(D{r}))-{pa},IF(V{p}>0,N(D{r}),IF({t},V{p},N(D{r})+V{p}))))'.format(r=rr, p=rr - 1, t=trn, pa=proj_area)
-            ws.cell(row=rr, column=12, value='=' + Tf)
-            ws.cell(row=rr, column=13, value='=IF(NOT(K{r}),"",IF(L{r}<0,N(D{r}),IF(L{r}=N(D{r}),0,N(D{r})-L{r})))'.format(r=rr))
-            ws.cell(row=rr, column=22, value='=IF(K{r},L{r},V{p})'.format(r=rr, p=rr - 1))
-            rep = 'IFERROR(INDEX(RS_Repl,MATCH(F{r},RS_Name,0))&"","")'.format(r=rr)
-            ind = 'H{r}&""'.format(r=rr)
-            zero = 'OR(ISNUMBER(SEARCH("без*компен?ации",{i})),ISNUMBER(SEARCH("без*компен?ации",{p})))'.format(i=ind, p=rep)
-            for kk, (on, off) in enumerate([(2, 1), (0.5, 1), (0.5, 1), (0.1, 1)], 1):
-                same = 'ISNUMBER(FIND("{k}",{i}))=ISNUMBER(FIND("{k}",{p}))'.format(k=kk, i=ind, p=rep)
-                ws.cell(row=rr, column=13 + kk, value='=IF({z},0,IF(K{k}Y,IF({s},{on},{off}),IF({s},{off},{on})))'.format(z=zero, k=kk, s=same, on=on, off=off))
-            kind_ref = 'B{r}'.format(r=rr)
-            tab = {'fl': ('FL_Kind', 'FL_Val'), 'lw': ('LW_Kind', 'LW_Val'), 'gr': ('FL_Kind', 'FL_Val')}[key]
-            ws.cell(row=rr, column=18, value='=IFERROR(INDEX({v},MATCH({k},{n},0)),"")'.format(v=tab[1], k=kind_ref, n=tab[0]))
-            ws.cell(row=rr, column=19, value='=IF(C{r}="хор.",1,IF(C{r}="уд.",0.75,IF(C{r}="плох.",0.5,0)))'.format(r=rr))
-            ws.cell(row=rr, column=10, value='=IF(NOT(K{r}),"",IF({z},"0; 0; 0; 0",N{r}&"; "&O{r}&"; "&P{r}&"; "&Q{r}))'.format(r=rr, z=zero))
-            ws.cell(row=rr, column=20, value='=IF(OR(NOT(K{r}),{t}),"",IF(R{r}="","ОШИБКА",IF(S_FMODE="стоимостью",N(D{r}),MAX(L{r},0))*R{r}*S{r}*N{r}*O{r}*P{r}*Q{r}))'.format(r=rr, t=trn))
-            ws.cell(row=rr, column=21, value='=IF(ISNUMBER(T{r}),T{r}*BASE,"")'.format(r=rr))
-            unit = 'IF(S_UNIT="баз.в.",FIXED(T{r},0)&" баз.в.",IF(S_UNIT="руб.",FIXED(U{r},2)&" руб.",FIXED(T{r},0)&" баз.в.("&FIXED(U{r},2)&" руб.)"))'.format(r=rr)
-            ws.cell(row=rr, column=9, value=('=IF(NOT(K{r}),"",IF({t},"-",IF(T{r}="ОШИБКА","ОШИБКА: вид не найден",'
-                                              'IF(S_VIEW="итог",{u},{u}&" = "&D{r}&IF(S_FMODE="стоимостью","",IF(M{r}>0,"-"&M{r},""))&"м² x"&R{r}&"б.в. x"&S{r}&"x"&N{r}&"х"&O{r}&"х"&P{r}&"х"&Q{r}))))').format(r=rr, t=trn, u=unit))
-            for c in range(9, 23):
-                ws.cell(row=rr, column=c).fill = F_CALC
-        last = r0 + n - 1
-        ws.cell(row=hdr, column=22, value='')
-        tot[key] = (r0, last)
-        r = last + 1
-        P = '{k}_P'.format(k=tk)
-        defname(wb, P, "'Цветники и газоны'!$T$%d" % r)
-        ws.cell(row=r, column=2, value='Итого по объекту:').font = Font(name=FONT, bold=True)
-        ws.cell(row=r, column=4, value='=SUMIFS(D%d:D%d,K%d:K%d,TRUE)' % (r0, last, r0, last))
-        ws.cell(row=r, column=20, value='=SUM(T%d:T%d)' % (r0, last))
-        ws.cell(row=r, column=21, value='=SUM(U%d:U%d)' % (r0, last))
-        defname(wb, '%s_AREA' % tk, "'Цветники и газоны'!$D$%d" % r)
-        if key == 'fl':
-            pv = 'IF(S_FMODE="стоимостью",PR_PER*INDEX(FL_Val,1)+PR_ANN*INDEX(FL_Val,2),0)'
-        elif key == 'lw':
-            pv = 'IF(S_FMODE="стоимостью",' + '+'.join('PR_L%d*INDEX(LW_Val,%d)' % (i, i + 1) for i in range(len(lawn_vals))) + ',0)'
-        else:
-            pv = 'IF(S_FMODE="стоимостью",IF(-(LW_P-LW_PV)<0,0,-(LW_P-LW_PV)),0)'
-        ws.cell(row=r, column=10, value='проект.:')
-        ws.cell(row=r, column=11, value='=' + pv)
-        defname(wb, '%s_PV' % tk, "'Цветники и газоны'!$K$%d" % r)
-        ws.cell(row=r, column=12, value='=%s-%s_PV' % (P, tk))
-        defname(wb, '%s_REST' % tk, "'Цветники и газоны'!$L$%d" % r)
-        ws.cell(row=r, column=13, value='=IF(%s_REST>0,%s_REST,0)' % (tk, tk))
-        defname(wb, '%s_RES' % tk, "'Цветники и газоны'!$M$%d" % r)
-        alltr = 'AND(COUNTIF(K%d:K%d,TRUE)>0,COUNTIFS(K%d:K%d,TRUE,E%d:E%d,"п")=COUNTIF(K%d:K%d,TRUE))' % (r0, last, r0, last, r0, last, r0, last)
-        ws.cell(row=r, column=9, value=('=IF(COUNTIF(K{a}:K{b},TRUE)=0,"—",IF({at},"не требуется",IF(AND({tk}_REST<=0,{P}>0),"компенсировано проектируемым озеленением",'
-                                         'IF(S_UNIT="баз.в.",FIXED({tk}_RES,0)&" баз.в.",IF(S_UNIT="руб.",FIXED({tk}_RES*BASE,2)&" руб.",FIXED({tk}_RES,0)&" баз.в.("&FIXED({tk}_RES*BASE,2)&" руб.)")))))').format(
-            a=r0, b=last, at=alltr, tk=tk, P=P))
-        ws.cell(row=r, column=9).font = Font(name=FONT, bold=True)
-        if key == 'lw':
-            ws.cell(row=r + 1, column=10, value='остаток газона, м²:')
-            ws.cell(row=r + 1, column=11, value='=IF(COUNTIF(L{a}:L{b},">"&0)>0,0,-IF(COUNT(L{a}:L{b})=0,-({pa}),MAX(L{a}:L{b})))'.format(
-                a=r0, b=last, pa='+'.join('PR_L%d' % i for i in range(len(lawn_vals)))))
-            defname(wb, 'GR_LEFT', "'Цветники и газоны'!$K$%d" % (r + 1))
-        r += 3
-    for c in range(10, 23):
-        ws.column_dimensions[get_column_letter(c)].hidden = c not in (10,)
-    ws.column_dimensions['J'].hidden = False
-    ws.column_dimensions['K'].hidden = False
-    ws.column_dimensions['N'].hidden = False
-    return ws, tot
-
-
-# =============================================================== баланс
-def build_balance(wb):
-    ws = wb.create_sheet('Баланс')
-    ws['A1'] = 'Баланс существующих деревьев и кустарников, объёмы древесины'
-    ws['A1'].font = Font(name=FONT, bold=True, size=13)
-    ws['A2'] = org_line()
-    ws['A3'] = '=HYPERLINK("#\'Баланс\'!A4:H8","▶ Выделить таблицу баланса для AutoCAD (затем Ctrl+C; в AutoCAD: Правка → Специальная вставка → Объекты AutoCAD)")'
-    ws['A10'] = '=HYPERLINK("#\'Баланс\'!A12:F14","▶ Выделить таблицу объёмов отходов для AutoCAD")'
-    ws['A10'].font = Font(name=FONT, color='FF1F5FBF', underline='single')
-    ws['A3'].font = Font(name=FONT, color='FF1F5FBF', underline='single')
-    widths = [22, 20, 16, 12, 12, 20, 20, 20]
-    for i, w in enumerate(widths):
-        ws.column_dimensions[get_column_letter(i + 1)].width = w
-    heads = ['Проектные предложения', '=IF(S_PLOTS="нет","Деревья всего, шт.","Деревья всего, шт. + поросль, м²")', 'в т.ч. лиственные декоративные',
-             'плодовые', 'хвойные', '=IF(S_PLOTS="нет","Кустарники, шт.","Кустарники, шт. + поросль, м²")',
-             '=IF(S_HEDGE="нет","Живая изгородь однорядная, м","Живая изгородь однорядная, м / шт.")', '=IF(S_HEDGE="нет","двухрядная, м","двухрядная, м / шт.")']
-    tips = ['Сохраняемые = всего − пересаживаемые − удаляемые.', 'Деревья, шт.; через «+» — поросль деревьев, м² (настройка «Показывать поросль в балансе»).',
-            'Деревья без плодовых и хвойных.', 'Плодовые деревья.', 'Хвойные деревья.', 'Кустарники, шт.; через «+» — поросль кустарников, м².',
-            'Однорядная живая изгородь, п.м.; через «/» — шт. (× 3 на 1 п.м.).', 'Двухрядная живая изгородь, п.м.; через «/» — шт. (× 5 на 1 п.м.).']
-    for i, hh in enumerate(heads):
-        c = ws.cell(row=4, column=i + 1, value=hh)
+def build_greens(wb):
+    """Лист ввода «Цветники и газоны»: одна ведомость, устроена как «Ведомость» деревьев."""
+    ws = wb.create_sheet(SH_G)
+    spec = greens_spec()
+    L = letters(spec)
+    last = G_FIRST + G_ROWS - 1
+    ws['A1'] = 'Цветники, газоны, иной травяной покров (ввод) — Таксация Лайт'
+    ws['A1'].font = Font(name=FONT, bold=True, size=13, color=GREEN)
+    note(ws['A1'], 'Вводите данные в колонки с жёлтым заголовком; наведите мышь на заголовок — появится пояснение. Пустые строки допускаются. '
+                   'Лишнюю строку можно удалить целиком или очистить. Готовая ведомость для AutoCAD — на листе «%s».' % SH_GL, 320)
+    ws['A2'] = ('="В — удалить, П — пересадить, пусто — сохранить. Правила и стоимость — постановление Совмина № 1426 (Положение о порядке '
+                'определения условий осуществления компенсационных мероприятий, п. 9–11, прил. 8). Строк: "&ROWS(R_gkind)&", заполнено: "&GZ_N&"."')
+    ws['A2'].font = Font(name=FONT, italic=True, size=9, color='FF555555')
+    for i, (name, title, f, w, hidden, tip, arr) in enumerate(spec):
+        col = get_column_letter(i + 1)
+        c = ws.cell(row=G_HROW, column=i + 1, value=title)
         style_header(c)
-        note(c, tips[i])
-    data = {
-        'trees': ('EX_TREES', 'TR_TREES', 'C_TR35'), 'tplot': ('EX_PD', '0', 'C_PD'), 'shrubs': ('EX_SHRUBS', 'TR_SHRUBS', 'C_SH35'),
-        'splot': ('EX_PK', '0', 'C_PK'), 'h1': ('EX_H1', 'TR_H1', 'C_HH1'), 'h2': ('EX_H2', 'TR_H2', 'C_HH2'),
-    }
-
-    def v(field, which):
-        tot, tr, rm = data[field]
-        return {'total': tot, 'tr': tr, 'rm': rm}.get(which, '(%s-%s-%s)' % (tot, tr, rm))
-    rows = [('Сохраняемые', 'kept'), ('Пересаживаемые', 'tr'), ('Удаляемые', 'rm'), ('Итого', 'total')]
-    leafy = {'kept': '(%s-KP_X-KP_P)' % v('trees', 'kept'), 'tr': '(TR_TREES-TR_P-TR_X)', 'rm': '(C_TREES-C_P-C_X)'}
-    fruit = {'kept': 'KP_P', 'tr': 'TR_P', 'rm': 'C_P'}
-    conif = {'kept': 'KP_X', 'tr': 'TR_X', 'rm': 'C_X'}
-    for i, (label, w) in enumerate(rows):
-        r = 5 + i
-        ws.cell(row=r, column=1, value=label)
-        if w == 'total':
-            lf = '+'.join(leafy[k] for k in ('kept', 'tr', 'rm'))
-            fr = '+'.join(fruit[k] for k in ('kept', 'tr', 'rm'))
-            cf = '+'.join(conif[k] for k in ('kept', 'tr', 'rm'))
-        else:
-            lf, fr, cf = leafy[w], fruit[w], conif[w]
-        ws.cell(row=r, column=2, value='=IF(S_PLOTS="нет",{a},ROUND({a},6)&" + "&ROUND({b},6))'.format(a=v('trees', w), b=v('tplot', w)))
-        ws.cell(row=r, column=3, value='=' + lf)
-        ws.cell(row=r, column=4, value='=' + fr)
-        ws.cell(row=r, column=5, value='=' + cf)
-        ws.cell(row=r, column=6, value='=IF(S_PLOTS="нет",{a},ROUND({a},6)&" + "&ROUND({b},6))'.format(a=v('shrubs', w), b=v('splot', w)))
-        ws.cell(row=r, column=7, value='=IF(S_HEDGE="нет",{a},ROUND({a},6)&" / "&ROUND({a}*3,6))'.format(a=v('h1', w)))
-        ws.cell(row=r, column=8, value='=IF(S_HEDGE="нет",{a},ROUND({a},6)&" / "&ROUND({a}*5,6))'.format(a=v('h2', w)))
-    ws['A11'] = 'Объёмы выхода древесины и древесных отходов'
-    ws['A11'].font = Font(name=FONT, bold=True)
-    vt = ['Единицы измерения', 'Сучья, ветви, вершины', 'Пни', 'Древесина', 'Кустарник (Сучья, ветви, вершины)', 'Кустарник (Пни)']
-    vtips = [None, 'Сучья, ветви и вершины (крона) — по каждой позиции на листе «Древесина».', 'Пни: 20 % от древесины стволов (как в оригинале).',
-             'Древесина стволов: складочный объём и масса.', 'Кустарник: древесина по нормам «сводка 1 га кустарника» (лист «Справочник»).',
-             'Кустарник: корневые остатки (пни) по нормам «сводка 1 га кустарника».']
-    for i, hh in enumerate(vt):
-        c = ws.cell(row=12, column=1 + i, value=hh)
-        style_header(c)
-        if vtips[i]:
-            note(c, vtips[i])
-    ws['A13'] = 'складочный объём, м³'
-    ws['A14'] = 'масса, тонн'
-    ws['B13'] = "=ROUND(INDEX(VOL_TBL,7,4),2)"
-    ws['C13'] = "=ROUND(INDEX(VOL_TBL,3,4)*0.2,2)"
-    ws['D13'] = "=ROUND(INDEX(VOL_TBL,3,4),2)"
-    ws['E13'] = "=ROUND(VOL_SBM3,3)"
-    ws['F13'] = "=ROUND(VOL_SSM3,3)"
-    ws['B14'] = "=ROUND(INDEX(VOL_TBL,8,4),2)"
-    ws['C14'] = "=ROUND(INDEX(VOL_TBL,4,4)*0.2,2)"
-    ws['D14'] = "=ROUND(INDEX(VOL_TBL,4,4),3)"
-    ws['E14'] = "=ROUND(VOL_SBT,3)"
-    ws['F14'] = "=ROUND(VOL_SST,3)"
-    ws['A16'] = 'По каждой позиции — лист «Древесина»; по типам твёрдости и по диаметрам стволов — лист «Итоги».'
-    ws['A18'] = 'Баланс цветников, газонов, иного травяного покрова, м²'
-    ws['A18'].font = Font(name=FONT, bold=True)
-    for i, hh in enumerate(['', 'Цветники', 'Газоны', 'Иной травяной покров']):
-        style_header(ws.cell(row=19, column=1 + i, value=hh))
-    for i, label in enumerate(['Сохраняемые', 'Пересаживаемые', 'Удаляемые', 'Итого (всего на участке — ввод)']):
-        ws.cell(row=20 + i, column=1, value=label)
-    note(ws['A23'], 'Впишите в жёлтые ячейки всю площадь цветников, газонов и травяного покрова на участке — сохраняемые посчитаются сами.')
-    for j, tk in enumerate(['FL', 'LW', 'GR']):
-        col = get_column_letter(2 + j)
-        ws['%s23' % col].fill = F_SET
-        ws['%s21' % col] = '=%s_TR' % tk
-        ws['%s22' % col] = '=IF(%s_AREA-%s_TR<0.1,0,%s_AREA-%s_TR)' % (tk, tk, tk, tk)
-        ws['%s20' % col] = '=N(%s23)-%s21-%s22' % (col, col, col)
+        c.fill = PatternFill('solid', fgColor='FFFFD966' if f is None else 'FFC6E0B4')
+        if tip:
+            note(c, tip, 300)
+        ws.column_dimensions[col].width = w
+        if hidden:
+            ws.column_dimensions[col].hidden = True
+            ws.column_dimensions[col].outlineLevel = 1
+        if f is not None:
+            ref = '%s%d' % (col, G_FIRST)
+            ws[ref] = '=' + render(f, L, row=G_FIRST, hrow=G_HROW, first=G_FIRST, sheet=SH_G)
+            if not hidden:
+                ws[ref].fill = F_CALC
+    ws.row_dimensions[G_HROW].height = 44
+    ws.freeze_panes = 'C%d' % G_FIRST
+    ws.column_dimensions[L['gnoin']].number_format = '@'
+    rng = lambda c: '%s%d:%s%d' % (L[c], G_FIRST, L[c], last)
+    dv_kind = DataValidation(type='list', formula1='GR_Name', allow_blank=True, showErrorMessage=True,
+                             errorTitle='Вид', error='Выберите вид из списка (цветник, газон или иной травяной покров).')
+    dv_cond = DataValidation(type='list', formula1='"%s"' % ','.join(REF['greensCondK']), allow_blank=True, showErrorMessage=True,
+                             errorTitle='Состояние', error='Для цветников и газонов: хор., уд. или плох. Пусто — хор.')
+    dv_act = DataValidation(type='list', formula1='"В,П"', allow_blank=True)
+    dv_rs = DataValidation(type='list', formula1='RS_Name', allow_blank=True, showErrorMessage=False)
+    dv_yn = DataValidation(type='list', formula1='"да,нет"', allow_blank=True, showErrorMessage=True,
+                           errorTitle='К1–К4', error='Выберите «да», «нет» или оставьте пусто (как в настройках).')
+    dv_pay = DataValidation(type='list', formula1='"выплатами,посадками"', allow_blank=True, showErrorMessage=True,
+                            errorTitle='Компенсация', error='Выберите «выплатами», «посадками» или оставьте пусто (как в настройках).')
+    for dv, cols in ((dv_kind, ['gkind']), (dv_cond, ['gcond']), (dv_act, ['gact']), (dv_rs, ['grsn']),
+                     (dv_yn, ['gk1in', 'gk2in', 'gk3in', 'gk4in']), (dv_pay, ['gpay'])):
+        ws.add_data_validation(dv)
+        for c in cols:
+            dv.add(rng(c))
+    for name, col in L.items():
+        defname(wb, 'R_' + name, "'%s'!$%s$%d:$%s$%d" % (SH_G, col, G_FIRST, col, last))
     return ws
+
+
+def greens_money_f(v):
+    """Сумма выплат за цветники и газоны в единицах из настроек; рубли — до копеек."""
+    return ('IF(S_UNIT="руб.",ROUND({v}*BASE,2)&" руб.",IF(S_UNIT="баз.в.",ROUND({v},6)&" баз.в.",'
+            'ROUND({v},6)&" баз.в. ("&ROUND({v}*BASE,2)&" руб.)"))').format(v=v)
+
+
+def greens_lines():
+    """Итоги под ведомостью цветников и газонов: 5 строк × 6 колонок (№, вид, площадь, состояние, решение, компенсация)."""
+    nz = lambda v, t: 'IF(%s=0,"",%s)' % (v, t)
+    R = 'GZ_RF+GZ_RL+GZ_RG'
+    TT = 'GZ_TF+GZ_TL+GZ_TG'
+    KT = 'GZ_KF+GZ_KL+GZ_KG'
+    return [
+        [nz(R, '"Итого"'), nz('GZ_RF', '"удаляемые цветники:"'), nz('GZ_RF', 'GZ_RF'), nz('GZ_RF', '"м²"'),
+         nz('GZ_PF+GZ_PL', '"Посадки:"'), nz('GZ_PF', '"цветник не менее "&ROUND(GZ_PF,6)&" м²"')],
+        ['""', nz('GZ_RL', '"удаляемые газоны:"'), nz('GZ_RL', 'GZ_RL'), nz('GZ_RL', '"м²"'), '""',
+         nz('GZ_PL', '"газон не менее "&ROUND(GZ_PL,6)&" м²"')],
+        ['""', nz('GZ_RG', '"удаляемый иной травяной покров:"'), nz('GZ_RG', 'GZ_RG'), nz('GZ_RG', '"м²"'),
+         nz('GZ_NM', '"Выплаты:"'), nz('GZ_NM', greens_money_f('GZ_V'))],
+        [nz(TT, '"Итого"'), nz(TT, '"пересаживаемые:"'), nz(TT, TT), nz(TT, '"м²"'), '""', '""'],
+        [nz(KT, '"Итого"'), nz(KT, '"сохраняемые:"'), nz(KT, KT), nz(KT, '"м²"'), '""', '""'],
+    ]
+
+
+GREEN_BAL_COL = 8    # H: баланс цветников и газонов справа от ведомости
+
+
+def build_greens_list(wb):
+    """Готовая ведомость цветников и газонов (для AutoCAD) и баланс цветников, газонов, иного травяного покрова."""
+    G = lambda nm, txt=True: 'INDEX(R_%s,{I})%s' % (nm, '&""' if txt else '')
+    cols = [('Номер по плану', G('gno'), 11, 'Номер по плану.', None),
+            ('Вид', G('gtitle'), 34, 'Вид цветника, газона, иного травяного покрова; примечание — в скобках.', None),
+            ('Площадь, м²', 'IF(ISNUMBER(INDEX(R_garea,{I})),INDEX(R_garea,{I}),INDEX(R_garea,{I})&"")', 10, 'Площадь, м².', None),
+            ('Качественное состояние', G('gcs'), 13, 'хор., уд., плох. — для цветников и газонов (пусто в листе ввода = хор.); иной травяной покров — «-».', None),
+            ('Решение', G('gdec'), 20, 'Сохранить, удалить или пересадить (с причиной).', None),
+            ('Компенсационные посадки (выплаты)', G('gcomp'), 44,
+             'Выплаты — (стоимость) баз.в. × площадь × коэф. состояния × К1 × К2 × К3 × К4 = итог (п. 11 Положения). Посадки — восстановить цветник '
+             'или газон на площади не менее удалённой (п. 10 Положения).', None)]
+    lines = greens_lines()
+    cap = G_ROWS + len(lines) + 2
+    err = '=IF(GZ_ERR>0,"Внимание: строк с ошибками — "&GZ_ERR&". Они не вошли в итоги (колонка «Ошибка» на листе «%s»).","")' % SH_G
+    ws = build_list(wb, SH_GL, 'Ведомость цветников, газонов, иного травяного покрова', cols, 'gC', 'GZ_N', lines, cap, err,
+                    hidden_at=20, src=SH_G)
+    ws['A2'] = org_line('&" · базовая величина "&BASE&" руб."')
+    # баланс справа
+    c0 = GREEN_BAL_COL
+    side = Side(style='thin', color='FF000000')
+    box = Border(side, side, side, side)
+    ws.column_dimensions[get_column_letter(c0 - 1)].width = 3
+    ws.column_dimensions[get_column_letter(c0)].width = 22
+    for j in range(1, 4):
+        ws.column_dimensions[get_column_letter(c0 + j)].width = 13
+    t = HDR_ROW - 1
+    link = ws.cell(row=t - 1, column=c0, value='=HYPERLINK("#\'%s\'!%s%d:%s%d","▶ Баланс для AutoCAD")' % (
+        SH_GL, get_column_letter(c0), t, get_column_letter(c0 + 3), HDR_ROW + 4))
+    link.font = Font(name=FONT, size=9, color='FF1F5FBF', underline='single')
+    ws.cell(row=t, column=c0, value='Баланс цветников, газонов, иного травяного покрова, м²').font = Font(name=FONT, bold=True)
+    for j, hh in enumerate(['Проектные предложения', 'Цветники', 'Газоны', 'Иной травяной покров']):
+        c = ws.cell(row=HDR_ROW, column=c0 + j, value=hh)
+        style_header(c)
+        c.border = box
+    rows = [('Сохраняемые', 'K'), ('Пересаживаемые', 'T'), ('Удаляемые', 'R')]
+    for i, (label, k) in enumerate(rows):
+        ws.cell(row=HDR_ROW + 1 + i, column=c0, value=label)
+        for j, cat in enumerate('FLG'):
+            ws.cell(row=HDR_ROW + 1 + i, column=c0 + 1 + j, value='=GZ_%s%s' % (k, cat))
+    ws.cell(row=HDR_ROW + 4, column=c0, value='Итого')
+    for j in range(1, 4):
+        L0 = get_column_letter(c0 + j)
+        ws.cell(row=HDR_ROW + 4, column=c0 + j, value='=SUM(%s%d:%s%d)' % (L0, HDR_ROW + 1, L0, HDR_ROW + 3))
+    for rr in range(HDR_ROW + 1, HDR_ROW + 5):
+        for j in range(4):
+            c = ws.cell(row=rr, column=c0 + j)
+            c.border = box
+            c.font = Font(name=FONT, size=9, bold=(rr == HDR_ROW + 4 or j == 0))
+            c.alignment = Alignment(horizontal='left' if j == 0 else 'center', vertical='center')
+    note(ws.cell(row=t, column=c0), 'Считается по листу «%s»: сохраняемые (действие пусто), пересаживаемые (П), удаляемые (В). '
+                                   'Строки с ошибками не входят.' % SH_G, 300)
+    return ws, cap
 
 
 def build(nrows=1000, out=None):
@@ -1415,12 +1441,11 @@ def build(nrows=1000, out=None):
     ws_main, spec, L, last = build_main(wb, nrows)
     build_totals(wb, L)
     caps = build_lists(wb, nrows)
-    ws_areas, area_tot = build_areas(wb)
-    for tk, (key, rng) in zip(['FL', 'LW', 'GR'], area_tot.items()):
-        defname(wb, '%s_TR' % tk, "SUMIFS('Цветники и газоны'!$D$%d:$D$%d,'Цветники и газоны'!$E$%d:$E$%d,\"п\")" % (rng[0], rng[1], rng[0], rng[1]))
-    build_balance(wb)
-    order = ['Настройки', 'Ведомость', 'Существующие', 'Сохраняемые', 'Удаляемые', 'Пересаживаемые', 'Древесина',
-             'Цветники и газоны', 'Баланс', 'Итоги', 'Справочник']
+    build_greens(wb)
+    ws_gl, gcap = build_greens_list(wb)
+    caps[SH_GL] = (gcap, ws_gl._taks_kc)
+    order = ['Настройки', 'Ведомость', 'Существующие', 'Сохраняемые', 'Удаляемые', 'Пересаживаемые', SH_VOL,
+             SH_G, SH_GL, 'Итоги', 'Справочник']
     wb._sheets = [wb[n] for n in order]
     for ws in wb.worksheets:
         ws.sheet_view.zoomScale = 100 if ws.title == 'Ведомость' else 90
@@ -1430,7 +1455,7 @@ def build(nrows=1000, out=None):
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     tmp = out + '.tmp.xlsx'
     wb.save(tmp)
-    ranges = {'Ведомость': (FIRST, FIRST + nrows - 1, None)}
+    ranges = {'Ведомость': (FIRST, FIRST + nrows - 1, None), SH_G: (G_FIRST, G_FIRST + G_ROWS - 1, None)}
     for sh, (cap, kc) in caps.items():
         ranges[sh] = (LFIRST, LFIRST + cap - 1, kc)
     expand_shared(tmp, out, ranges)
@@ -1509,7 +1534,17 @@ def expand_shared(src, dst, sheets):
             pos = min([x.find(t) for t in ('<drawing', '<legacyDrawing', '</worksheet>') if x.find(t) >= 0])
             x = x[:pos] + ie + x[pos:]
             files[path] = x.encode('utf-8')
-    with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED) as z:
+    # openpyxl пишет русские буквы как «&#1042;» (7 байт вместо 2) — переводим в обычный UTF-8; служебные &#60; и т.п. не трогаем
+    nref = re.compile(r'&#(\d+);')
+    for n in names:
+        if n.endswith('.xml') or n.endswith('.vml'):
+            x = files[n].decode('utf-8')
+            if '&#' in x:
+                x = nref.sub(lambda m: chr(int(m.group(1))) if int(m.group(1)) >= 128 else m.group(0), x)
+            if n.endswith('.xml') and not x.startswith('<?xml'):
+                x = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + x     # кодировка явно, как в файлах Excel
+            files[n] = x.encode('utf-8')
+    with zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:   # максимальное сжатие: файл меньше
         for n in names:
             z.writestr(n, files[n])
 

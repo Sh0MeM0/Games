@@ -1403,6 +1403,185 @@ def compute_areas(project, ref, S, base):
     return {'flowers': flowers, 'lawns': lawns, 'grass': grass}
 
 
+# ------------------------------------------------------------------ цветники и газоны (Таксация Лайт: одна ведомость)
+GREEN_CATS = ('цветник', 'газон', 'иной травяной покров')
+
+
+def greens_input(project, ref):
+    """Строки ведомости цветников и газонов. Если в проекте только старые блоки оригинала (flowers, lawns, grass),
+    они переводятся в одну ведомость: вид — по справочнику greens, «п» — пересадить, иначе — удалить.
+    Проектируемое озеленение оригинала в Таксации Лайт не учитывается: вместо него — «посадками» в строке."""
+    if project.get('greens') is not None:
+        return project.get('greens') or []
+    old = {tuple(g['old']): g['name'] for g in ref['greens']}
+    out = []
+    for sec in ('flowers', 'lawns', 'grass'):
+        for x in project.get(sec) or []:
+            if sec == 'grass':
+                if is_blank(x.get('area')) and is_blank(x.get('cond')):
+                    continue
+                kind = 'Иной травяной покров'
+            else:
+                kind = x.get('kind')
+                if is_blank(kind) and is_blank(x.get('area')) and is_blank(x.get('cond')):
+                    continue
+            out.append({'kind': old.get((sec, kind), kind), 'area': x.get('area'), 'cond': x.get('cond'),
+                        'action': 'П' if x.get('transplant') else 'В', 'reason': x.get('reason'), 'note': x.get('note')})
+    return out
+
+
+def _trim(v):
+    """TRIM(ячейка&"") Excel: пробелы по краям убираются, повторные внутри — сжимаются до одного."""
+    return re.sub(' +', ' ', cell_text(v).strip(' '))
+
+
+def compute_greens(project, ref, S, base):
+    """Ведомость цветников, газонов и иного травяного покрова (лист «Цветники и газоны»).
+    Постановление Совмина РБ № 1426, Положение о порядке определения условий осуществления компенсационных мероприятий:
+    стоимость — приложение 8; коэффициенты состояния (1; 0,75; 0,5) — только для цветников и газонов (сноска к приложению 8);
+    пустое состояние цветника, газона = «хор.» (п. 9 ч. 2); выплаты — стоимость × площадь × коэф. состояния × К1 × К2 × К3 × К4
+    (п. 11); посадки — восстановление цветника (за цветник) или газона (за газон и иной травяной покров) на площади не менее
+    удалённой, без коэффициентов (п. 10 ч. 3)."""
+    G = ref['greens']
+    by_name = {}
+    for i, g in enumerate(G):
+        by_name.setdefault(lc(g['name']), i)
+    QK = ref['greensCondK']
+    rows = []
+    prev_end = 0
+    cnt = 0
+    for i, src in enumerate(greens_input(project, ref)):
+        kind_t = _trim(src.get('kind'))
+        area_in = src.get('area')
+        present = kind_t != '' or _trim(area_in) != ''
+        if not present:
+            continue
+        cnt += 1
+        r = {'idx': i, 'src': src, 'pos': cnt}
+        # № по плану: свой — как есть (целое число продолжает нумерацию), пусто — предыдущий + 1
+        nt = _trim(src.get('noIn'))
+        if nt == '':
+            r['no'], prev_end = prev_end + 1, prev_end + 1
+        elif re.fullmatch(r'\d+', nt):
+            r['no'] = int(nt)
+            prev_end = int(nt)
+        else:
+            r['no'] = nt
+        gi = by_name.get(lc(kind_t), -1) if kind_t else -1
+        g = G[gi] if gi >= 0 else None
+        r['kind'] = g['name'] if g else kind_t
+        r['cat'] = g['cat'] if g else ''
+        note = src.get('note') or ''
+        r['title'] = r['kind'] + (' (' + cell_text(note) + ')' if cell_text(note) != '' else '')
+        r['area'] = area_in if is_num(area_in) else (None if is_blank(area_in) else area_in)
+        ct = _trim(src.get('cond'))
+        if g and g['cond']:
+            r['condShow'] = ct if ct else 'хор.'
+            q = QK.get(lc(r['condShow']))
+        else:
+            r['condShow'] = ct if ct else '-'
+            q = 1
+        act = lc(_trim(src.get('action')))
+        r['rem'], r['trn'] = act == 'в', act == 'п'
+        reason = cell_text(src.get('reason') or '')
+        r['decision'] = ('удалить' if r['rem'] else 'пересадить' if r['trn'] else 'сохранить') + \
+                        (' (' + reason + ')' if reason and (r['rem'] or r['trn']) else '')
+        err = None
+        if not kind_t:
+            err = 'выберите вид из списка'
+        elif not g:
+            err = 'вида нет в списке — выберите из списка'
+        elif _trim(area_in) == '':
+            err = 'укажите площадь, м²'
+        elif not is_num(area_in):
+            err = 'площадь — не число'
+        elif area_in <= 0:
+            err = 'площадь должна быть больше 0'
+        elif g['cond'] and q is None:
+            err = 'состояние цветника, газона — хор., уд. или плох.'
+        r['error'] = ('ОШИБКА: ' + err) if err else ''
+        coef = coefficients(S, reason, None, [src.get('k1'), src.get('k2'), src.get('k3'), src.get('k4')])
+        k = coef['k']
+        pay = lc(_trim(src.get('pay')))
+        r['money'] = S['money'] if pay not in ('выплатами', 'посадками') else pay == 'выплатами'
+        r['q'] = q
+        r['value'] = ''          # выплата, баз.в. (строки удаления с выплатами)
+        r['plant'] = 0           # площадь восстановления (строки удаления с посадками)
+        if err:
+            r['comp'] = r['error']
+        elif r['trn']:
+            r['comp'] = '-'
+        elif not r['rem']:
+            r['comp'] = ''
+        elif coef['zero']:
+            r['comp'] = 'Без компенсации'
+            r['value'] = 0 if r['money'] else ''
+        elif not r['money']:
+            r['plant'] = area_in
+            r['comp'] = ('цветник' if g['cat'] == 'цветник' else 'газон') + ' не менее ' + xnum(xround(area_in, 6)) + ' м²'
+        else:
+            v = area_in * g['value'] * q * k[0] * k[1] * k[2] * k[3]
+            r['value'] = v
+            if S['view'] == 'итог':
+                r['comp'] = xnum(xround(v, 6)) + ' баз.в.'
+            else:
+                r['comp'] = ('(' + xnum(g['value']) + ') баз.в. х' + xnum(xround(area_in, 6)) + 'м² х' + xnum(q) + 'х' + xnum(k[0]) +
+                             'х' + xnum(k[1]) + 'х' + xnum(k[2]) + 'х' + xnum(k[3]) + ' =' + xnum(xround(v, 6)))
+        r['ok'] = not err
+        rows.append(r)
+
+    def asum(pred):
+        return fsum(r['area'] for r in rows if r['ok'] and pred(r))
+    bal = {}
+    for cat in GREEN_CATS:
+        bal[cat] = {'kept': asum(lambda r, c=cat: r['cat'] == c and not r['rem'] and not r['trn']),
+                    'transplanted': asum(lambda r, c=cat: r['cat'] == c and r['trn']),
+                    'removed': asum(lambda r, c=cat: r['cat'] == c and r['rem'])}
+        bal[cat]['total'] = bal[cat]['kept'] + bal[cat]['transplanted'] + bal[cat]['removed']
+    pay_rows = [r for r in rows if r['ok'] and r['rem'] and is_num(r['value'])]
+    tot = {'payment': fsum(r['value'] for r in pay_rows),
+           'plantFlower': fsum(r['plant'] for r in rows if r['ok'] and r['cat'] == 'цветник'),
+           'plantLawn': fsum(r['plant'] for r in rows if r['ok'] and r['cat'] == 'газон') +
+                        fsum(r['plant'] for r in rows if r['ok'] and r['cat'] == 'иной травяной покров'),
+           'removed': asum(lambda r: r['rem']), 'transplanted': asum(lambda r: r['trn']),
+           'kept': asum(lambda r: not r['rem'] and not r['trn']),
+           'errors': sum(1 for r in rows if not r['ok']),
+           'nMoney': sum(1 for r in rows if r['ok'] and r['rem'] and r['money']),
+           'nPlant': sum(1 for r in rows if r['ok'] and r['rem'] and not r['money'])}
+    tot['paymentRub'] = tot['payment'] * base
+    return {'rows': rows, 'balance': bal, 'totals': tot}
+
+
+def greens_report(G, S, base):
+    """Итоги под ведомостью цветников и газонов: 5 строк × 6 колонок (как на листе «Ведомость цветников и газонов»)."""
+    b, t = G['balance'], G['totals']
+    RF, RL, RG = b['цветник']['removed'], b['газон']['removed'], b['иной травяной покров']['removed']
+    TT = sum(b[c]['transplanted'] for c in GREEN_CATS)
+    KT = sum(b[c]['kept'] for c in GREEN_CATS)
+    PF, PL, NM, V = t['plantFlower'], t['plantLawn'], t['nMoney'], t['payment']
+
+    def nz(v, x):
+        return '' if v == 0 else x
+    return [
+        [nz(RF + RL + RG, 'Итого'), nz(RF, 'удаляемые цветники:'), nz(RF, RF), nz(RF, 'м²'), nz(PF + PL, 'Посадки:'),
+         nz(PF, 'цветник не менее ' + xnum(xround(PF, 6)) + ' м²')],
+        ['', nz(RL, 'удаляемые газоны:'), nz(RL, RL), nz(RL, 'м²'), '', nz(PL, 'газон не менее ' + xnum(xround(PL, 6)) + ' м²')],
+        ['', nz(RG, 'удаляемый иной травяной покров:'), nz(RG, RG), nz(RG, 'м²'), nz(NM, 'Выплаты:'),
+         nz(NM, greens_money_text(V, S, base))],
+        [nz(TT, 'Итого'), nz(TT, 'пересаживаемые:'), nz(TT, TT), nz(TT, 'м²'), '', ''],
+        [nz(KT, 'Итого'), nz(KT, 'сохраняемые:'), nz(KT, KT), nz(KT, 'м²'), '', ''],
+    ]
+
+
+def greens_money_text(v, S, base):
+    """Сумма выплат за цветники и газоны в единицах из настроек; рубли — до копеек."""
+    if S['unit'] == 'руб.':
+        return xnum(xround(v * base, 2)) + ' руб.'
+    if S['unit'] == 'баз.в.':
+        return xnum(xround(v, 6)) + ' баз.в.'
+    return xnum(xround(v, 6)) + ' баз.в. (' + xnum(xround(v * base, 2)) + ' руб.)'
+
+
 # ------------------------------------------------------------------ public compute
 def _merged_ref(project, ref):
     extra = project.get('customSpecies') or []
@@ -1446,6 +1625,7 @@ def compute(project, ref, compat=False):
     ex = existing_totals(rows)
     bal = balance(rows, ex, rmT, trT, S)
     areas = compute_areas(project, ref, S, base)
+    greens = None if compat else compute_greens(project, ref, S, base)
     errors = []
     for r in rows:
         for e in r['errors']:
@@ -1456,9 +1636,11 @@ def compute(project, ref, compat=False):
                 errors.append({'section': sec, 'row': r['idx'], 'msg': e})
     res = {'settings': S, 'baseValue': base, 'baseValueRow': bv_row, 'rows': rows, 'existing': ex, 'removal': rmT,
            'volume': vol, 'transplant': trT, 'balance': bal, 'flowers': areas['flowers'], 'lawns': areas['lawns'],
-           'grass': areas['grass'], 'errors': errors}
+           'grass': areas['grass'], 'greens': greens, 'errors': errors}
     res['removalReport'] = removal_report(res)
     if not compat and (rmT['nPlantRows'] if S['money'] else rmT['nMoneyRows']) > 0:
         res['removalReport'] += removal_report(res, plant=S['money'], left=False)
     res['balanceReport'] = balance_report(res)
+    if greens is not None:
+        res['greensReport'] = greens_report(greens, S, base)
     return res
