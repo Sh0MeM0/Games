@@ -249,6 +249,18 @@ def build_ref(wb):
                     [[i + 1, g['name'], g['cat'], g['value'], g['cond']] for i, g in enumerate(REF['greens'])],
                     [None, 'GR_Name', 'GR_Cat', 'GR_Val', 'GR_Q'])
     note(ws.cell(row=gt, column=c0), REF['sources']['greens'], 420)
+    pt0 = row
+    PTY = REF['plantTypes']
+    row = put_table(row, c0, 'Типы компенсационных посадок (графы приложений 4 и 5 к Положению, постановление Совмина № 1426)',
+                    ['№', 'Тип посадок (как в списке)', 'код', 'группа', 'графа норм'],
+                    [[i + 1, p['name'], p['code'], p['group'], p['law']] for i, p in enumerate(PTY)],
+                    [None, 'PTY_Name', 'PTY_Code', 'PTY_Grp', None])
+    note(ws.cell(row=pt0, column=c0), REF['sources']['plantTypes'], 420)
+    ntr = sum(1 for p in PTY if p['group'] == 'дерево')
+    assert all(p['group'] == 'дерево' for p in PTY[:ntr])
+    L1 = get_column_letter(c0 + 1)
+    defname(wb, 'PTL_T', "'Справочник'!$%s$%d:$%s$%d" % (L1, pt0 + 2, L1, pt0 + 1 + ntr))
+    defname(wb, 'PTL_S', "'Справочник'!$%s$%d:$%s$%d" % (L1, pt0 + 2 + ntr, L1, pt0 + 1 + len(PTY)))
     # календарь базовых величин (колонки X:Z)
     ws.cell(row=3, column=24, value='Календарь базовых величин — добавляйте новые значения в пустые строки').font = Font(name=FONT, bold=True)
     for i, h in enumerate(['Действует с', 'Рублей', 'Постановление']):
@@ -276,6 +288,24 @@ def build_ref(wb):
 # =============================================================== Настройки
 K_INFO = [('К1', 'зона особой охраны', 'да → К1 = 2, нет → 1'), ('К2', 'бюджет', 'да → К2 = 0,5, нет → 1'),
           ('К3', 'помеха инженерным сетям', 'да → К3 = 0,5, нет → 1'), ('К4', 'вне населённого пункта', 'да → К4 = 0,1, нет → 1')]
+
+
+PT_CANON = {'вечз.': 'хвой..', 'плод..': 'быст..'}
+
+
+def pt_name(code):
+    """Код типа посадок (хвой., медл.., …) → название из списка (графы приложений 4 и 5)."""
+    code = PT_CANON.get(code, code)
+    for p in REF['plantTypes']:
+        if p['code'] == code:
+            return p['name']
+    return None
+
+
+def pt_code(ref_cell, group):
+    """Формула: название типа посадок → код, если тип из нужной группы (дерево / куст), иначе пусто."""
+    m = 'MATCH(TRIM(%s&""),PTY_Name,0)' % ref_cell
+    return 'IFERROR(IF(INDEX(PTY_Grp,%s)="%s",INDEX(PTY_Code,%s),""),"")' % (m, group, m)
 
 
 def build_settings(wb):
@@ -317,8 +347,17 @@ def build_settings(wb):
          '(нормы «сводка 1 га кустарника», лист «Справочник»). Живая изгородь: 1 п.м. = 3 куста (однорядная) или 5 (двухрядная).'),
         ('S_PLOTDENS', 'Густота поросли (для отходов)', 'редкий', 'dens',
          'По какой норме «сводка 1 га кустарника» считать отходы участков поросли (кустарников и деревьев): редкий, средний или густой.'),
-        ('S_PLOTTREE', 'Поросль деревьев компенсировать типом', REF['compMap']['plotTree'], 'ptree', 'В какую группу деревьев включается поросль деревьев в итогах и в посадках.'),
-        ('S_PLOTSHRUB', 'Поросль кустарников компенсировать типом', REF['compMap']['plotShrub'], 'pshrub', 'В какую группу кустарников включается поросль кустарников.'),
+        ('S_TREEPL', 'Деревья компенсировать типом (посадками)', None, 'ptree',
+         'Какими саженцами компенсировать удаляемые деревья в режиме «посадками» (варианты — графы приложения 4 к Положению, '
+         'постановление Совмина № 1426). Пусто — по таблице «Компенсировать типами» внизу листа (там же пусто — своим типом). '
+         'Для отдельной строки тип выбирается в колонке «Тип посадок» листа «Ведомость». Поросль — отдельной настройкой ниже.'),
+        ('S_SHRUBPL', 'Кустарники компенсировать типом (посадками)', None, 'pshrub',
+         'Какими саженцами компенсировать удаляемые кустарники, в т.ч. живую изгородь (варианты — графы приложения 5). '
+         'Пусто — по таблице «Компенсировать типами» внизу листа. Для отдельной строки — колонка «Тип посадок» листа «Ведомость».'),
+        ('S_PLOTTREE', 'Поросль деревьев компенсировать типом', pt_name(REF['compMap']['plotTree']), 'ptree',
+         'В какую группу деревьев включается поросль деревьев в итогах и в посадках (графы приложения 4).'),
+        ('S_PLOTSHRUB', 'Поросль кустарников компенсировать типом', pt_name(REF['compMap']['plotShrub']), 'pshrub',
+         'В какую группу кустарников включается поросль кустарников (графы приложения 5).'),
     ]
     dvs = {
         'yn': DataValidation(type='list', formula1='"да,нет"', allow_blank=False),
@@ -326,8 +365,8 @@ def build_settings(wb):
         'unit': DataValidation(type='list', formula1='"баз.в.,баз.в. (руб.),руб."'),
         'view': DataValidation(type='list', formula1='"формула + итог,итог"'),
         'cond': DataValidation(type='list', formula1='"хор.,уд.,плох.,ненадл."'),
-        'ptree': DataValidation(type='list', formula1='"хвой.,медл.,быст."'),
-        'pshrub': DataValidation(type='list', formula1='"лиан.,хвой..,вечз.,крас.,медл..,быст..,плод..,ж.и.1,ж.и.2"'),
+        'ptree': DataValidation(type='list', formula1='PTL_T', allow_blank=True),
+        'pshrub': DataValidation(type='list', formula1='PTL_S', allow_blank=True),
         'dens': DataValidation(type='list', formula1='"редкий,средний,густой"'),
     }
     for dv in dvs.values():
@@ -348,7 +387,9 @@ def build_settings(wb):
                 dvs[kind].add(c)
             defname(wb, name, "'Настройки'!$C$%d" % r)
         r += 1
-    flags = [('BASE_FROM', '=SUMPRODUCT(MAX((BV_From<=S_DATE)*BV_From))'), ('K1Y', '=S_K1<>"нет"'), ('K2Y', '=S_K2="да"'), ('K3Y', '=S_K3="да"'), ('K4Y', '=S_K4="да"'), ('MONEYY', '=S_MONEY<>"посадками"')]
+    flags = [('BASE_FROM', '=SUMPRODUCT(MAX((BV_From<=S_DATE)*BV_From))'), ('K1Y', '=S_K1<>"нет"'), ('K2Y', '=S_K2="да"'), ('K3Y', '=S_K3="да"'), ('K4Y', '=S_K4="да"'), ('MONEYY', '=S_MONEY<>"посадками"'),
+             ('TRP_C', '=' + pt_code('S_TREEPL', 'дерево')), ('SHP_C', '=' + pt_code('S_SHRUBPL', 'куст')),
+             ('PLT_C', '=' + pt_code('S_PLOTTREE', 'дерево')), ('PLS_C', '=' + pt_code('S_PLOTSHRUB', 'куст'))]
     ws.cell(row=r + 1, column=2, value='Служебные флаги (не изменять)').font = Font(name=FONT, italic=True, color='FF888888')
     for i, (nm, f) in enumerate(flags):
         ws.cell(row=r + 2 + i, column=2, value=nm).font = Font(name=FONT, color='FF888888')
@@ -379,19 +420,28 @@ def build_settings(wb):
     style_header(c)
     c = ws.cell(row=r + 1, column=3, value='Компенсировать типом')
     style_header(c)
-    note(c, 'Каким типом саженцев компенсировать удаляемый тип в режиме «посадками». Пусто — тем же типом.')
+    note(c, 'Каким типом саженцев компенсировать удаляемый тип в режиме «посадками», если в строке «Ведомости» и в настройках '
+            '«Деревья (Кустарники) компенсировать типом» тип не выбран. Пусто — тем же типом. Варианты — графы приложений 4 и 5 к Положению.')
+    c = ws.cell(row=r + 1, column=4, value='код (считается сам)')
+    style_header(c)
     cm0 = r + 2
     types = ['хвой.', 'медл.', 'быст.', 'плод.', 'малоц.', 'лиан.', 'хвой..', 'вечз.', 'крас.', 'медл..', 'быст..', 'плод..', 'ж.и.1', 'ж.и.2']
-    dv = DataValidation(type='list', formula1='"' + ','.join(types) + '"', allow_blank=True)
-    ws.add_data_validation(dv)
+    dv_t = DataValidation(type='list', formula1='PTL_T', allow_blank=True)
+    dv_s = DataValidation(type='list', formula1='PTL_S', allow_blank=True)
+    ws.add_data_validation(dv_t)
+    ws.add_data_validation(dv_s)
     for i, t in enumerate(types):
+        tree = t in ('хвой.', 'медл.', 'быст.', 'плод.', 'малоц.')
         ws.cell(row=cm0 + i, column=2, value=t)
-        c = ws.cell(row=cm0 + i, column=3, value=REF['compMap'].get(t) or None)
+        c = ws.cell(row=cm0 + i, column=3, value=pt_name(REF['compMap'].get(t) or ''))
         c.fill = F_SET
         c.border = B_THIN
-        dv.add(c)
+        (dv_t if tree else dv_s).add(c)
+        k = ws.cell(row=cm0 + i, column=4, value='=' + pt_code('C%d' % (cm0 + i), 'дерево' if tree else 'куст'))
+        k.font = Font(name=FONT, size=9, color='FF888888')
     defname(wb, 'CM_Type', "'Настройки'!$B$%d:$B$%d" % (cm0, cm0 + len(types) - 1))
     defname(wb, 'CM_Map', "'Настройки'!$C$%d:$C$%d" % (cm0, cm0 + len(types) - 1))
+    defname(wb, 'CM_Code', "'Настройки'!$D$%d:$D$%d" % (cm0, cm0 + len(types) - 1))
     for row in ws.iter_rows(min_row=3, max_row=cm0 + 20):
         for c in row:
             if c.font and not c.font.bold:
@@ -441,6 +491,12 @@ def cols_spec():
         tip='Способ компенсации для этой строки: «выплатами» — сумма в базовых величинах, «посадками» — число саженцев взамен.\n'
             'Пусто — как на листе «Настройки». Итоги считаются отдельно: выплаты — по строкам с выплатами, посадки — по строкам с посадками; '
             'на листе «Удаляемые» под итогами по способу из настроек появится блок по второму способу.')
+    add('ptype', 'Тип посадок (если «посадками»)', None, 16,
+        tip='Какими саженцами компенсировать эту строку, если компенсация «посадками». Список зависит от строки: для деревьев и поросли '
+            'деревьев — графы приложения 4 (хвойные, медленнорастущие, быстрорастущие лиственные деревья), для кустарников, изгороди и '
+            'поросли кустарников — графы приложения 5 к Положению (постановление Совмина № 1426).\n'
+            'Пусто — как на листе «Настройки»: «Деревья (Кустарники) компенсировать типом», для поросли — «Поросль … компенсировать типом», '
+            'иначе таблица «Компенсировать типами». При выплатах колонка не учитывается.')
     add('note', 'Примечание', None, 14, tip='Попадает в наименование в скобках. Запись вида «V=50%» уменьшает объёмы кустарника.')
     # расчёт (видимые)
     add('no', '№ в ведомостях', 'IF({sp}="","",IF({rok},{ra}&"-"&{rb},IF({free},{nt},{s0}&IF({cnt}&""="","",IFERROR("-"&({s0}+VALUE({cnt}&"")-1),"")))))', 9,
@@ -503,8 +559,11 @@ def cols_spec():
     add('plot', 'поросль (1)', 'IF({isPlot},1,0)', 4, h)
     add('Fx', 'состояние для расчёта', 'IF({isPlot},"-",IF({cond}="",S_COND,{cond}))', 6, h)
     add('Nc', 'коэф. состояния', 'IF(OR(ISNUMBER(SEARCH("~*уч-к поросли дер. у дорог",{sp})),ISNUMBER(SEARCH("~*уч-к поросли куст. у дорог",{sp}))),0.1,IF(OR({Fx}="хор.",{Fx}="-"),1,IF({Fx}="уд.",0.75,IF({Fx}="плох.",0.5,IF({Fx}="ненадл.",0.25,"")))))', 5, h)
-    add('cmap', 'компенсировать типом', 'IFERROR(INDEX(CM_Map,MATCH({N},CM_Type,0))&"","")', 6, h)
-    add('M', 'тип для посадок', 'IF({rem}<>1,"",IF({J}=1,{N},IF(OR({J}=60,{J}=70),S_PLOTTREE&"",IF(OR({J}=18,{J}=19),S_PLOTSHRUB&"",IF({cmap}<>"",{cmap},IF(OR({N}="крас.",{N}="лиан."),IF({shrubRow},{N},"медл."),{N}))))))', 6, h)
+    add('cmap', 'компенсировать типом', 'IFERROR(INDEX(CM_Code,MATCH({N},CM_Type,0))&"","")', 6, h)
+    m_pt = 'MATCH(TRIM({ptype}&""),PTY_Name,0)'
+    add('ptok', 'тип посадок строки (код)', 'IFERROR(IF(INDEX(PTY_Grp,%s)=IF({shrubRow},"куст","дерево"),INDEX(PTY_Code,%s),""),"")' % (m_pt, m_pt), 6, h)
+    add('M', 'тип для посадок', 'IF({rem}<>1,"",IF({J}=1,{N},IF({ptok}<>"",{ptok},IF(OR({J}=60,{J}=70),PLT_C&"",IF(OR({J}=18,{J}=19),PLS_C&"",'
+        'IF(AND(NOT({shrubRow}),TRP_C<>""),TRP_C,IF(AND({shrubRow},SHP_C<>""),SHP_C,IF({cmap}<>"",{cmap},IF(OR({N}="крас.",{N}="лиан."),IF({shrubRow},{N},"медл."),{N})))))))))', 6, h)
     add('AO', 'свой тип дерева', 'IF(AND({rem}=1,NOT({shrubRow}),ISERROR(SEARCH("ч-к поросли",{sp}))),{N},"")', 6, h)
     add('Hn', 'высота числом', 'IFERROR({h}+0,0)', 5, h)
     add('segs', 'стволы (служебно)', 'SUBSTITUTE(SUBSTITUTE({Es},"*",""),",",REPT(" ",200))', 6, h)
@@ -684,7 +743,11 @@ def build_main(wb, nrows):
                            errorTitle='К1–К4', error='Выберите «да», «нет» или оставьте пусто (как в настройках).')
     dv_pay = DataValidation(type='list', formula1='"выплатами,посадками"', allow_blank=True, showErrorMessage=True,
                             errorTitle='Компенсация', error='Выберите «выплатами», «посадками» или оставьте пусто (как в настройках).')
-    for dv, cols in ((dv_cond, ['cond']), (dv_act, ['act']), (dv_sp, ['sp']), (dv_rs, ['rsn']), (dv_yn, ['k1in', 'k2in', 'k3in', 'k4in']), (dv_pay, ['pay'])):
+    dv_pt = DataValidation(type='list', formula1='IF($%s%d,PTL_S,PTL_T)' % (L['shrubRow'], FIRST), allow_blank=True, showErrorMessage=True,
+                           errorTitle='Тип посадок', error='Выберите тип из списка (для деревьев — деревья, для кустарников — кусты и изгородь) '
+                                                          'или оставьте пусто (как в настройках).')
+    for dv, cols in ((dv_cond, ['cond']), (dv_act, ['act']), (dv_sp, ['sp']), (dv_rs, ['rsn']), (dv_yn, ['k1in', 'k2in', 'k3in', 'k4in']), (dv_pay, ['pay']),
+                     (dv_pt, ['ptype'])):
         ws.add_data_validation(dv)
         for c in cols:
             dv.add(rng(c))
@@ -783,23 +846,23 @@ def removal_lines(P='NOT(MONEYY)', left=True):
         return ['IF((%s)="","",%s)' % (Cc, A), 'IF((%s)="","",%s)' % (Cc, B), Cc, 'IF((%s)="","",%s)' % (Cc, D),
                 'IF((%s)="","",%s)' % (G, E), 'IF((%s)="","",%s)' % (G, F), G, 'IF((%s)="","",%s)' % (G, H)]
     nz = lambda v: 'IF(%s=0,"",%s)' % (v, v)
-    pn = lambda t: 'IF(S_PLOTTREE="%s"," ("&ROUND(PLOTN_T,6)&")","")' % t
-    pns = lambda ts: 'IF(OR(%s)," ("&ROUND(PLOTN_S,6)&")","")' % ','.join('S_PLOTSHRUB="%s"' % t for t in ts)
+    pn = lambda t: 'IF(PLT_C="%s"," ("&ROUND(PLOTN_T,6)&")","")' % t
+    pns = lambda ts: 'IF(OR(%s)," ("&ROUND(PLOTN_S,6)&")","")' % ','.join('PLS_C="%s"' % t for t in ts)
     U = 'S_UNIT'
     rows.append(blk('"Итого"', '"_________деревьев:"', nz('C_TREES'), '"шт."', '"Итого"', 'IF(%s,"_______деревьев:","за деревья:")' % P,
                     'IF(%s,%s,IF(AP_TREES=0,"",%s))' % (P, nz('AN_TREES'), money_f('AP_TREES')), 'IF(%s,"шт. саженцев",%s)' % (P, U)))
     rows.append(blk('"в т.ч."', '"лиственные декор-е:"', nz('(C_TREES-C_X-C_P)'), '"шт."', 'IF(%s,"в т.ч.","--- в т.ч. за")' % P,
                     'IF(%s,"хвойн./ вечнозел.:","лиственные декор-е:")' % P,
                     'IF(%s,IF(AN_X=0,"",ROUND(AN_X,6)&%s),IF(AP_M+AP_B+AP_L=0,"",%s))' % (P, pn('хвой.'), money_f('(AP_M+AP_B+AP_L)')),
-                    'IF(%s,"шт. "&IF(S_PLOTTREE="хвой.","(в т.ч. за поросль)",""),%s)' % (P, U)))
+                    'IF(%s,"шт. "&IF(PLT_C="хвой.","(в т.ч. за поросль)",""),%s)' % (P, U)))
     rows.append(blk('"в т.ч."', '"хвойные и вечнозел.:"', nz('C_X'), '"шт."', 'IF(%s,"в т.ч.","--- в т.ч. за")' % P,
                     'IF(%s,"листв. медл-раст-х:","хвойные и вечнозел.:")' % P,
                     'IF(%s,IF(AN_M=0,"",ROUND(AN_M,6)&%s),IF(AP_X=0,"",%s))' % (P, pn('медл.'), money_f('AP_X')),
-                    'IF(%s,"шт. "&IF(S_PLOTTREE="медл.","(в т.ч. за поросль)",""),%s)' % (P, U)))
+                    'IF(%s,"шт. "&IF(PLT_C="медл.","(в т.ч. за поросль)",""),%s)' % (P, U)))
     rows.append(blk('"в т.ч."', '"плодовые:"', nz('C_P'), '"шт."', 'IF(%s,"в т.ч.","--- в т.ч. за")' % P,
                     'IF(%s,"листв. быст-раст-х:","плодовые:")' % P,
                     'IF(%s,IF(AN_B=0,"",ROUND(AN_B,6)&%s),IF(AP_P=0,"",%s))' % (P, pn('быст.'), money_f('AP_P')),
-                    'IF(%s,"шт. "&IF(S_PLOTTREE="быст.","(в т.ч. за поросль)",""),%s)' % (P, U)))
+                    'IF(%s,"шт. "&IF(PLT_C="быст.","(в т.ч. за поросль)",""),%s)' % (P, U)))
     rows.append(blk('"Итого"', '"уч-ки поросли дер-ев:"', nz('C_TPLOT'), '"м²"', 'IF(%s,"Итого","--- Итого за")' % P,
                     'IF(%s,"_____кустарников:","уч-ки поросли дер-ев:")' % P,
                     'IF(%s,%s,IF(C_TPLOT=0,"",%s))' % (P, nz('AN_ALL'), money_f('PLOT_T')), 'IF(%s,"шт. (в т.ч. в жив. изг.)",%s)' % (P, U)))
@@ -1076,12 +1139,12 @@ def build_totals(wb, L):
     ws.cell(row=r, column=1, value='Выплаты, баз.вел. (AP2011…)').font = Font(name=FONT, bold=True)
     r += 1
     for ty, nm in (('хвой.', 'AP_X'), ('медл.', 'AP_M'), ('быст.', 'AP_B')):
-        put(nm, 'деревья ' + ty + ' (+ поросль по типу)', 'SUMIFS(R_Y,R_AO,"%s",R_mon,1)+IF(S_PLOTTREE="%s",PLOT_T,0)' % (ty, ty))
+        put(nm, 'деревья ' + ty + ' (+ поросль по типу)', 'SUMIFS(R_Y,R_AO,"%s",R_mon,1)+IF(PLT_C="%s",PLOT_T,0)' % (ty, ty))
     put('AP_P', 'деревья плод.', 'SUMIFS(R_Y,R_AO,"плод.",R_mon,1)')
     put('AP_L', 'деревья малоц.', 'SUMIFS(R_Y,R_AO,"малоц.",R_mon,1)')
     put('AP_TREES', 'за деревья (AP2017)', 'AP_X+AP_M+AP_B+AP_P+AP_L')
     for i, ty in enumerate(shrub_types + ['ж.и.1', 'ж.и.2']):
-        put('AP_S%d' % i, 'кусты ' + ty + ' (+ поросль по типу)', 'SUMIFS(R_Y,R_rem,1,R_N,"%s",R_plot,0,R_mon,1)+IF(S_PLOTSHRUB="%s",PLOT_S,0)' % (ty, ty))
+        put('AP_S%d' % i, 'кусты ' + ty + ' (+ поросль по типу)', 'SUMIFS(R_Y,R_rem,1,R_N,"%s",R_plot,0,R_mon,1)+IF(PLS_C="%s",PLOT_S,0)' % (ty, ty))
     put('AP_SHRUBS', 'за кустарники (AP2042)', '+'.join('AP_S%d' % i for i in range(7)))
     put('AP_TOTAL', 'ИТОГО всех выплат', 'AP_TREES+AP_S7+AP_S8+AP_SHRUBS',
         'Деревья (с порослью деревьев по типу) + кустарники (с порослью кустарников по типу) + живая изгородь. '

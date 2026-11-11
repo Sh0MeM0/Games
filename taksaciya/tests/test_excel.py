@@ -130,7 +130,8 @@ def fill_workbook(src, dst, project):
     vals = {'S_DATE': (d - datetime.date(1899, 12, 30)).days, 'S_K1': yn(S['k1']), 'S_K2': yn(S['k2']), 'S_K3': yn(S['k3']), 'S_K4': yn(S['k4']),
             'S_MONEY': 'выплатами' if S['money'] else 'посадками', 'S_UNIT': S['unit'], 'S_VIEW': S['view'], 'S_COND': S['defaultCond'],
             'S_BUSHM2': S.get('bushArea', 1), 'S_PLOTDENS': S.get('plotDensity', 'редкий'),
-            'S_PLOTTREE': S['compMap']['plotTree'], 'S_PLOTSHRUB': S['compMap']['plotShrub']}
+            'S_PLOTTREE': BX.pt_name(S['compMap']['plotTree']), 'S_PLOTSHRUB': BX.pt_name(S['compMap']['plotShrub']),
+            'S_TREEPL': BX.pt_name(S['compMap'].get('trees') or ''), 'S_SHRUBPL': BX.pt_name(S['compMap'].get('shrubs') or '')}
     for k, v in vals.items():
         sh, ref = cell_of(k)
         put(sh, ref, v)
@@ -143,7 +144,7 @@ def fill_workbook(src, dst, project):
     sh, col, r1, r2 = range_of('CM_Map')
     types = ['хвой.', 'медл.', 'быст.', 'плод.', 'малоц.', 'лиан.', 'хвой..', 'вечз.', 'крас.', 'медл..', 'быст..', 'плод..', 'ж.и.1', 'ж.и.2']
     for i, t in enumerate(types):
-        put(sh, 'C%d' % (r1 + i), S['compMap'].get(t) or None)
+        put(sh, 'C%d' % (r1 + i), BX.pt_name(S['compMap'].get(t) or ''))
     # деревья
     L = BX.letters(BX.cols_spec())
     for i, t in enumerate(project['trees']):
@@ -167,6 +168,7 @@ def fill_workbook(src, dst, project):
         for k in range(1, 5):
             put('Ведомость', L['k%din' % k] + str(r), t.get('k%d' % k) or None)
         put('Ведомость', L['pay'] + str(r), t.get('pay') or None)
+        put('Ведомость', L['ptype'] + str(r), t.get('ptype') or None)
     # цветники, газоны, иной травяной покров — одна ведомость (старые блоки векторов переводятся так же, как в ядре)
     GL = BX.letters(BX.greens_spec())
     for i, g in enumerate(E.greens_input(project, REF)):
@@ -538,15 +540,15 @@ def new_rules_project(money=True):
     T = [
         {'a': '', 'noIn': '4-10', 'species': 'Береза бородавчатая', 'height': 21, 'diam': 22, 'cond': 'уд.', 'action': 'В', 'reason': ''},
         {'a': '', 'species': 'Береза бородавчатая', 'height': 21, 'diam': 22, 'cond': 'уд.', 'action': 'В', 'reason': 'СЕТИ', 'k4': ' да '},
-        {'a': 3, 'species': 'Ель колючая', 'height': 15, 'diam': '30,24,14', 'cond': 'хор.', 'action': 'В', 'k1': 'да', 'k2': 'нет', 'pay': 'Посадками '},
+        {'a': 3, 'species': 'Ель колючая', 'height': 15, 'diam': '30,24,14', 'cond': 'хор.', 'action': 'В', 'k1': 'да', 'k2': 'нет', 'pay': 'Посадками ', 'ptype': 'быстрорастущие лиственные деревья'},
         {'a': 20, 'species': 'Уч-к поросли дер.', 'height': 1, 'diam': '0-4', 'action': 'В', 'reason': 'СЕТИ'},
         {'a': 5, 'species': 'Уч-к поросли дер.', 'height': 1, 'diam': '0-4', 'action': 'В'},
         {'a': 12, 'species': '*Уч-к поросли дер. у дорог', 'height': 1, 'diam': '0-4', 'action': 'В', 'k3': 'да'},
-        {'a': 15, 'species': 'Уч-к поросли куст.', 'height': 1, 'diam': '-', 'action': 'В', 'pay': 'посадками'},
+        {'a': 15, 'species': 'Уч-к поросли куст.', 'height': 1, 'diam': '-', 'action': 'В', 'pay': 'посадками', 'ptype': 'однорядная живая изгородь'},
         {'a': 6, 'species': 'Уч-к поросли дер.', 'height': 1, 'diam': '0-4', 'action': 'В', 'pay': 'ВЫПЛАТАМИ'},
         {'a': 8, 'species': 'Однорядная живая изгородь', 'height': 1.2, 'diam': '-', 'action': 'В'},
-        {'a': 1, 'species': 'Сирень обыкновенная', 'height': 2.5, 'diam': '-', 'action': 'В', 'note': 'V=50%'},
-        {'a': '', 'species': 'Дуб черешчатый', 'height': 18, 'diam': 56, 'cond': 'хор.', 'action': 'В', 'k1': ' нет ', 'pay': 'бюджет'},
+        {'a': 1, 'species': 'Сирень обыкновенная', 'height': 2.5, 'diam': '-', 'action': 'В', 'note': 'V=50%', 'pay': 'посадками'},
+        {'a': '', 'species': 'Дуб черешчатый', 'height': 18, 'diam': 56, 'cond': 'хор.', 'action': 'В', 'k1': ' нет ', 'pay': 'бюджет', 'ptype': 'красивоцветущие кусты'},
         {'a': '', 'species': 'Липа мелколистная', 'height': 8, 'diam': 14, 'cond': 'хор.', 'action': 'П'},
         {'a': 2, 'noIn': '50', 'species': 'Яблоня домашняя', 'height': 4, 'diam': 16, 'cond': 'уд.', 'action': ''},
         {'a': 4, 'noIn': '60-62', 'species': 'Яблоня домашняя', 'height': 4, 'diam': 16, 'cond': 'уд.', 'action': ''},
@@ -555,7 +557,7 @@ def new_rules_project(money=True):
         {'a': 2, 'species': str(1 + [x['name'] for x in REF['special'] + REF['species']].index('Дуб черешчатый')), 'height': 16, 'diam': 40, 'action': 'В'},
         {'a': '', 'species': '9999', 'height': 9, 'diam': 18, 'action': 'В'},
         {'a': 6, 'species': '1', 'height': 1, 'diam': '0-4', 'action': 'В'},
-        {'a': 4, 'species': 'Барбарис обыкновенный', 'height': 1.5, 'diam': '-', 'action': 'В'},
+        {'a': 4, 'species': 'Барбарис обыкновенный', 'height': 1.5, 'diam': '-', 'action': 'В', 'ptype': 'Красивоцветущие кусты'},
         {'a': '', 'species': 'береза повислая', 'height': 15, 'diam': '30,18', 'action': 'В', 'k2': 'да'},
         {'a': '', 'species': 'Сосна обыкновенная', 'height': 12, 'diam': 28, 'action': ''},
     ]
@@ -563,7 +565,8 @@ def new_rules_project(money=True):
          'view': 'формула + итог', 'defaultCond': 'уд.', 'shrubMassKg': 5, 'flowerMode': 'метрами', 'showPlots': True, 'hedgePieces': True,
          'reasons': [{'name': 'СЕТИ', 'group': '', 'replace': ''}, {'name': 'БЛАГОУСТРОЙСТТВО', 'group': '', 'replace': ''},
                      {'name': 'АВАРИЯ', 'group': '', 'replace': 'без компенcации'}],
-         'compMap': dict(E.default_settings(E.prepare_ref(REF))['compMap']), 'bushArea': 1 if money else 1.5,
+         'compMap': dict(E.default_settings(E.prepare_ref(REF))['compMap'], trees='' if money else 'медл.', shrubs='медл..' if money else ''),
+         'bushArea': 1 if money else 1.5,
          'plotDensity': 'редкий' if money else 'густой'}
     return {'settings': S, 'trees': T, 'greens': GREENS_NEW}
 
@@ -787,6 +790,13 @@ def random_project(seed, money):
         if rnd.random() < 0.1:
             g['note'] = 'у дома %d' % rnd.randint(1, 30)
         greens.append(g)
+    names_t = [x['name'] for x in REF['plantTypes'] if x['group'] == 'дерево']
+    names_s = [x['name'] for x in REF['plantTypes'] if x['group'] == 'куст']
+    for t in T:
+        if rnd.random() < 0.15:
+            t['ptype'] = rnd.choice(names_t + names_s)     # и подходящие, и не подходящие строке (тогда — как в настройках)
+    S['compMap']['trees'] = rnd.choice(['', '', 'хвой.', 'медл.', 'быст.'])
+    S['compMap']['shrubs'] = rnd.choice(['', '', 'лиан.', 'хвой..', 'крас.', 'медл..', 'быст..', 'ж.и.1', 'ж.и.2'])
     return {'settings': S, 'trees': T, 'flowers': fl, 'lawns': lw, 'grass': [], 'projected': {}, 'greens': greens}
 
 

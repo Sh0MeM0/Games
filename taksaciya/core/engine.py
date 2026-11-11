@@ -197,6 +197,7 @@ def base_value_for(date, table):
 def default_settings(ref):
     d = ref.get('defaults', {})
     comp = {t: '' for t in TREE_TYPES + SHRUB_TYPES}
+    comp.update({'trees': '', 'shrubs': ''})    # Таксация Лайт: «Деревья / Кустарники компенсировать типом» (пусто — по таблице)
     comp.update(ref.get('compMap', {}))
     return {
         'date': d.get('date') or __import__('datetime').date.today().isoformat(),
@@ -390,16 +391,39 @@ def tariff(ref, J, stems, AQ, height, N):
     return {'v': None, 'text': '___', 'err': 'нет тарифа'}
 
 
-def comp_type(settings, J, N, shrub_row):
+CANON_PLANT = {'вечз.': 'хвой..', 'плод..': 'быст..'}    # в списке типов посадок — одна графа норм на пару
+
+
+def plant_type_code(ref, name, shrub_row):
+    """Тип посадок из колонки «Тип посадок» (название из списка) → код, если он подходит строке (деревья — деревьями,
+    кустарники — кустарниками); иначе ''. Как TRIM и MATCH без учёта регистра в книге."""
+    t = lc(re.sub(' +', ' ', cell_text(name).strip(' ')))
+    for p in ref.get('plantTypes') or []:
+        if lc(p['name']) == t:
+            return p['code'] if p['group'] == ('куст' if shrub_row else 'дерево') else ''
+    return ''
+
+
+def comp_type(settings, J, N, shrub_row, row_type=''):
+    """Каким типом саженцев компенсировать. Таксация Лайт: тип в строке → поросль по настройкам поросли → деревья / кустарники
+    по настройкам «Деревья (Кустарники) компенсировать типом» → таблица «Компенсировать типами» → свой тип."""
     m = settings.get('compMap') or {}
+    lite = not settings.get('compat')
+    canon = (lambda c: CANON_PLANT.get(c, c)) if lite else (lambda c: c)
     if J == 1:
         return N
+    if lite and row_type:
+        return row_type
+    if lite and J not in (60, 70, 18, 19):
+        g = m.get('shrubs') if shrub_row else m.get('trees')
+        if g:
+            return canon(g)
     if J in (60, 70):
-        return m.get('plotTree') or ''
+        return canon(m.get('plotTree') or '')
     if J in (18, 19):
-        return m.get('plotShrub') or ''
+        return canon(m.get('plotShrub') or '')
     if m.get(N):
-        return m[N]
+        return canon(m[N])
     if N in ('крас.', 'лиан.'):
         return N if shrub_row else 'медл.'
     return N
@@ -797,7 +821,7 @@ def removal_row(r, ref, S):
     else:
         Nc = None
         r['errors'].append('неизвестное качественное состояние')
-    M = comp_type(S, J, r['N'], shrub_row)
+    M = comp_type(S, J, r['N'], shrub_row, '' if compat else plant_type_code(ref, r['src'].get('ptype'), shrub_row))
     stems = [_norm_num(x) if x is not None else None for x in parse_stems(r['diam'])]
     AQ = max(1, len([d for d in stems if d is not None and d > 11.9])) if K is not None else ''
     AO = r['N'] if (K is not None and not has(lname, 'ч-к поросли')) else ''
