@@ -1595,15 +1595,23 @@ def build_acad_summary(wb):
     ws.cell(row=r, column=1, value='Таблицы для связи с AutoCAD (команда DATALINK → связь с именованным диапазоном)').font = Font(name=FONT, bold=True)
     note(ws.cell(row=r, column=1), 'Имена «АКАД_…» для обновляемых таблиц в AutoCAD. Ведомости меняют длину сами: шапка, позиции и итоги, '
                                   'без пустых строк. После изменений сохраните книгу и выполните в AutoCAD DATALINKUPDATE.', 320)
-    for i, h in enumerate(['имя диапазона', 'строк', 'столбцов', 'лист', 'что внутри']):
+    for i, h in enumerate(['имя диапазона', 'строк', 'столбцов', 'лист', 'адрес сейчас', 'что внутри']):
         style_header(ws.cell(row=r + 1, column=1 + i, value=h))
+    note(ws.cell(row=r + 1, column=4), 'В окне DATALINK сначала выберите этот лист, затем имя диапазона.', 220)
+    note(ws.cell(row=r + 1, column=5), 'Запасной способ, если имени нет в списке AutoCAD: в окне DATALINK выберите лист, режим «Связь с диапазоном» '
+                                       '(Link to Range) и впишите этот адрес. Такой адрес сам не меняется: когда изменится длина ведомости, '
+                                       'поправьте его в диспетчере связей данных.', 320)
     for k, (nm, sheet, what, kind) in enumerate(ACAD_NAMES):
         rr = r + 2 + k
         ws.cell(row=rr, column=1, value=nm)
         ws.cell(row=rr, column=2, value='=ROWS(%s)' % nm)
         ws.cell(row=rr, column=3, value='=COLUMNS(%s)' % nm)
         ws.cell(row=rr, column=4, value=sheet)
-        ws.cell(row=rr, column=5, value=what + ('; длина меняется' if kind == 'list' else ''))
+        # адрес для режима «Связь с диапазоном»: первая и последняя ячейки диапазона (INDEX даёт одну ячейку — без массивов)
+        first = 'INDEX({n},1,1)'.format(n=nm)
+        ws.cell(row=rr, column=5, value=('=ADDRESS(ROW({f}),COLUMN({f}),4)&":"&ADDRESS(ROW({f})+ROWS({n})-1,COLUMN({f})+COLUMNS({n})-1,4)'
+                                         .format(f=first, n=nm)))
+        ws.cell(row=rr, column=6, value=what + ('; длина меняется' if kind == 'list' else ''))
 
 
 def build(nrows=1000, out=None, protect=False):

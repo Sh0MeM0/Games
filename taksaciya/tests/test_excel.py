@@ -534,7 +534,7 @@ def compare(vec_name, project, verbose=False):
     for ref, v in WI.items():
         if ref.startswith('A') and ref[1:].isdigit() and isinstance(v, str) and v.startswith('АКАД_'):
             r = int(ref[1:])
-            acad[v] = (WI.get('B%d' % r), WI.get('C%d' % r))
+            acad[v] = (WI.get('B%d' % r), WI.get('C%d' % r), WI.get('E%d' % r))
     ex_n, kept_n = len(res['rows']), len([r for r in res['rows'] if r['H'] == 'сохранить'])
     tr_n = len([r for r in res['rows'] if r['transplanted']])
     rep_n = len(res['removalReport'])
@@ -549,9 +549,17 @@ def compare(vec_name, project, verbose=False):
            'АКАД_БалансЦветники': (6, 4)}
     chk('имена АКАД_ все на месте', sorted(exp), sorted(acad))
     for nm, (rows_e, cols_e) in exp.items():
-        got = acad.get(nm, (None, None))
+        got = acad.get(nm, (None, None, None))
         chk('%s строк' % nm, rows_e, got[0])
         chk('%s столбцов' % nm, cols_e, got[1])
+        # адрес для «Связь с диапазоном»: от первой ячейки имени на rows × cols
+        m = re.search(r"!\$([A-Z]+)\$(\d+)", names.get(nm, ''))
+        if m:
+            c0, r0 = col_idx(m.group(1)), int(m.group(2))
+            want = '%s%d:%s%d' % (m.group(1), r0, BX.get_column_letter(c0 + cols_e - 1), r0 + rows_e - 1)
+        else:
+            want = 'нет имени %s' % nm
+        chk('%s адрес' % nm, want, got[2])
     shutil.rmtree(tmp, ignore_errors=True)
     print('%s: проверено %d значений, расхождений %d' % (vec_name, checked, len(diffs)))
     for d in diffs[:200 if verbose else 25]:
