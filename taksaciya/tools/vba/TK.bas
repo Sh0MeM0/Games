@@ -178,6 +178,9 @@ End Sub
 
 ' ---------------------------------------------------------------- события книги
 Public Sub TK_OnOpen()
+    ' Невидимый Excel (например, его запускает связь данных AutoCAD): окна не показываем — они бы ждали ответа
+    ' и программа зависла бы. Листы остаются такими, какими были сохранены.
+    If Not Application.Visible Then Exit Sub
     If Secret() <= 0 Then
         TK_Setup
     ElseIf TK_Unlocked() Then

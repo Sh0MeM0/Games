@@ -49,6 +49,9 @@ B_THIN = Border(*(Side(style='thin', color='FFC9D3CA'),) * 4)
 FONT = 'Arial'
 
 
+ACAD_NAMES = []     # (имя, лист, описание, вид: 'list' — меняет длину, 'fixed' — постоянный размер)
+
+
 def defname(wb, name, ref):
     dn = DefinedName(name, attr_text=ref)
     try:
@@ -768,7 +771,7 @@ def org_line(extra=''):
             + extra + ',4,999)')
 
 
-def build_list(wb, sheet, title, cols, counter, nname, totals, cap, top_note=None, hidden_at=None, teff=None, src='Ведомость'):
+def build_list(wb, sheet, title, cols, counter, nname, totals, cap, top_note=None, hidden_at=None, teff=None, src='Ведомость', acad=None):
     """Лист-ведомость. cols: [(заголовок, выражение через {I} — номер строки «Ведомости», ширина, примечание, формат)].
     Строки перечня идут подряд с LFIRST; сразу под последней позицией — пустая строка и строки итогов (totals: список строк
     по len(cols) формул без «=» или None). Итоги считаются в скрытых колонках справа."""
@@ -787,8 +790,20 @@ def build_list(wb, sheet, title, cols, counter, nname, totals, cap, top_note=Non
     ws['A4'] = ('=HYPERLINK("#\'{s}\'!A{h}:{c}"&({h}+{n}+1+{te}),"▶ Выделить таблицу для AutoCAD (затем Ctrl+C; в AutoCAD: Правка → Специальная вставка → Объекты AutoCAD)")'
                 .format(s=sheet, h=HDR_ROW, c=last_col, n=nname, te=TE))
     ws['A4'].font = Font(name=FONT, color='FF1F5FBF', underline='single')
+    link_tip = ''
+    if acad:
+        # имена для связи данных AutoCAD: диапазон сам охватывает шапку, позиции и итоги — без пустых строк в хвосте
+        full = "'{s}'!$A${h}:INDEX('{s}'!${c}:${c},{h}+{n}+1+({te}))".format(s=sheet, h=HDR_ROW, c=last_col, n=nname, te=TE)
+        items = "'{s}'!$A${h}:INDEX('{s}'!${c}:${c},{h}+{n})".format(s=sheet, h=HDR_ROW, c=last_col, n=nname)
+        defname(wb, 'АКАД_' + acad, full)
+        defname(wb, 'АКАД_' + acad + '_перечень', items)
+        ACAD_NAMES.append(('АКАД_' + acad, sheet, 'шапка, перечень и итоги', 'list'))
+        ACAD_NAMES.append(('АКАД_' + acad + '_перечень', sheet, 'шапка и перечень без итогов', 'list'))
+        link_tip = ('\nОбновляемая таблица в AutoCAD: команда DATALINK → связь с именованным диапазоном «АКАД_%s» (с итогами) '
+                    'или «АКАД_%s_перечень» (без итогов). Диапазон сам меняет длину по числу позиций.' % (acad, acad))
     note(ws['A4'], 'Щелчок выделяет перечень вместе с итогами. Скопируйте (Ctrl+C), в AutoCAD выполните команду PASTESPEC '
-                   '(«Правка → Специальная вставка») и выберите «Объекты AutoCAD» — получится таблица, которую можно править прямо в чертеже.', 300)
+                   '(«Правка → Специальная вставка») и выберите «Объекты AutoCAD» — получится таблица, которую можно править прямо в чертеже.'
+         + link_tip, 320)
     for i, (h, expr, w, tip, fmt) in enumerate(cols):
         c = ws.cell(row=HDR_ROW, column=i + 1, value=h)
         style_header(c)
@@ -915,9 +930,12 @@ def wood_summary(ws, c0):
     side = Side(style='thin', color='FF9AA79C')
     box = Border(side, side, side, side)
 
-    def table(r, title, heads, rows, fmt, tip=None):
+    def table(r, title, heads, rows, fmt, tip=None, acad=None):
         last = get_column_letter(c0 + len(heads) - 1)
         link = ws.cell(row=r, column=c0, value='=HYPERLINK("#\'%s\'!%s%d:%s%d","▶ для AutoCAD")' % (SH_VOL, L0, r + 2, last, r + 2 + len(rows)))
+        if acad:
+            defname(ws.parent, acad, "'%s'!$%s$%d:$%s$%d" % (SH_VOL, L0, r + 2, last, r + 2 + len(rows)))
+            ACAD_NAMES.append((acad, SH_VOL, title, 'fixed'))
         link.font = Font(name=FONT, size=9, color='FF1F5FBF', underline='single')
         t = ws.cell(row=r + 1, column=c0, value=title)
         t.font = Font(name=FONT, bold=True)
@@ -939,17 +957,17 @@ def wood_summary(ws, c0):
               [['складочный объём, м³', '=ROUND(VOL_BZ_ALL,2)', '=ROUND(VOL_STM3_ALL,2)', '=ROUND(VOL_BY_ALL,2)', '=ROUND(VOL_SBM3,3)', '=ROUND(VOL_SSM3,3)'],
                ['масса, тонн', '=ROUND(VOL_BX_ALL,3)', '=ROUND(VOL_STT_ALL,2)', '=ROUND(VOL_BW_ALL,2)', '=ROUND(VOL_SBT,3)', '=ROUND(VOL_SST,3)']],
               '0.0000', 'Как «Таблица объёмов выхода древесины и древесных отходов» оригинала (лист БАЛАНСЫ), с тем же округлением. '
-              'Кустарник — по нормам «сводка 1 га кустарника» (лист «Справочник»).')
+              'Кустарник — по нормам «сводка 1 га кустарника» (лист «Справочник»).', acad='АКАД_ОбъемыОтходов')
     vt = lambda i: ['=INDEX(VOL_TBL,%d,%d)' % (i, j) for j in range(1, 5)]
     r = table(r, 'Объёмы по типам древесины', ['', 'Мягкая', 'Хвойная', 'Твёрдая', 'Итого'],
               [['Стволы, м³: диаметр ≤ 50 см'] + vt(1), ['Стволы, м³: диаметр > 50 см'] + vt(2), ['Стволы, м³: все диаметры'] + vt(3),
                ['Пни, м³'] + vt(5), ['Сучья, ветви, вершины, м³'] + vt(7), ['Стволы, тонн'] + vt(4), ['Пни, тонн'] + vt(6),
                ['Сучья, ветви, вершины, тонн'] + vt(8)], '0.0000',
-              'Объёмы (м³ — складочные) и масса по мягкой, хвойной и твёрдой древесине, как на листе БАЛАНСЫ оригинала.')
+              'Объёмы (м³ — складочные) и масса по мягкой, хвойной и твёрдой древесине, как на листе БАЛАНСЫ оригинала.', acad='АКАД_ОбъемыПоТипам')
     labels = ['до 12', '12-16', '16-20', '20-24', '24-28', '28-32', 'более 32']
     r = table(r, 'Число стволов по диаметрам, шт.', ['Диаметр стволов, см', 'Мягкая', 'Хвойная', 'Твёрдая', 'Итого'],
               [[lb] + ['=INDEX(STEMS_TBL,%d,%d)' % (i + 1, j) for j in range(1, 5)] for i, lb in enumerate(labels)], '0',
-              'Число удаляемых стволов по диаметрам и типам древесины (как на листе БАЛАНСЫ оригинала).')
+              'Число удаляемых стволов по диаметрам и типам древесины (как на листе БАЛАНСЫ оригинала).', acad='АКАД_Стволы')
     balance_table(ws, c0, r)
 
 
@@ -966,6 +984,9 @@ def balance_table(ws, c0, r):
                                             '"▶ для AutoCAD (колонки поросли — только если она есть)")').format(
         sh=SH_VOL, a=col(0), t=t, j7=col(7), j8=col(8), j9=col(9), e=d0 + 3))
     link.font = Font(name=FONT, size=9, color='FF1F5FBF', underline='single')
+    defname(ws.parent, 'АКАД_Баланс', "'{sh}'!${a}${t}:INDEX('{sh}'!${a}${e}:${j9}${e},1,IF(EX_PK>0,10,IF(EX_PD>0,9,8)))".format(
+        sh=SH_VOL, a=col(0), t=t, j9=col(9), e=d0 + 3))
+    ACAD_NAMES.append(('АКАД_Баланс', SH_VOL, 'баланс существующих деревьев и кустарников (колонки поросли — только если она есть)', 'fixed'))
     head = {(t, 0): 'Баланс существующих деревьев и кустарников',
             (h1, 0): 'Проектные предложения', (h1, 1): 'Деревья, шт.', (h1, 5): 'Кустарники',
             (h2, 1): 'Всего', (h2, 2): 'в том числе', (h2, 5): 'Кусты, шт.', (h2, 6): 'Живая изгородь, м',
@@ -1009,14 +1030,16 @@ def build_lists(wb, nrows):
     ex_tot = simple_lines([('Деревья', 'EX_TREES', 'шт.'), ('Кустарники', 'EX_SHRUBS', 'шт.'), ('Поросль деревьев', 'EX_PD', 'м²'),
                            ('Поросль кустарников', 'EX_PK', 'м²'), ('Живая изгородь однорядная', 'EX_H1', 'п.м.'), ('Живая изгородь двухрядная', 'EX_H2', 'п.м.')])
     caps['Существующие'] = nrows + len(ex_tot) + 2
-    ws = build_list(wb, 'Существующие', 'Ведомость существующих деревьев и кустарников', ex_cols, 'exC', 'N_EX', ex_tot, caps['Существующие'])
+    ws = build_list(wb, 'Существующие', 'Ведомость существующих деревьев и кустарников', ex_cols, 'exC', 'N_EX', ex_tot, caps['Существующие'],
+                    acad='Существующие')
     # сохраняемые
     kp_cols = [C_NO, C_TITLE, C_QTY, C_H, C_DT, C_COND, ('Примечание', IDX('note'), 22, 'Примечание из ведомости.', None)]
     kp_tot = simple_lines([('Деревья', 'KB_TREES', 'шт.'), ('в т.ч. лиственные декоративные', 'KB_L', 'шт.'), ('в т.ч. плодовые', 'KB_P', 'шт.'),
                            ('в т.ч. хвойные', 'KB_X', 'шт.'), ('Кустарники', 'KB_SHRUBS', 'шт.'), ('Поросль деревьев', 'KB_PD', 'м²'),
                            ('Поросль кустарников', 'KB_PK', 'м²'), ('Живая изгородь однорядная', 'KB_H1', 'п.м.'), ('Живая изгородь двухрядная', 'KB_H2', 'п.м.')])
     caps['Сохраняемые'] = nrows + len(kp_tot) + 2
-    ws = build_list(wb, 'Сохраняемые', 'Ведомость сохраняемых деревьев и кустарников', kp_cols, 'keepC', 'N_KEEP', kp_tot, caps['Сохраняемые'])
+    ws = build_list(wb, 'Сохраняемые', 'Ведомость сохраняемых деревьев и кустарников', kp_cols, 'keepC', 'N_KEEP', kp_tot, caps['Сохраняемые'],
+                    acad='Сохраняемые')
     # удаляемые
     rm_cols = [C_NO, C_TITLE, C_QTY, C_H, ('Диаметр ствола, см', IDX('dRep'), 14, C_DT[3], None),
                ('Качественное состояние', IDX('Fx'), 21, 'хор., уд., плох., ненадл.; для поросли — «-».', None),
@@ -1025,7 +1048,7 @@ def build_lists(wb, nrows):
     rm_tot = removal_lines() + removal_lines('MONEYY', left=False)
     caps['Удаляемые'] = nrows + len(rm_tot) + 2
     ws = build_list(wb, 'Удаляемые', 'Ведомость удаляемых деревьев и кустарников', rm_cols, 'remC', 'N_REM', rm_tot, caps['Удаляемые'], err,
-                    teff='IF(N_OTHER>0,26,13)')
+                    teff='IF(N_OTHER>0,26,13)', acad='Удаляемые')
     ws['A2'] = org_line('&" · "&IF(AND(N_MROWS>0,N_PROWS>0),"компенсационные выплаты, "&S_UNIT&", и посадки",IF(OR(N_MROWS>0,AND(N_PROWS=0,MONEYY)),"компенсационные выплаты, "&S_UNIT,"компенсационные посадки"))&" · базовая величина "&BASE&" руб."')
     # пересаживаемые
     tr_cols = [C_NO, C_TITLE, C_QTY, C_H, C_DT, C_COND, ('Размер кома, м', IDX('ball'), 14, 'Диаметр и высота кома по справочнику и высоте растения.', None),
@@ -1034,7 +1057,8 @@ def build_lists(wb, nrows):
                            ('Кустарники', 'TR_SHRUBS', 'шт.'), ('Живая изгородь однорядная', 'TR_H1', 'п.м.'), ('Живая изгородь двухрядная', 'TR_H2', 'п.м.')],
                           '"Итого пересадить:"')
     caps['Пересаживаемые'] = nrows + len(tr_tot) + 2
-    ws = build_list(wb, 'Пересаживаемые', 'Ведомость пересаживаемых деревьев и кустарников', tr_cols, 'trC', 'N_TR', tr_tot, caps['Пересаживаемые'])
+    ws = build_list(wb, 'Пересаживаемые', 'Ведомость пересаживаемых деревьев и кустарников', tr_cols, 'trC', 'N_TR', tr_tot, caps['Пересаживаемые'],
+                    acad='Пересаживаемые')
     # древесина
     F3 = '0.000'
     F4 = '0.0000'
@@ -1068,7 +1092,7 @@ def build_lists(wb, nrows):
                    'ROUND(VOL_SBM3,3)', 'ROUND(VOL_SBT,3)', 'ROUND(VOL_SSM3,3)', 'ROUND(VOL_SST,3)'])
     caps[SH_VOL] = nrows + len(wd_tot) + 2
     ws = build_list(wb, SH_VOL, 'Объемы: отходы по удаляемым деревьям и кустарникам — сучья, ветви, вершины; пни; древесина', wd_cols, 'remC', 'N_REM', wd_tot,
-                    caps[SH_VOL], hidden_at=40)
+                    caps[SH_VOL], hidden_at=40, acad='Отходы')
     wood_summary(ws, 18)
     ws['A5'] = ('Объёмы — по таблицам «Мягк», «Хвой», «Твер» оригинала (лист «Справочник»), по диаметру каждого ствола и высоте. '
                 'Пни = 20 % от древесины стволов. Корни отдельно не считаются.')
@@ -1459,7 +1483,7 @@ def build_greens_list(wb):
     cap = G_ROWS + len(lines) + 2
     err = '=IF(GZ_ERR>0,"Внимание: строк с ошибками — "&GZ_ERR&". Они не вошли в итоги (колонка «Ошибка» на листе «%s»).","")' % SH_G
     ws = build_list(wb, SH_GL, 'Ведомость цветников, газонов, иного травяного покрова', cols, 'gC', 'GZ_N', lines, cap, err,
-                    hidden_at=20, src=SH_G)
+                    hidden_at=20, src=SH_G, acad='Цветники')
     ws['A2'] = org_line('&" · базовая величина "&BASE&" руб."')
     # баланс справа
     c0 = GREEN_BAL_COL
@@ -1473,6 +1497,8 @@ def build_greens_list(wb):
     link = ws.cell(row=t - 1, column=c0, value='=HYPERLINK("#\'%s\'!%s%d:%s%d","▶ Баланс для AutoCAD")' % (
         SH_GL, get_column_letter(c0), t, get_column_letter(c0 + 3), HDR_ROW + 4))
     link.font = Font(name=FONT, size=9, color='FF1F5FBF', underline='single')
+    defname(wb, 'АКАД_БалансЦветники', "'%s'!$%s$%d:$%s$%d" % (SH_GL, get_column_letter(c0), t, get_column_letter(c0 + 3), HDR_ROW + 4))
+    ACAD_NAMES.append(('АКАД_БалансЦветники', SH_GL, 'баланс цветников, газонов, иного травяного покрова', 'fixed'))
     ws.cell(row=t, column=c0, value='Баланс цветников, газонов, иного травяного покрова, м²').font = Font(name=FONT, bold=True)
     for j, hh in enumerate(['Проектные предложения', 'Цветники', 'Газоны', 'Иной травяной покров']):
         c = ws.cell(row=HDR_ROW, column=c0 + j, value=hh)
@@ -1562,8 +1588,27 @@ def add_vba(path, codenames):
             z.writestr(n, files[n])
 
 
+def build_acad_summary(wb):
+    """Лист «Итоги»: имена диапазонов для связи с AutoCAD и их текущий размер (строк × столбцов)."""
+    ws = wb['Итоги']
+    r = ws.max_row + 2
+    ws.cell(row=r, column=1, value='Таблицы для связи с AutoCAD (команда DATALINK → связь с именованным диапазоном)').font = Font(name=FONT, bold=True)
+    note(ws.cell(row=r, column=1), 'Имена «АКАД_…» для обновляемых таблиц в AutoCAD. Ведомости меняют длину сами: шапка, позиции и итоги, '
+                                  'без пустых строк. После изменений сохраните книгу и выполните в AutoCAD DATALINKUPDATE.', 320)
+    for i, h in enumerate(['имя диапазона', 'строк', 'столбцов', 'лист', 'что внутри']):
+        style_header(ws.cell(row=r + 1, column=1 + i, value=h))
+    for k, (nm, sheet, what, kind) in enumerate(ACAD_NAMES):
+        rr = r + 2 + k
+        ws.cell(row=rr, column=1, value=nm)
+        ws.cell(row=rr, column=2, value='=ROWS(%s)' % nm)
+        ws.cell(row=rr, column=3, value='=COLUMNS(%s)' % nm)
+        ws.cell(row=rr, column=4, value=sheet)
+        ws.cell(row=rr, column=5, value=what + ('; длина меняется' if kind == 'list' else ''))
+
+
 def build(nrows=1000, out=None, protect=False):
     """protect=True — вариант с защитой доступа (.xlsm): лист «Доступ», листы с расчётом скрыты до ввода кода."""
+    ACAD_NAMES.clear()
     wb = Workbook()
     wb.remove(wb.active)
     build_settings(wb)
@@ -1574,6 +1619,7 @@ def build(nrows=1000, out=None, protect=False):
     build_greens(wb)
     ws_gl, gcap = build_greens_list(wb)
     caps[SH_GL] = (gcap, ws_gl._taks_kc)
+    build_acad_summary(wb)
     order = ['Настройки', 'Ведомость', 'Существующие', 'Сохраняемые', 'Удаляемые', 'Пересаживаемые', SH_VOL,
              SH_G, SH_GL, 'Итоги', 'Справочник']
     if protect:

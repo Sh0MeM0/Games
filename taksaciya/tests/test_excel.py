@@ -528,6 +528,30 @@ def compare(vec_name, project, verbose=False):
     for nm, val in (('GZ_N', len(G['rows'])), ('GZ_ERR', gt['errors']), ('GZ_V', gt['payment']), ('GZ_PF', gt['plantFlower']),
                     ('GZ_PL', gt['plantLawn']), ('GZ_NM', gt['nMoney']), ('GZ_NP', gt['nPlant'])):
         chk(nm, val, named(nm))
+    # имена для связи с AutoCAD: размер таблиц (строк × столбцов) — ровно шапка, позиции и итоги
+    WI = V['Итоги']
+    acad = {}
+    for ref, v in WI.items():
+        if ref.startswith('A') and ref[1:].isdigit() and isinstance(v, str) and v.startswith('АКАД_'):
+            r = int(ref[1:])
+            acad[v] = (WI.get('B%d' % r), WI.get('C%d' % r))
+    ex_n, kept_n = len(res['rows']), len([r for r in res['rows'] if r['H'] == 'сохранить'])
+    tr_n = len([r for r in res['rows'] if r['transplanted']])
+    rep_n = len(res['removalReport'])
+    exp = {'АКАД_Существующие': (1 + ex_n + 1 + 6, 7), 'АКАД_Существующие_перечень': (1 + ex_n, 7),
+           'АКАД_Сохраняемые': (1 + kept_n + 1 + 9, 7), 'АКАД_Сохраняемые_перечень': (1 + kept_n, 7),
+           'АКАД_Удаляемые': (1 + len(rem) + 1 + rep_n, 8), 'АКАД_Удаляемые_перечень': (1 + len(rem), 8),
+           'АКАД_Пересаживаемые': (1 + tr_n + 1 + 6, 8), 'АКАД_Пересаживаемые_перечень': (1 + tr_n, 8),
+           'АКАД_Отходы': (1 + len(rem) + 1 + 7, 16), 'АКАД_Отходы_перечень': (1 + len(rem), 16),
+           'АКАД_Цветники': (1 + ng + 1 + 5, 6), 'АКАД_Цветники_перечень': (1 + ng, 6),
+           'АКАД_ОбъемыОтходов': (3, 6), 'АКАД_ОбъемыПоТипам': (9, 5), 'АКАД_Стволы': (8, 5),
+           'АКАД_Баланс': (8, 10 if res['existing']['shrubPlots'] > 0 else 9 if res['existing']['treePlots'] > 0 else 8),
+           'АКАД_БалансЦветники': (6, 4)}
+    chk('имена АКАД_ все на месте', sorted(exp), sorted(acad))
+    for nm, (rows_e, cols_e) in exp.items():
+        got = acad.get(nm, (None, None))
+        chk('%s строк' % nm, rows_e, got[0])
+        chk('%s столбцов' % nm, cols_e, got[1])
     shutil.rmtree(tmp, ignore_errors=True)
     print('%s: проверено %d значений, расхождений %d' % (vec_name, checked, len(diffs)))
     for d in diffs[:200 if verbose else 25]:
