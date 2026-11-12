@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import random
+import shutil
 import re
 import subprocess
 import sys
@@ -249,6 +250,7 @@ def part_lo(path, cns):
            'other': 'False', 'looks': 'True,False', 'hide': hidden, 'aftersave': shown, 'empty': 'False'}
     for k, v in exp.items():
         check('логика доступа: %s' % k, res.get(k) == v, (res.get(k), v))
+    shutil.rmtree(tmp, ignore_errors=True)
 
 
 def main():
@@ -259,6 +261,7 @@ def main():
     vba, cns = part_book(path)
     part_vba(vba, cns)
     part_lo(path, cns)
+    shutil.rmtree(tmp, ignore_errors=True)
     print('Итого ошибок: %d' % len(FAILS))
     return 1 if FAILS else 0
 
