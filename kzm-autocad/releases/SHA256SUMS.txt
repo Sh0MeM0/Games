@@ -1,0 +1,2 @@
+bade8c2efd3e7a95454ceb53634a799598ea3d4bfda7f2181553cc9ab0a8ece8  KZM-Setup-0.1.0.exe
+093d5f50966e9a773857f18f70c6ad22c8090d5cfdd930ebfa206441e9ca6814  KZM-Bundle-0.1.0.zip

@@ -1,0 +1,75 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    One build per AutoCAD release (build.py passes -p:AcYear=...):
+      2021–2024 (R24.0–R24.3): .NET Framework 4.8, AutoCAD.NET 24.x
+      2025–2026 (R25.0–R25.1): .NET 8 (net8.0-windows), AutoCAD.NET 25.0.1 / 25.1.0
+    The AutoCAD packages are compile-time references only (ExcludeAssets=runtime);
+    the running AutoCAD supplies its own acmgd/acdbmgd/accoremgd.
+  -->
+  <PropertyGroup>
+    <AcYear Condition="'$(AcYear)' == ''">2022</AcYear>
+  </PropertyGroup>
+  <Choose>
+    <When Condition="'$(AcYear)' == '2021'">
+      <PropertyGroup><AcNet>24.0.0</AcNet><AcCore>24.0.0</AcCore><TargetFramework>net48</TargetFramework></PropertyGroup>
+    </When>
+    <When Condition="'$(AcYear)' == '2022'">
+      <PropertyGroup><AcNet>24.1.51000</AcNet><AcCore>24.1.51000</AcCore><TargetFramework>net48</TargetFramework></PropertyGroup>
+    </When>
+    <When Condition="'$(AcYear)' == '2023'">
+      <PropertyGroup><AcNet>24.2.0</AcNet><AcCore>24.2.0</AcCore><TargetFramework>net48</TargetFramework></PropertyGroup>
+    </When>
+    <When Condition="'$(AcYear)' == '2024'">
+      <PropertyGroup><AcNet>24.3.0</AcNet><AcCore>24.3.0</AcCore><TargetFramework>net48</TargetFramework></PropertyGroup>
+    </When>
+    <When Condition="'$(AcYear)' == '2025'">
+      <PropertyGroup><AcNet>25.0.1</AcNet><AcCore>25.0.0</AcCore><TargetFramework>net8.0-windows</TargetFramework></PropertyGroup>
+    </When>
+    <When Condition="'$(AcYear)' == '2026'">
+      <PropertyGroup><AcNet>25.1.0</AcNet><AcCore>25.1.0</AcCore><TargetFramework>net8.0-windows</TargetFramework></PropertyGroup>
+    </When>
+    <Otherwise>
+      <PropertyGroup><AcNet>unsupported-AcYear</AcNet><AcCore>unsupported-AcYear</AcCore><TargetFramework>net48</TargetFramework></PropertyGroup>
+    </Otherwise>
+  </Choose>
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <PlatformTarget>x64</PlatformTarget>
+    <Version>0.1.0</Version>
+    <Deterministic>true</Deterministic>
+    <RootNamespace>Kzm.AutoCAD</RootNamespace>
+    <OutputPath>bin/$(Configuration)/$(AcYear)/</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
+    <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+    <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>
+  </PropertyGroup>
+  <Target Name="KzmCheckYear" BeforeTargets="Restore;CollectPackageReferences" Condition="'$(AcNet)' == 'unsupported-AcYear'">
+    <Error Text="AcYear=$(AcYear) не поддерживается: используйте 2021, 2022, 2023, 2024, 2025 или 2026." />
+  </Target>
+  <ItemGroup>
+    <ProjectReference Include="../Kzm.Core/Kzm.Core.csproj" />
+    <PackageReference Include="AutoCAD.NET" Version="[$(AcNet)]" ExcludeAssets="runtime" PrivateAssets="all" />
+    <PackageReference Include="AutoCAD.NET.Core" Version="[$(AcCore)]" ExcludeAssets="runtime" PrivateAssets="all" />
+    <PackageReference Include="AutoCAD.NET.Model" Version="[$(AcCore)]" ExcludeAssets="runtime" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net48" Version="1.0.3" PrivateAssets="all" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="WindowsBase" />
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="System.Xaml" />
+  </ItemGroup>
+</Project>

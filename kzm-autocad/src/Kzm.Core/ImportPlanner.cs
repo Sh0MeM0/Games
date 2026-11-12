@@ -1,0 +1,245 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+
+namespace Kzm.Core
+{
+    public sealed class ImportOptions
+    {
+        public ImportOptions(ElevationRules rules, XyMode mode, double? markerRadius, double duplicateTolerance)
+        {
+            Rules = rules ?? throw new ArgumentNullException(nameof(rules));
+            if (mode == XyMode.Manual) throw new KzmException("Ручной способ применяется только к спорным точкам.");
+            Mode = mode;
+            if (mode == XyMode.Marker)
+            {
+                if (!markerRadius.HasValue) throw new KzmException("Радиус поиска маркера R не задан.");
+                Guard.Positive(markerRadius.Value, "Радиус поиска маркера R");
+            }
+            Guard.Positive(duplicateTolerance, "Допуск совпадения точек");
+            MarkerRadius = markerRadius;
+            DuplicateTolerance = duplicateTolerance;
+        }
+
+        public ElevationRules Rules { get; }
+        public XyMode Mode { get; }
+        public double? MarkerRadius { get; }
+        public double DuplicateTolerance { get; }
+    }
+
+    public sealed class ImportItem
+    {
+        internal ImportItem(SourceText source) { Source = source; }
+
+        public SourceText Source { get; }
+        public ImportStatus Status { get; private set; }
+        public ImportReason Reason { get; private set; }
+        public string Message { get; private set; } = string.Empty;
+        public double? Elevation { get; private set; }
+        /// <summary>Numbers inside the range (for «несколько чисел»).</summary>
+        public IReadOnlyList<double> Candidates { get; private set; } = new double[0];
+        public XY? Position { get; private set; }
+        public XyMode PositionMode { get; private set; }
+        public string MarkerHandle { get; private set; }
+        public double? MarkerDistance { get; private set; }
+        public string ExistingPointHandle { get; private set; }
+        /// <summary>The disputed reason before a manual decision (kept for the report).</summary>
+        public ImportReason ResolvedFrom { get; private set; }
+
+        public bool NeedsElevation => Status == ImportStatus.Disputed && !Elevation.HasValue;
+
+        internal void Set(ImportStatus status, ImportReason reason, string message)
+        {
+            Status = status;
+            Reason = reason;
+            Message = message ?? string.Empty;
+        }
+
+        internal void SetElevation(double? value, IReadOnlyList<double> candidates)
+        {
+            Elevation = value;
+            Candidates = candidates ?? new double[0];
+        }
+
+        internal void SetPosition(XY? position, XyMode mode, string markerHandle, double? markerDistance)
+        {
+            Position = position;
+            PositionMode = mode;
+            MarkerHandle = markerHandle;
+            MarkerDistance = markerDistance;
+        }
+
+        internal void SetExisting(string handle) { ExistingPointHandle = handle; }
+
+        /// <summary>Способ (в): the user confirmed the elevation and/or picked the position.</summary>
+        public void ResolveManually(double elevation, XY position, XyMode mode)
+        {
+            if (Status != ImportStatus.Disputed) throw new InvalidOperationException("Вручную разбираются только спорные точки.");
+            if (!Guard.Finite(elevation) || !Guard.Finite(position.X) || !Guard.Finite(position.Y))
+                throw new KzmException("Отметка или координаты не определены.");
+            ResolvedFrom = Reason;
+            Elevation = elevation;
+            Position = position;
+            PositionMode = mode;
+            if (mode != XyMode.Marker) { MarkerHandle = null; MarkerDistance = null; }
+            Set(ImportStatus.Accepted, ImportReason.None, "решено вручную: было «" + ImportReasons.Title(ResolvedFrom) + "»");
+        }
+
+        public void SkipManually()
+        {
+            if (Status != ImportStatus.Disputed) return;
+            Message = string.IsNullOrEmpty(Message) ? ImportReasons.Title(ImportReason.ManualSkipped) : Message;
+        }
+    }
+
+    public sealed class ImportPlan
+    {
+        internal ImportPlan(IReadOnlyList<ImportItem> items, ImportOptions options)
+        {
+            Items = items;
+            Options = options;
+        }
+
+        public IReadOnlyList<ImportItem> Items { get; }
+        public ImportOptions Options { get; }
+
+        public IEnumerable<ImportItem> Accepted => Items.Where(item => item.Status == ImportStatus.Accepted);
+        public IEnumerable<ImportItem> Disputed => Items.Where(item => item.Status == ImportStatus.Disputed);
+        public IEnumerable<ImportItem> Rejected => Items.Where(item => item.Status == ImportStatus.Rejected);
+        public IEnumerable<ImportItem> Skipped => Items.Where(item => item.Status == ImportStatus.Skipped);
+    }
+
+    public static class ImportPlanner
+    {
+        public static ImportPlan Plan(IReadOnlyList<SourceText> texts, IReadOnlyList<MarkerCandidate> markers,
+            IReadOnlyList<ExistingPoint> existing, ImportOptions options)
+        {
+            Guard.List(texts, nameof(texts));
+            markers = markers ?? new MarkerCandidate[0];
+            existing = existing ?? new ExistingPoint[0];
+            if (options == null) throw new ArgumentNullException(nameof(options));
+            int decimals = options.Rules.Decimals;
+
+            var imported = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var point in existing)
+                if (!string.IsNullOrEmpty(point.SourceHandle) && !imported.ContainsKey(point.SourceHandle))
+                    imported[point.SourceHandle] = point.Handle;
+
+            var items = new List<ImportItem>(texts.Count);
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var text in texts)
+            {
+                if (text == null) throw new ArgumentException("Пустой элемент в списке текстов.", nameof(texts));
+                var item = new ImportItem(text);
+                items.Add(item);
+                if (!seen.Add(text.Handle ?? string.Empty))
+                {
+                    item.Set(ImportStatus.Skipped, ImportReason.AlreadyImported, "объект выбран повторно");
+                    continue;
+                }
+                if (!string.IsNullOrEmpty(text.Handle) && imported.TryGetValue(text.Handle, out string pointHandle))
+                {
+                    item.SetExisting(pointHandle);
+                    item.Set(ImportStatus.Skipped, ImportReason.AlreadyImported,
+                        "уже импортирован в эту поверхность (точка " + pointHandle + ")");
+                    continue;
+                }
+                var extracted = ElevationExtractor.Extract(text.Plain, options.Rules);
+                item.SetElevation(extracted.Value, extracted.InRange);
+                item.Set(extracted.Status, extracted.Reason, extracted.Message);
+                if (options.Mode == XyMode.Insertion)
+                    item.SetPosition(text.Anchor, XyMode.Insertion, null, null);
+            }
+
+            if (options.Mode == XyMode.Marker)
+            {
+                var accepted = items.Where(item => item.Status == ImportStatus.Accepted).ToList();
+                var matches = MarkerMatcher.Match(accepted.Select(item => item.Source.Anchor).ToList(),
+                    markers.Select(marker => marker.Position).ToList(), options.MarkerRadius.Value,
+                    options.DuplicateTolerance, decimals);
+                for (int i = 0; i < accepted.Count; i++)
+                {
+                    var match = matches[i];
+                    if (match.Success)
+                    {
+                        var marker = markers[match.MarkerIndex];
+                        accepted[i].SetPosition(marker.Position, XyMode.Marker, marker.Handle, match.Distance);
+                    }
+                    else
+                    {
+                        accepted[i].Set(ImportStatus.Disputed, match.Failure, match.Message);
+                    }
+                }
+            }
+            return new ImportPlan(items, options);
+        }
+
+        /// <summary>Pairs closer than the tolerance among accepted items and against existing points.</summary>
+        public static IReadOnlyList<ImportDuplicate> FindDuplicates(ImportPlan plan, IReadOnlyList<ExistingPoint> existing)
+        {
+            if (plan == null) throw new ArgumentNullException(nameof(plan));
+            existing = existing ?? new ExistingPoint[0];
+            var accepted = plan.Accepted.Where(item => item.Position.HasValue).ToList();
+            var pairs = DuplicateFinder.Find(accepted.Select(item => item.Position.Value).ToList(),
+                existing.Select(point => point.Position).ToList(), plan.Options.DuplicateTolerance);
+            return pairs.Select(pair => new ImportDuplicate(
+                    accepted[pair.First],
+                    pair.SecondIsExisting ? null : accepted[pair.Second],
+                    pair.SecondIsExisting ? existing[pair.Second] : null,
+                    pair.Distance))
+                .ToList();
+        }
+    }
+
+    public sealed class ImportDuplicate
+    {
+        internal ImportDuplicate(ImportItem first, ImportItem secondNew, ExistingPoint secondExisting, double distance)
+        {
+            First = first;
+            SecondNew = secondNew;
+            SecondExisting = secondExisting;
+            Distance = distance;
+        }
+
+        public ImportItem First { get; }
+        public ImportItem SecondNew { get; }
+        public ExistingPoint SecondExisting { get; }
+        public double Distance { get; }
+    }
+
+    /// <summary>Command-line summary of one import, in the order the report is read.</summary>
+    public static class ImportSummary
+    {
+        public static IReadOnlyList<string> Lines(ImportPlan plan, int duplicatePairs, int created)
+        {
+            if (plan == null) throw new ArgumentNullException(nameof(plan));
+            int decimals = plan.Options.Rules.Decimals;
+            var lines = new List<string>();
+            int text = plan.Items.Count(item => item.Source.Kind == SourceKind.Text);
+            int mtext = plan.Items.Count(item => item.Source.Kind == SourceKind.MText);
+            lines.Add("Найдено текстов: " + plan.Items.Count + " (TEXT " + text + ", MTEXT " + mtext + ")");
+
+            var accepted = plan.Accepted.ToList();
+            var byMode = accepted.GroupBy(item => item.PositionMode).OrderBy(group => group.Key)
+                .Select(group => XyModes.Title(group.Key) + " — " + group.Count());
+            lines.Add("Принято, создано точек: " + created + (accepted.Count > 0 ? " (XY: " + string.Join("; ", byMode) + ")" : string.Empty));
+            lines.Add(Grouped("Отброшено", plan.Rejected));
+            lines.Add(Grouped("Спорных, не импортировано", plan.Disputed));
+            if (plan.Skipped.Any()) lines.Add(Grouped("Пропущено", plan.Skipped));
+            lines.Add("Пар точек ближе " + ElevationFormat.Format(plan.Options.DuplicateTolerance, Math.Max(decimals, 2)) +
+                " м: " + duplicatePairs.ToString(CultureInfo.InvariantCulture) +
+                (duplicatePairs > 0 ? " — решение за вами: команда KZM_DUPLICATES" : string.Empty));
+            return lines;
+        }
+
+        private static string Grouped(string title, IEnumerable<ImportItem> items)
+        {
+            var list = items.ToList();
+            if (list.Count == 0) return title + ": 0";
+            var parts = list.GroupBy(item => item.Reason).OrderBy(group => group.Key)
+                .Select(group => ImportReasons.Title(group.Key) + " — " + group.Count());
+            return title + ": " + list.Count + " (" + string.Join("; ", parts) + ")";
+        }
+    }
+}
