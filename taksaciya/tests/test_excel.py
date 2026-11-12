@@ -332,8 +332,9 @@ def same(a, b):
 def compare(vec_name, project, verbose=False):
     tmp = tempfile.mkdtemp(prefix='taksx_')
     n = len(project['trees'])
-    tpl = BX.build(max(n + 2, 20), os.path.join(tmp, 'tpl.xlsx'))
-    filled = os.path.join(tmp, 'case.xlsx')
+    prot = os.environ.get('TAKS_PROTECT') == '1'          # вариант с защитой доступа (.xlsm): формулы те же, листы скрыты
+    tpl = BX.build(max(n + 2, 20), os.path.join(tmp, 'tpl.xlsm' if prot else 'tpl.xlsx'), protect=prot)
+    filled = os.path.join(tmp, 'case.xlsm' if prot else 'case.xlsx')
     fill_workbook(tpl, filled, project)
     out = recalc(filled)
     all_sheets = set(ALL_SHEETS)

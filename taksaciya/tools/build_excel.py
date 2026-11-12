@@ -33,6 +33,8 @@ LFIRST = 7           # первая строка перечня на листа�
 SH_VOL = 'Объемы'                           # отходы и объёмы древесины (раньше «Древесина»)
 SH_G = 'Цветники и газоны'                  # ввод: цветники, газоны, иной травяной покров
 SH_GL = 'Ведомость цветников и газонов'     # готовая ведомость цветников и газонов (для AutoCAD)
+SH_ACCESS = 'Доступ'                        # вариант с защитой: лист, который виден, пока расчёт закрыт
+SH_STORE = 'TK'                             # вариант с защитой: служебный лист (число владельца, код), всегда скрыт
 G_HROW = 3           # строка заголовков листа «Цветники и газоны»
 G_FIRST = G_HROW + 1
 G_ROWS = 300         # строк ввода цветников и газонов
@@ -1496,7 +1498,72 @@ def build_greens_list(wb):
     return ws, cap
 
 
-def build(nrows=1000, out=None):
+SPLASH_LINES = [
+    ('Таксация Лайт — книга с защитой доступа', 'title'),
+    ('Если вы видите только этот лист, расчёт закрыт: макросы не включены или нет действующего кода доступа.', 'bold'),
+    ('', None),
+    ('Как открыть расчёт', 'head'),
+    ('1. Если Excel показал жёлтую полосу с предупреждением о макросах — нажмите «Включить содержимое».', None),
+    ('2. Если Excel пишет, что макросы заблокированы (файл получен из интернета или по почте), — закройте файл, '
+     'щёлкните по нему правой кнопкой мыши → «Свойства», отметьте «Разблокировать», нажмите «ОК» и откройте файл снова.', None),
+    ('3. После включения макросов книга спросит код доступа. Код действует 7 дней, его выдаёт владелец программы.', None),
+    ('', None),
+    ('Владельцу', 'head'),
+    ('• При первом открытии с включёнными макросами задайте логин и пароль владельца и запишите их.', None),
+    ('• Код на 7 дней для другого человека: Alt+F8 → TK_KodDlyaPeredachi → «Выполнить», затем логин и пароль.', None),
+    ('• Копия для передачи (доступ в ней закрыт до ввода кода): Alt+F8 → TK_KopiyaDlyaPeredachi.', None),
+    ('• Ввести код или войти владельцем без повторного открытия: Alt+F8 → TK_Vhod.', None),
+    ('• Через 7 дней книга снова спросит код: введите свой логин, затем пароль.', None),
+    ('', None),
+    ('Это защита от обычного пользователя, а не криптографическая: знающий Excel человек может её обойти. '
+     'Книга рассчитана на Microsoft Excel для Windows; в других программах защита может не работать.', 'note'),
+]
+
+
+def build_splash(wb):
+    ws = wb.create_sheet(SH_ACCESS)
+    ws.column_dimensions['A'].width = 3
+    ws.column_dimensions['B'].width = 120
+    styles = {'title': Font(name=FONT, bold=True, size=15, color=GREEN), 'bold': Font(name=FONT, bold=True, size=11, color='FFB42318'),
+              'head': Font(name=FONT, bold=True, size=12), 'note': Font(name=FONT, italic=True, size=10, color='FF555555'),
+              None: Font(name=FONT, size=11)}
+    for i, (text, st) in enumerate(SPLASH_LINES):
+        c = ws.cell(row=2 + i, column=2, value=text or None)
+        c.font = styles[st]
+        c.alignment = Alignment(wrap_text=True, vertical='top')
+    ws.sheet_view.showGridLines = False
+    return ws
+
+
+def add_vba(path, codenames):
+    """Упаковать книгу как .xlsm: проект макросов (tools/vba) с модулями ЭтаКнига (ThisWorkbook), листов и TK."""
+    import vba_project as VP
+    here = os.path.dirname(os.path.abspath(__file__))
+    rd = lambda f: open(os.path.join(here, 'vba', f), encoding='utf-8').read()
+    mods = [('ThisWorkbook', 'workbook', rd('ThisWorkbook.cls'))] + [(c, 'sheet', '') for c in codenames] + [('TK', 'std', rd('TK.bas'))]
+    vba = VP.build_vba_project(mods)
+    with zipfile.ZipFile(path) as z:
+        names = z.namelist()
+        files = {n: z.read(n) for n in names}
+    ct = files['[Content_Types].xml'].decode('utf-8')
+    main = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml'
+    assert ct.count(main) == 1
+    ct = ct.replace(main, 'application/vnd.ms-excel.sheet.macroEnabled.main+xml')
+    ct = ct.replace('</Types>', '<Override PartName="/xl/vbaProject.bin" ContentType="application/vnd.ms-office.vbaProject"/></Types>')
+    files['[Content_Types].xml'] = ct.encode('utf-8')
+    rels = files['xl/_rels/workbook.xml.rels'].decode('utf-8')
+    rels = rels.replace('</Relationships>', '<Relationship Id="rIdVBA" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" '
+                                            'Target="vbaProject.bin"/></Relationships>')
+    files['xl/_rels/workbook.xml.rels'] = rels.encode('utf-8')
+    files['xl/vbaProject.bin'] = vba
+    names.append('xl/vbaProject.bin')
+    with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+        for n in names:
+            z.writestr(n, files[n])
+
+
+def build(nrows=1000, out=None, protect=False):
+    """protect=True — вариант с защитой доступа (.xlsm): лист «Доступ», листы с расчётом скрыты до ввода кода."""
     wb = Workbook()
     wb.remove(wb.active)
     build_settings(wb)
@@ -1509,7 +1576,22 @@ def build(nrows=1000, out=None):
     caps[SH_GL] = (gcap, ws_gl._taks_kc)
     order = ['Настройки', 'Ведомость', 'Существующие', 'Сохраняемые', 'Удаляемые', 'Пересаживаемые', SH_VOL,
              SH_G, SH_GL, 'Итоги', 'Справочник']
+    if protect:
+        build_splash(wb)
+        st = wb.create_sheet(SH_STORE)
+        for a in ('A1', 'A2'):
+            st[a].number_format = '@'
+        order = [SH_ACCESS] + order + [SH_STORE]
     wb._sheets = [wb[n] for n in order]
+    codenames = []
+    if protect:   # кодовые имена латиницей — на них ссылаются макросы; листы с расчётом скрыты (veryHidden) до ввода кода
+        wb.code_name = 'ThisWorkbook'
+        for i, ws in enumerate(wb.worksheets):
+            ws.sheet_properties.codeName = {SH_ACCESS: 'SheetTK', SH_STORE: 'SheetTKD'}.get(ws.title, 'Sheet%d' % i)
+            if ws.title != SH_ACCESS:
+                ws.sheet_state = 'veryHidden'
+            codenames.append(ws.sheet_properties.codeName)
+        wb.active = 0
     for ws in wb.worksheets:
         ws.sheet_view.zoomScale = 100 if ws.title == 'Ведомость' else 90
     from openpyxl.workbook.properties import CalcProperties
@@ -1523,6 +1605,8 @@ def build(nrows=1000, out=None):
         ranges[sh] = (LFIRST, LFIRST + cap - 1, kc)
     expand_shared(tmp, out, ranges)
     os.remove(tmp)
+    if protect:
+        add_vba(out, codenames)
     return out
 
 
@@ -1615,15 +1699,19 @@ def expand_shared(src, dst, sheets):
 SIZES = [2000]   # книги на 500, 1000, 5000 и 10000 строк в excel/ — прежняя версия, больше не пересобираются
 
 
-def out_name(n):
-    return os.path.join(ROOT, 'excel', 'Таксация-Лайт-%d.xlsx' % n)
+def out_name(n, protect=False):
+    return os.path.join(ROOT, 'excel', ('Таксация-Лайт-%d-защита.xlsm' if protect else 'Таксация-Лайт-%d.xlsx') % n)
 
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description='Без параметров — книги всех размеров: ' + ', '.join(map(str, SIZES)) + ' строк.')
     ap.add_argument('--rows', type=int, default=None, help='число строк ведомости (одна книга)')
     ap.add_argument('--out', default=None)
+    ap.add_argument('--no-protect', action='store_true', help='не собирать вариант с защитой доступа (.xlsm)')
     a = ap.parse_args()
     for n in ([a.rows] if a.rows else SIZES):
         p = build(n, a.out or out_name(n))
         print(p, os.path.getsize(p) // 1024, 'КБ')
+        if not a.no_protect and not a.out:
+            p = build(n, out_name(n, True), protect=True)
+            print(p, os.path.getsize(p) // 1024, 'КБ')
