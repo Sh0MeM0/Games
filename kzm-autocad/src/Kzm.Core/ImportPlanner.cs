@@ -72,25 +72,62 @@ namespace Kzm.Core
 
         internal void SetExisting(string handle) { ExistingPointHandle = handle; }
 
-        /// <summary>Способ (в): the user confirmed the elevation and/or picked the position.</summary>
-        public void ResolveManually(double elevation, XY position, XyMode mode)
+        /// <summary>
+        /// Способ (в) and manual corrections from the import table: the user typed the
+        /// elevation and/or picked the position. With both known the row is accepted;
+        /// otherwise it stays disputed and says what is still missing.
+        /// </summary>
+        public void Override(double? elevation, XY? position, XyMode positionMode)
         {
-            if (Status != ImportStatus.Disputed) throw new InvalidOperationException("Вручную разбираются только спорные точки.");
-            if (!Guard.Finite(elevation) || !Guard.Finite(position.X) || !Guard.Finite(position.Y))
-                throw new KzmException("Отметка или координаты не определены.");
-            ResolvedFrom = Reason;
-            Elevation = elevation;
-            Position = position;
-            PositionMode = mode;
-            if (mode != XyMode.Marker) { MarkerHandle = null; MarkerDistance = null; }
-            Set(ImportStatus.Accepted, ImportReason.None, "решено вручную: было «" + ImportReasons.Title(ResolvedFrom) + "»");
+            if (Status == ImportStatus.Skipped) return;
+            if (elevation.HasValue && !Guard.Finite(elevation.Value)) throw new KzmException("Отметка не определена.");
+            if (position.HasValue && (!Guard.Finite(position.Value.X) || !Guard.Finite(position.Value.Y)))
+                throw new KzmException("Координаты не определены.");
+            if (!elevation.HasValue && !position.HasValue) return;
+            ImportReason previous = Status == ImportStatus.Accepted ? ImportReason.None : Reason;
+            if (previous != ImportReason.ManualIncomplete) ResolvedFrom = previous;
+            if (elevation.HasValue) Elevation = elevation;
+            if (position.HasValue)
+            {
+                Position = position;
+                PositionMode = positionMode;
+                if (positionMode != XyMode.Marker) { MarkerHandle = null; MarkerDistance = null; }
+            }
+            if (Elevation.HasValue && Position.HasValue)
+            {
+                Set(ImportStatus.Accepted, ImportReason.None, ResolvedFrom == ImportReason.None
+                    ? "изменено вручную"
+                    : "решено вручную: было «" + ImportReasons.Title(ResolvedFrom) + "»");
+                return;
+            }
+            Set(ImportStatus.Disputed, ImportReason.ManualIncomplete,
+                Elevation.HasValue ? "отметка задана — укажите положение (XY)" : "положение задано — введите отметку");
         }
 
-        public void SkipManually()
+        public void ResolveManually(double elevation, XY position, XyMode mode)
         {
-            if (Status != ImportStatus.Disputed) return;
-            Message = string.IsNullOrEmpty(Message) ? ImportReasons.Title(ImportReason.ManualSkipped) : Message;
+            if (Status != ImportStatus.Disputed && Status != ImportStatus.Rejected)
+                throw new InvalidOperationException("Вручную разбираются только спорные и отброшенные строки.");
+            Override(elevation, position, mode);
         }
+
+        /// <summary>The user unticked an accepted row: no point is created for it.</summary>
+        public void Exclude()
+        {
+            if (Status != ImportStatus.Accepted) return;
+            Set(ImportStatus.Skipped, ImportReason.ManualSkipped, "исключено вручную");
+        }
+    }
+
+    /// <summary>Manual decision for one text, kept by the handle across recalculations.</summary>
+    public sealed class ImportOverride
+    {
+        public double? Elevation { get; set; }
+        public XY? Position { get; set; }
+        public XyMode PositionMode { get; set; } = XyMode.Manual;
+        public bool Exclude { get; set; }
+
+        public bool IsEmpty => !Elevation.HasValue && !Position.HasValue && !Exclude;
     }
 
     public sealed class ImportPlan
@@ -175,6 +212,20 @@ namespace Kzm.Core
             return new ImportPlan(items, options);
         }
 
+        /// <summary>Applies the user's decisions (by text handle) after every recalculation.</summary>
+        public static void ApplyOverrides(ImportPlan plan, IReadOnlyDictionary<string, ImportOverride> overrides)
+        {
+            if (plan == null) throw new ArgumentNullException(nameof(plan));
+            if (overrides == null) return;
+            foreach (var item in plan.Items)
+            {
+                if (!overrides.TryGetValue(item.Source.Handle, out var decision) || decision == null) continue;
+                if (decision.Elevation.HasValue || decision.Position.HasValue)
+                    item.Override(decision.Elevation, decision.Position, decision.PositionMode);
+                if (decision.Exclude) item.Exclude();
+            }
+        }
+
         /// <summary>Pairs closer than the tolerance among accepted items and against existing points.</summary>
         public static IReadOnlyList<ImportDuplicate> FindDuplicates(ImportPlan plan, IReadOnlyList<ExistingPoint> existing)
         {
@@ -211,7 +262,7 @@ namespace Kzm.Core
     /// <summary>Command-line summary of one import, in the order the report is read.</summary>
     public static class ImportSummary
     {
-        public static IReadOnlyList<string> Lines(ImportPlan plan, int duplicatePairs, int created)
+        public static IReadOnlyList<string> Lines(ImportPlan plan, int duplicatePairs, int created, bool preview = false)
         {
             if (plan == null) throw new ArgumentNullException(nameof(plan));
             int decimals = plan.Options.Rules.Decimals;
@@ -223,13 +274,13 @@ namespace Kzm.Core
             var accepted = plan.Accepted.ToList();
             var byMode = accepted.GroupBy(item => item.PositionMode).OrderBy(group => group.Key)
                 .Select(group => XyModes.Title(group.Key) + " — " + group.Count());
-            lines.Add("Принято, создано точек: " + created + (accepted.Count > 0 ? " (XY: " + string.Join("; ", byMode) + ")" : string.Empty));
+            lines.Add((preview ? "Будет создано точек: " : "Принято, создано точек: ") + created + (accepted.Count > 0 ? " (XY: " + string.Join("; ", byMode) + ")" : string.Empty));
             lines.Add(Grouped("Отброшено", plan.Rejected));
-            lines.Add(Grouped("Спорных, не импортировано", plan.Disputed));
+            lines.Add(Grouped(preview ? "Спорных" : "Спорных, не импортировано", plan.Disputed));
             if (plan.Skipped.Any()) lines.Add(Grouped("Пропущено", plan.Skipped));
             lines.Add("Пар точек ближе " + ElevationFormat.Format(plan.Options.DuplicateTolerance, Math.Max(decimals, 2)) +
                 " м: " + duplicatePairs.ToString(CultureInfo.InvariantCulture) +
-                (duplicatePairs > 0 ? " — решение за вами: команда KZM_DUPLICATES" : string.Empty));
+                (duplicatePairs > 0 ? " — решение за вами: «Близкие точки» в панели" : string.Empty));
             return lines;
         }
 

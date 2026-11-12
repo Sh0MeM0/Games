@@ -87,6 +87,7 @@ namespace Kzm.Core.Tests
                 new ImportOptions(Rules(), XyMode.Insertion, null, 0.01));
             var item = plan.Items.Single();
             Assert.True(item.NeedsElevation);
+            Assert.Equal(ImportStatus.Disputed, item.Status);
             item.ResolveManually(146.10, new XY(11, 21), XyMode.Manual);
             Assert.Equal(ImportStatus.Accepted, item.Status);
             Assert.Equal(ImportReason.MultipleInRange, item.ResolvedFrom);

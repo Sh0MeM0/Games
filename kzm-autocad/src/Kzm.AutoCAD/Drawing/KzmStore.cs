@@ -113,6 +113,29 @@ namespace Kzm.AutoCAD.Drawing
             }, transaction);
         }
 
+        internal static void DeleteSurface(Database database, Transaction transaction, string surfaceId)
+        {
+            var root = Root(database, transaction, false);
+            if (root == null) return;
+            if (root.Contains(SurfacesName))
+            {
+                var surfaces = (DBDictionary)transaction.GetObject(root.GetAt(SurfacesName), OpenMode.ForWrite);
+                if (surfaces.Contains(surfaceId))
+                {
+                    var record = transaction.GetObject(surfaces.GetAt(surfaceId), OpenMode.ForWrite);
+                    surfaces.Remove(surfaceId);
+                    record.Erase();
+                }
+            }
+            if (ReadCurrentSurfaceId(database, transaction) == surfaceId)
+            {
+                var record = transaction.GetObject(root.GetAt(CurrentName), OpenMode.ForWrite);
+                root.UpgradeOpen();
+                root.Remove(CurrentName);
+                record.Erase();
+            }
+        }
+
         internal static void TouchSurface(Database database, Transaction transaction, string surfaceId)
         {
             var surface = ReadSurfaces(database, transaction).FirstOrDefault(item => item.Id == surfaceId);

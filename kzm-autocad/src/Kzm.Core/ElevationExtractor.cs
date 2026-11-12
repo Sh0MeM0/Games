@@ -25,6 +25,7 @@ namespace Kzm.Core
         MarkerShared,
         AlreadyImported,
         ManualSkipped,
+        ManualIncomplete,
     }
 
     public static class ImportReasons
@@ -42,7 +43,8 @@ namespace Kzm.Core
                 case ImportReason.MarkerTie: return "2 маркера";
                 case ImportReason.MarkerShared: return "общий маркер";
                 case ImportReason.AlreadyImported: return "уже есть";
-                case ImportReason.ManualSkipped: return "пропущено";
+                case ImportReason.ManualSkipped: return "исключено";
+                case ImportReason.ManualIncomplete: return "дозаполнить";
                 default: return string.Empty;
             }
         }
@@ -59,7 +61,8 @@ namespace Kzm.Core
                 case ImportReason.MarkerTie: return "два маркера на одинаковом расстоянии";
                 case ImportReason.MarkerShared: return "маркер ближайший к нескольким отметкам";
                 case ImportReason.AlreadyImported: return "уже импортирован в эту поверхность";
-                case ImportReason.ManualSkipped: return "спорная, пропущена при ручном разборе";
+                case ImportReason.ManualSkipped: return "исключено вручную";
+                case ImportReason.ManualIncomplete: return "ручная правка не закончена";
                 default: return string.Empty;
             }
         }

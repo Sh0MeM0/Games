@@ -20,7 +20,7 @@ import zipfile
 from menu_package import build_classic_menu, COMMANDS, GROUP
 
 ROOT = Path(__file__).resolve().parent
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 NAME = 'Картограмма земляных масс'
 # year: (series for PackageContents.xml, target framework of the build)
 TARGETS = {
@@ -45,7 +45,7 @@ def sha(path):
 
 def package_xml(bundle):
     package = ET.Element('ApplicationPackage', SchemaVersion='1.0', AutodeskProduct='AutoCAD',
-        Name=NAME, AppVersion=VERSION, Description='Картограмма земляных масс (метод квадратов): этап 1 — точки и импорт отметок',
+        Name=NAME, AppVersion=VERSION, Description='Картограмма земляных масс (метод квадратов): этап 1 — панель КЗМ, точки и импорт отметок',
         Author='Sh0MeM0', ProductCode='{E003B698-76D8-4710-A167-CF7C6E26C11E}',
         UpgradeCode='{F1E9ACC8-B00F-4ABE-9FFD-4F1EFAC678B8}')
     ET.SubElement(package, 'CompanyDetails', Name='Sh0MeM0')

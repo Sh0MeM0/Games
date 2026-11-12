@@ -248,8 +248,12 @@ namespace Kzm.AutoCAD.Drawing
             return result;
         }
 
-        /// <summary>Brings block sizes and scale of all points in line with the settings.</summary>
-        internal static int ApplySizes(Database database, Transaction transaction, KzmSettings settings)
+        /// <summary>
+        /// Brings block sizes, scale and the number of decimals of all points in line
+        /// with the settings. Elevations are resolved with the previous decimals first,
+        /// so a value typed by the user into the attribute is kept.
+        /// </summary>
+        internal static int ApplySizes(Database database, Transaction transaction, KzmSettings settings, int previousDecimals)
         {
             var definitionId = EnsureDefinition(database, transaction, settings);
             var definition = (BlockTableRecord)transaction.GetObject(definitionId, OpenMode.ForRead);
@@ -263,6 +267,9 @@ namespace Kzm.AutoCAD.Drawing
             {
                 if (id.IsErased) continue;
                 var reference = (BlockReference)transaction.GetObject(id, OpenMode.ForWrite);
+                var data = Decode(reference);
+                ElevationState state = data == null ? null
+                    : PointElevation.Resolve(data.Elevation, ReadLabel(reference, transaction), previousDecimals);
                 reference.ScaleFactors = new Scale3d(scale);
                 foreach (ObjectId attributeId in reference.AttributeCollection)
                 {
@@ -270,7 +277,15 @@ namespace Kzm.AutoCAD.Drawing
                     if (!attributeDefinitions.TryGetValue(attribute.Tag.ToUpperInvariant(), out var attributeDefinition)) continue;
                     string text = attribute.TextString;
                     attribute.SetAttributeFromBlock(attributeDefinition, reference.BlockTransform);
-                    attribute.TextString = text;
+                    bool elevationLabel = string.Equals(attribute.Tag, Tag, StringComparison.OrdinalIgnoreCase);
+                    attribute.TextString = elevationLabel && state != null && state.IsValid
+                        ? ElevationFormat.Format(state.Value.Value, settings.Decimals)
+                        : text;
+                }
+                if (data != null && state != null && state.IsValid && state.EditedByUser)
+                {
+                    data.Elevation = state.Value.Value;
+                    reference.XData = Encode(data);
                 }
                 count++;
             }
