@@ -20,7 +20,7 @@ import zipfile
 from menu_package import build_classic_menu, COMMANDS, GROUP
 
 ROOT = Path(__file__).resolve().parent
-VERSION = '0.2.0'
+VERSION = '0.3.0'
 NAME = 'Картограмма земляных масс'
 # year: (series for PackageContents.xml, target framework of the build)
 TARGETS = {

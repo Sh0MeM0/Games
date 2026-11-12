@@ -7,25 +7,21 @@ namespace Kzm.Core
 {
     public sealed class ImportOptions
     {
-        public ImportOptions(ElevationRules rules, XyMode mode, double? markerRadius, double duplicateTolerance)
+        /// <summary>A marker farther than this many times the median distance is flagged for checking.</summary>
+        public const double FarMarkerFactor = 3.0;
+
+        public ImportOptions(XyMode mode, int decimals)
         {
-            Rules = rules ?? throw new ArgumentNullException(nameof(rules));
-            if (mode == XyMode.Manual) throw new KzmException("Ручной способ применяется только к спорным точкам.");
+            if (mode == XyMode.Manual) throw new KzmException("Ручной способ применяется только к отдельным строкам.");
+            if (decimals < 0 || decimals > 4) throw new KzmException("Знаков после запятой: от 0 до 4.");
             Mode = mode;
-            if (mode == XyMode.Marker)
-            {
-                if (!markerRadius.HasValue) throw new KzmException("Радиус поиска маркера R не задан.");
-                Guard.Positive(markerRadius.Value, "Радиус поиска маркера R");
-            }
-            Guard.Positive(duplicateTolerance, "Допуск совпадения точек");
-            MarkerRadius = markerRadius;
-            DuplicateTolerance = duplicateTolerance;
+            Decimals = decimals;
         }
 
-        public ElevationRules Rules { get; }
         public XyMode Mode { get; }
-        public double? MarkerRadius { get; }
-        public double DuplicateTolerance { get; }
+        public int Decimals { get; }
+        /// <summary>Points closer than 0,01 m are reported (task, п. 2.1); not a user setting.</summary>
+        public double DuplicateTolerance => KzmSettings.DuplicateTolerance;
     }
 
     public sealed class ImportItem
@@ -37,13 +33,15 @@ namespace Kzm.Core
         public ImportReason Reason { get; private set; }
         public string Message { get; private set; } = string.Empty;
         public double? Elevation { get; private set; }
-        /// <summary>Numbers inside the range (for «несколько чисел»).</summary>
+        /// <summary>Decimal numbers of the text (for «несколько дробных чисел»).</summary>
         public IReadOnlyList<double> Candidates { get; private set; } = new double[0];
         public XY? Position { get; private set; }
         public XyMode PositionMode { get; private set; }
         public string MarkerHandle { get; private set; }
         public double? MarkerDistance { get; private set; }
         public string ExistingPointHandle { get; private set; }
+        /// <summary>Accepted, but worth a look (e.g. the marker is unusually far).</summary>
+        public string Warning { get; private set; }
         /// <summary>The disputed reason before a manual decision (kept for the report).</summary>
         public ImportReason ResolvedFrom { get; private set; }
 
@@ -71,6 +69,8 @@ namespace Kzm.Core
         }
 
         internal void SetExisting(string handle) { ExistingPointHandle = handle; }
+
+        internal void SetWarning(string warning) { Warning = warning; }
 
         /// <summary>
         /// Способ (в) and manual corrections from the import table: the user typed the
@@ -156,8 +156,6 @@ namespace Kzm.Core
             markers = markers ?? new MarkerCandidate[0];
             existing = existing ?? new ExistingPoint[0];
             if (options == null) throw new ArgumentNullException(nameof(options));
-            int decimals = options.Rules.Decimals;
-
             var imported = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var point in existing)
                 if (!string.IsNullOrEmpty(point.SourceHandle) && !imported.ContainsKey(point.SourceHandle))
@@ -182,34 +180,52 @@ namespace Kzm.Core
                         "уже импортирован в эту поверхность (точка " + pointHandle + ")");
                     continue;
                 }
-                var extracted = ElevationExtractor.Extract(text.Plain, options.Rules);
-                item.SetElevation(extracted.Value, extracted.InRange);
+                var extracted = ElevationExtractor.Extract(text.Plain);
+                item.SetElevation(extracted.Value, extracted.Decimals);
                 item.Set(extracted.Status, extracted.Reason, extracted.Message);
                 if (options.Mode == XyMode.Insertion)
                     item.SetPosition(text.Anchor, XyMode.Insertion, null, null);
             }
 
-            if (options.Mode == XyMode.Marker)
+            if (options.Mode == XyMode.Marker) MatchMarkers(items, markers, options);
+            return new ImportPlan(items, options);
+        }
+
+        /// <summary>
+        /// Texts with at least one decimal number take part (point-number texts do not
+        /// compete for markers). A text with several numbers still gets its marker, so that
+        /// typing the right elevation is enough to accept it.
+        /// </summary>
+        private static void MatchMarkers(List<ImportItem> items, IReadOnlyList<MarkerCandidate> markers, ImportOptions options)
+        {
+            var participants = items.Where(item => item.Status == ImportStatus.Accepted ||
+                                                   (item.Status == ImportStatus.Disputed && item.Reason == ImportReason.MultipleNumbers)).ToList();
+            var matches = MarkerMatcher.Match(participants.Select(item => item.Source.Anchor).ToList(),
+                markers.Select(marker => marker.Position).ToList(), options.DuplicateTolerance);
+            for (int i = 0; i < participants.Count; i++)
             {
-                var accepted = items.Where(item => item.Status == ImportStatus.Accepted).ToList();
-                var matches = MarkerMatcher.Match(accepted.Select(item => item.Source.Anchor).ToList(),
-                    markers.Select(marker => marker.Position).ToList(), options.MarkerRadius.Value,
-                    options.DuplicateTolerance, decimals);
-                for (int i = 0; i < accepted.Count; i++)
+                var item = participants[i];
+                var match = matches[i];
+                if (match.Success)
                 {
-                    var match = matches[i];
-                    if (match.Success)
-                    {
-                        var marker = markers[match.MarkerIndex];
-                        accepted[i].SetPosition(marker.Position, XyMode.Marker, marker.Handle, match.Distance);
-                    }
-                    else
-                    {
-                        accepted[i].Set(ImportStatus.Disputed, match.Failure, match.Message);
-                    }
+                    var marker = markers[match.MarkerIndex];
+                    item.SetPosition(marker.Position, XyMode.Marker, marker.Handle, match.Distance);
+                }
+                else if (item.Status == ImportStatus.Accepted)
+                {
+                    item.Set(ImportStatus.Disputed, match.Failure, match.Message);
                 }
             }
-            return new ImportPlan(items, options);
+
+            // Without a search radius a far marker is not refused, but it is shown for checking.
+            var distances = participants.Where(item => item.MarkerDistance.HasValue).Select(item => item.MarkerDistance.Value)
+                .OrderBy(value => value).ToList();
+            if (distances.Count < 3) return;
+            double median = distances[distances.Count / 2];
+            if (median <= 0) return;
+            foreach (var item in participants.Where(item => item.MarkerDistance > median * ImportOptions.FarMarkerFactor))
+                item.SetWarning("маркер далеко: " + ElevationFormat.Format(item.MarkerDistance.Value, 2) + " м (обычно " +
+                                ElevationFormat.Format(median, 2) + " м) — проверьте");
         }
 
         /// <summary>Applies the user's decisions (by text handle) after every recalculation.</summary>
@@ -265,7 +281,7 @@ namespace Kzm.Core
         public static IReadOnlyList<string> Lines(ImportPlan plan, int duplicatePairs, int created, bool preview = false)
         {
             if (plan == null) throw new ArgumentNullException(nameof(plan));
-            int decimals = plan.Options.Rules.Decimals;
+            int decimals = plan.Options.Decimals;
             var lines = new List<string>();
             int text = plan.Items.Count(item => item.Source.Kind == SourceKind.Text);
             int mtext = plan.Items.Count(item => item.Source.Kind == SourceKind.MText);
@@ -278,6 +294,8 @@ namespace Kzm.Core
             lines.Add(Grouped("Отброшено", plan.Rejected));
             lines.Add(Grouped(preview ? "Спорных" : "Спорных, не импортировано", plan.Disputed));
             if (plan.Skipped.Any()) lines.Add(Grouped("Пропущено", plan.Skipped));
+            int far = accepted.Count(item => item.Warning != null);
+            if (far > 0) lines.Add("Проверьте: маркер дальше обычного — " + far + " (выделены в таблице).");
             lines.Add("Пар точек ближе " + ElevationFormat.Format(plan.Options.DuplicateTolerance, Math.Max(decimals, 2)) +
                 " м: " + duplicatePairs.ToString(CultureInfo.InvariantCulture) +
                 (duplicatePairs > 0 ? " — решение за вами: «Близкие точки» в панели" : string.Empty));

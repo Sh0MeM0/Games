@@ -29,12 +29,12 @@
   ;; C: formatted MTEXT (T5)
   (kzm-test:mtext (+ bx 30.0) by "{\\fArial|b0|i0|c204|p34;\\H1.2x;145}{\\C1;,32}")
   (kzm-test:point (+ bx 29.5) by)
-  ;; D: point number "12" (T5: rejected with reason when the range is 140...160)
+  ;; D: point number "12" (T5: a whole number is not an elevation, rejected with reason)
   (kzm-test:text (+ bx 40.0) by "12")          (kzm-test:point (+ bx 39.5) by)
   ;; E: two elevations in one MTEXT -> disputed
   (kzm-test:mtext (+ bx 50.0) by "145,40\\P146,10")
   (kzm-test:point (+ bx 49.5) by)
-  ;; F: no marker within R = 1 m
+  ;; F: no marker of its own (the nearest marker belongs to G)
   (kzm-test:text (+ bx 60.0) by "147,05")
   ;; G: point number and elevation in one text
   (kzm-test:text (+ bx 70.0) by "t.15 148,00") (kzm-test:point (+ bx 69.5) by)

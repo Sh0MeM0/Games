@@ -35,8 +35,6 @@ namespace Kzm.AutoCAD.UI.Panel
             internal List<MarkerCandidate> Markers;
             internal string MarkersNote = "образец не указан";
             internal KzmSettings Settings;
-            /// <summary>Texts typed in the form (null — take from the settings).</summary>
-            internal string MinText, MaxText, RadiusText, ToleranceText, PatternText;
             internal readonly Dictionary<string, ImportOverride> Overrides = new Dictionary<string, ImportOverride>(StringComparer.OrdinalIgnoreCase);
             internal ImportResult Result;
         }
@@ -53,11 +51,6 @@ namespace Kzm.AutoCAD.UI.Panel
         private readonly RadioButton xyInsertion = new RadioButton { Text = "Точка вставки текста", AutoSize = true };
         private readonly Button pickMarker = new Button { Text = "Указать образец маркера", AutoSize = true };
         private readonly Label markersNote = new Label { AutoSize = true, MaximumSize = new Size(330, 0) };
-        private readonly TextBox radius = new TextBox { Width = 70 };
-        private readonly TextBox min = new TextBox { Width = 80 };
-        private readonly TextBox max = new TextBox { Width = 80 };
-        private readonly TextBox pattern = new TextBox();
-        private readonly TextBox tolerance = new TextBox { Width = 70 };
         private readonly Label settingsNote = new Label { AutoSize = true, MaximumSize = new Size(330, 0), ForeColor = Color.Firebrick };
         private readonly Button check = new Button { Text = "Проверить", AutoSize = true };
         private readonly Button import = new Button { Text = "Импортировать", AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont, FontStyle.Bold) };
@@ -75,8 +68,15 @@ namespace Kzm.AutoCAD.UI.Panel
         {
             var form = new TableLayoutPanel { ColumnCount = 1, AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(4) };
             form.Controls.Add(Header("Импорт отметок из текстов съёмки"));
-            form.Controls.Add(Line("Поверхность", surface));
-            surface.Width = 230;
+            form.Controls.Add(Line("В поверхность", surface));
+            surface.Width = 220;
+            form.Controls.Add(new Label
+            {
+                AutoSize = true,
+                MaximumSize = new Size(330, 0),
+                ForeColor = SystemColors.GrayText,
+                Text = "Список ранее созданных поверхностей. Новая — кнопкой «+ Поверхность».",
+            });
 
             form.Controls.Add(Header("1. Тексты отметок"));
             form.Controls.Add(Flow(byWindow, byLayers, bySimilar));
@@ -87,15 +87,8 @@ namespace Kzm.AutoCAD.UI.Panel
 
             form.Controls.Add(Header("2. Положение точки (XY)"));
             form.Controls.Add(Flow(xyMarker, xyInsertion));
-            form.Controls.Add(Flow(pickMarker, new Label { Text = "R, м", AutoSize = true, Margin = new Padding(9, 7, 3, 0) }, radius));
+            form.Controls.Add(pickMarker);
             form.Controls.Add(markersNote);
-
-            form.Controls.Add(Header("3. Распознавание отметок"));
-            form.Controls.Add(Flow(new Label { Text = "Диапазон, м", AutoSize = true, Margin = new Padding(3, 7, 3, 0) }, min,
-                new Label { Text = "…", AutoSize = true, Margin = new Padding(0, 7, 0, 0) }, max));
-            form.Controls.Add(Line("Шаблон числа", pattern));
-            pattern.Width = 230;
-            form.Controls.Add(Flow(new Label { Text = "Допуск совпадения точек, м", AutoSize = true, Margin = new Padding(3, 7, 3, 0) }, tolerance));
             form.Controls.Add(settingsNote);
 
             grid.Dock = DockStyle.Fill;
@@ -145,11 +138,6 @@ namespace Kzm.AutoCAD.UI.Panel
             split.Panel2.Controls.Add(actions);
             Controls.Add(split);
 
-            min.TextChanged += (s, e) => Remember(state => state.MinText = min.Text);
-            max.TextChanged += (s, e) => Remember(state => state.MaxText = max.Text);
-            radius.TextChanged += (s, e) => Remember(state => state.RadiusText = radius.Text);
-            tolerance.TextChanged += (s, e) => Remember(state => state.ToleranceText = tolerance.Text);
-            pattern.TextChanged += (s, e) => Remember(state => state.PatternText = pattern.Text);
             surface.SelectedIndexChanged += (s, e) => Remember(state =>
             {
                 state.SurfaceId = (surface.SelectedItem as SurfaceItem)?.Info.Id;
@@ -206,7 +194,6 @@ namespace Kzm.AutoCAD.UI.Panel
         {
             if (document == null || !states.TryGetValue(document, out var state)) return;
             state.Settings = null;
-            state.MinText = state.MaxText = state.RadiusText = state.ToleranceText = state.PatternText = null;
         }
 
         internal void Preselect(string surfaceId) => preselect = surfaceId;
@@ -244,11 +231,6 @@ namespace Kzm.AutoCAD.UI.Panel
                 bySimilar.Checked = state.Selection == Selection.Similar;
                 xyMarker.Checked = state.Mode == XyMode.Marker;
                 xyInsertion.Checked = state.Mode != XyMode.Marker;
-                min.Text = state.MinText ?? SettingsView.FormatValue(state.Settings.MinElevation);
-                max.Text = state.MaxText ?? SettingsView.FormatValue(state.Settings.MaxElevation);
-                radius.Text = state.RadiusText ?? SettingsView.FormatValue(state.Settings.MarkerRadius);
-                tolerance.Text = state.ToleranceText ?? SettingsView.FormatValue(state.Settings.DuplicateTolerance);
-                pattern.Text = state.PatternText ?? state.Settings.NumberPattern;
                 LoadLayers(state);
             }
             finally
@@ -290,7 +272,7 @@ namespace Kzm.AutoCAD.UI.Panel
             pickTexts.Visible = state.Selection != Selection.Layers;
             pickTexts.Text = state.Selection == Selection.Similar ? "Указать образец текста" : "Выбрать тексты в чертеже";
             textsNote.Text = "Выбрано: " + state.TextsNote;
-            pickMarker.Enabled = radius.Enabled = state.Mode == XyMode.Marker;
+            pickMarker.Enabled = state.Mode == XyMode.Marker;
             markersNote.Text = state.Mode == XyMode.Marker
                 ? "Маркеры: " + state.MarkersNote
                 : "XY = точка вставки каждого текста.";
@@ -402,24 +384,12 @@ namespace Kzm.AutoCAD.UI.Panel
             request = null;
             var errors = new List<string>();
             var settings = state.Settings.Clone();
-            settings.MinElevation = SettingsView.Parse(min.Text, "нижняя граница диапазона", errors);
-            settings.MaxElevation = SettingsView.Parse(max.Text, "верхняя граница диапазона", errors);
-            settings.MarkerRadius = SettingsView.Parse(radius.Text, "радиус R", errors);
-            var tol = SettingsView.Parse(tolerance.Text, "допуск совпадения", errors);
-            if (tol.HasValue) settings.DuplicateTolerance = tol.Value;
-            settings.NumberPattern = pattern.Text.Trim();
             settings.LastXyMode = state.Mode;
             settings.LastSelectionMode = state.Selection.ToString().ToUpperInvariant();
             var surfaceItem = surface.SelectedItem as SurfaceItem;
             if (surfaceItem == null) errors.Add("выберите поверхность (или создайте: «+ Поверхность»)");
-            if (!settings.MinElevation.HasValue || !settings.MaxElevation.HasValue) errors.Add("задайте диапазон отметок");
             if (state.TextIds.Count == 0) errors.Add("выберите тексты");
-            if (state.Mode == XyMode.Marker)
-            {
-                if (state.Markers == null) errors.Add("укажите образец маркера");
-                if (!settings.MarkerRadius.HasValue) errors.Add("задайте радиус R");
-            }
-            errors.AddRange(settings.ValidateForImport().Where(problem => !problem.StartsWith("не задан", StringComparison.Ordinal)));
+            if (state.Mode == XyMode.Marker && state.Markers == null) errors.Add("укажите образец маркера");
             if (errors.Count > 0)
             {
                 PanelMessages.Error(string.Join("; ", errors.Distinct()) + ".");
@@ -503,7 +473,8 @@ namespace Kzm.AutoCAD.UI.Panel
             foreach (var item in result.Plan.Items)
             {
                 bool problem = item.Status == ImportStatus.Rejected || item.Status == ImportStatus.Disputed;
-                if (onlyProblems.Checked && !problem) continue;
+                bool warning = item.Status == ImportStatus.Accepted && item.Warning != null;
+                if (onlyProblems.Checked && !problem && !warning) continue;
                 bool created = result.Committed && result.Created.ContainsKey(item);
                 string status = item.Status == ImportStatus.Accepted ? (result.Committed ? (created ? "создано" : "принято") : "будет создано")
                     : item.Status == ImportStatus.Rejected ? "отброшено"
@@ -512,15 +483,21 @@ namespace Kzm.AutoCAD.UI.Panel
                 string z = item.Elevation.HasValue ? ElevationFormat.Format(item.Elevation.Value, decimals)
                     : string.Join("; ", item.Candidates.Select(value => ElevationFormat.Format(value, decimals)));
                 var position = item.Position ?? item.Source.Anchor;
-                int index = grid.Rows.Add(item.Status == ImportStatus.Accepted, status, item.Message, KzmCommands.OneLine(item.Source.Plain), z,
-                    ElevationFormat.Format(position.X, 3), ElevationFormat.Format(position.Y, 3),
-                    item.Status == ImportStatus.Accepted ? XyModes.Title(item.PositionMode) : string.Empty);
+                string xy = item.Position.HasValue
+                    ? XyModes.Title(item.PositionMode) + (item.PositionMode == XyMode.Marker && item.MarkerDistance.HasValue
+                        ? " " + ElevationFormat.Format(item.MarkerDistance.Value, 2) + " м" : string.Empty)
+                    : string.Empty;
+                string reason = item.Warning == null ? item.Message
+                    : (string.IsNullOrEmpty(item.Message) ? item.Warning : item.Message + "; " + item.Warning);
+                int index = grid.Rows.Add(item.Status == ImportStatus.Accepted, status, reason, KzmCommands.OneLine(item.Source.Plain), z,
+                    ElevationFormat.Format(position.X, 3), ElevationFormat.Format(position.Y, 3), xy);
                 var row = grid.Rows[index];
                 row.Tag = item;
                 bool editable = !result.Committed && (item.Status != ImportStatus.Skipped || item.Reason == ImportReason.ManualSkipped);
                 row.Cells["take"].ReadOnly = result.Committed || !(item.Status == ImportStatus.Accepted || item.Reason == ImportReason.ManualSkipped);
                 row.Cells["z"].ReadOnly = result.Committed || !editable;
                 if (problem) row.DefaultCellStyle.ForeColor = Color.Firebrick;
+                if (warning) row.DefaultCellStyle.ForeColor = Color.DarkOrange;
                 if (item.Status == ImportStatus.Skipped) row.DefaultCellStyle.ForeColor = SystemColors.GrayText;
             }
             foreach (var duplicate in result.Duplicates)

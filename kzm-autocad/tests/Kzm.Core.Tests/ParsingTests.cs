@@ -6,15 +6,12 @@ namespace Kzm.Core.Tests
 {
     public class ParsingTests
     {
-        private static ElevationRules Rules(double min = 140, double max = 160) =>
-            new ElevationRules(KzmSettings.DefaultPattern, min, max, 2);
-
         // Т5: «145,32» и «145.32» читаются одинаково.
         [Fact]
         public void T5_CommaAndDotGiveTheSameValue()
         {
-            var comma = ElevationExtractor.Extract(TextCleaner.CleanText("145,32"), Rules());
-            var dot = ElevationExtractor.Extract(TextCleaner.CleanText("145.32"), Rules());
+            var comma = ElevationExtractor.Extract(TextCleaner.CleanText("145,32"));
+            var dot = ElevationExtractor.Extract(TextCleaner.CleanText("145.32"));
             Assert.Equal(ImportStatus.Accepted, comma.Status);
             Assert.Equal(ImportStatus.Accepted, dot.Status);
             Assert.Equal(145.32, comma.Value.Value, 10);
@@ -31,46 +28,49 @@ namespace Kzm.Core.Tests
         [InlineData(@"{\c16711680;\K145\k,32}")]
         public void T5_FormattedMTextIsRead(string contents)
         {
-            var result = ElevationExtractor.Extract(TextCleaner.CleanMText(contents), Rules());
+            var result = ElevationExtractor.Extract(TextCleaner.CleanMText(contents));
             Assert.Equal(ImportStatus.Accepted, result.Status);
             Assert.Equal(145.32, result.Value.Value, 10);
         }
 
-        // Т5: текст «12» при диапазоне 140…160 отбрасывается с причиной.
+        // Т5 (по решению без диапазона): «12» — целое число, отбрасывается с причиной.
         [Fact]
-        public void T5_PointNumberOutsideRangeIsRejectedWithReason()
+        public void T5_PointNumberIsRejectedWithReason()
         {
-            var result = ElevationExtractor.Extract("12", Rules());
+            var result = ElevationExtractor.Extract("12");
             Assert.Equal(ImportStatus.Rejected, result.Status);
-            Assert.Equal(ImportReason.OutOfRange, result.Reason);
-            Assert.Contains("вне диапазона 140,00…160,00", result.Message);
+            Assert.Equal(ImportReason.IntegerOnly, result.Reason);
+            Assert.Contains("не отметка", result.Message);
             Assert.Contains("12", result.Message);
             Assert.Null(result.Value);
         }
 
-        [Fact]
-        public void PointNumberAndElevationInOneTextGiveTheElevation()
+        [Theory]
+        [InlineData("т.15 145,32", 145.32)]
+        [InlineData("15  145.32", 145.32)]
+        [InlineData("145,3", 145.3)]
+        [InlineData("−0,50", -0.5)]
+        [InlineData("+2,40", 2.4)]
+        public void OneDecimalNumberIsTheElevation(string text, double expected)
         {
-            var result = ElevationExtractor.Extract("т.15 145,32", Rules());
+            var result = ElevationExtractor.Extract(text);
             Assert.Equal(ImportStatus.Accepted, result.Status);
-            Assert.Equal(145.32, result.Value.Value, 10);
+            Assert.Equal(expected, result.Value.Value, 10);
         }
 
         [Fact]
-        public void TwoElevationsInOneTextAreDisputed()
+        public void TwoDecimalNumbersAreDisputed()
         {
-            var result = ElevationExtractor.Extract(TextCleaner.CleanMText(@"145,32\P146,10"), Rules());
+            var result = ElevationExtractor.Extract(TextCleaner.CleanMText(@"145,32\P146,10"));
             Assert.Equal(ImportStatus.Disputed, result.Status);
-            Assert.Equal(ImportReason.MultipleInRange, result.Reason);
-            Assert.Equal(new[] { 145.32, 146.10 }, result.InRange.Select(v => System.Math.Round(v, 2)));
+            Assert.Equal(ImportReason.MultipleNumbers, result.Reason);
+            Assert.Equal(new[] { 145.32, 146.10 }, result.Decimals.Select(v => System.Math.Round(v, 2)));
         }
 
         [Fact]
         public void StackedFractionKeepsBothNumbers()
         {
-            var plain = TextCleaner.CleanMText(@"\S145,32^146,10;");
-            var result = ElevationExtractor.Extract(plain, Rules());
-            Assert.Equal(ImportStatus.Disputed, result.Status);
+            Assert.Equal(ImportStatus.Disputed, ElevationExtractor.Extract(TextCleaner.CleanMText(@"\S145,32^146,10;")).Status);
         }
 
         [Fact]
@@ -94,43 +94,17 @@ namespace Kzm.Core.Tests
         [Fact]
         public void EmptyAndNonNumericTextsAreRejected()
         {
-            Assert.Equal(ImportReason.EmptyText, ElevationExtractor.Extract("  ", Rules()).Reason);
-            var none = ElevationExtractor.Extract("Скв. А", Rules());
+            Assert.Equal(ImportReason.EmptyText, ElevationExtractor.Extract("  ").Reason);
+            var none = ElevationExtractor.Extract("Скв. А");
             Assert.Equal(ImportStatus.Rejected, none.Status);
             Assert.Equal(ImportReason.NoNumber, none.Reason);
         }
 
         [Fact]
-        public void UnicodeMinusIsAMinus()
+        public void SeparatorWithoutDigitsIsNotAFraction()
         {
-            var result = ElevationExtractor.Extract("−0,50", new ElevationRules(KzmSettings.DefaultPattern, -1, 1, 2));
-            Assert.Equal(-0.5, result.Value.Value, 10);
-        }
-
-        [Fact]
-        public void RangeBoundsAreInclusive()
-        {
-            Assert.Equal(ImportStatus.Accepted, ElevationExtractor.Extract("140", Rules()).Status);
-            Assert.Equal(ImportStatus.Accepted, ElevationExtractor.Extract("160,00", Rules()).Status);
-            Assert.Equal(ImportStatus.Rejected, ElevationExtractor.Extract("160,01", Rules()).Status);
-        }
-
-        [Fact]
-        public void CustomPatternMayNameTheNumberGroup()
-        {
-            var rules = new ElevationRules(@"Н=(?<num>[0-9]+[.,][0-9]+)", 140, 160, 2);
-            var result = ElevationExtractor.Extract("т.7 Н=145,32 h=0,15", rules);
-            Assert.Equal(ImportStatus.Accepted, result.Status);
-            Assert.Equal(145.32, result.Value.Value, 10);
-        }
-
-        [Fact]
-        public void BrokenPatternIsReportedNotThrownLater()
-        {
-            var exception = Assert.Throws<KzmException>(() => new ElevationRules("[0-9", 140, 160, 2));
-            Assert.Contains("Шаблон числа содержит ошибку", exception.Message);
-            var settings = new KzmSettings { NumberPattern = "[0-9", MinElevation = 1, MaxElevation = 2 };
-            Assert.Contains(settings.ValidateForImport(), problem => problem.Contains("Шаблон числа"));
+            // «145.» is a whole number followed by a dot, not 145,0.
+            Assert.Equal(ImportReason.IntegerOnly, ElevationExtractor.Extract("145.").Reason);
         }
 
         [Theory]

@@ -74,7 +74,7 @@ namespace Kzm.AutoCAD.UI.Panel
             var settings = panel.Snapshot.Settings;
             title.Text = surface == null ? "Поверхность не найдена"
                 : "Близкие точки «" + surface.Info.Name + "»: " + pairs.Count + " (ближе " +
-                  ElevationFormat.Format(settings.DuplicateTolerance, Math.Max(2, settings.Decimals)) + " м)";
+                  ElevationFormat.Format(KzmSettings.DuplicateTolerance, Math.Max(2, settings.Decimals)) + " м)";
             grid.Rows.Clear();
             for (int i = 0; i < pairs.Count; i++)
             {

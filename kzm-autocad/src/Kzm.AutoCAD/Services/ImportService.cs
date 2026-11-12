@@ -41,7 +41,6 @@ namespace Kzm.AutoCAD.Services
         internal static ImportResult Prepare(Database database, ImportRequest request)
         {
             var settings = request.Settings;
-            var rules = settings.CreateRules();
             var result = new ImportResult();
             var texts = new List<SourceText>();
             List<SurfacePoint> existing;
@@ -67,7 +66,7 @@ namespace Kzm.AutoCAD.Services
 
             var markers = request.Mode == XyMode.Marker ? request.Markers : new List<MarkerCandidate>();
             result.Plan = ImportPlanner.Plan(texts, markers, existingPoints,
-                new ImportOptions(rules, request.Mode, settings.MarkerRadius, settings.DuplicateTolerance));
+                new ImportOptions(request.Mode, settings.Decimals));
             ImportPlanner.ApplyOverrides(result.Plan, request.Overrides);
             result.Duplicates = ImportPlanner.FindDuplicates(result.Plan, existingPoints);
             result.Summary.AddRange(ImportSummary.Lines(result.Plan, result.Duplicates.Count, result.Plan.Accepted.Count(), true));
@@ -81,9 +80,8 @@ namespace Kzm.AutoCAD.Services
         {
             var database = document.Database;
             var settings = request.Settings;
-            var problems = settings.ValidateForImport();
+            var problems = settings.ValidateDrawing();
             if (problems.Count > 0) throw new KzmException("Не хватает настроек: " + string.Join("; ", problems) + ".");
-            if (request.Mode == XyMode.Marker && !settings.MarkerRadius.HasValue) throw new KzmException("Не задан радиус поиска маркера R.");
             var result = Prepare(database, request);
             var surface = result.Surface;
             var plan = result.Plan;
@@ -119,6 +117,9 @@ namespace Kzm.AutoCAD.Services
                 CheckMarks.Clear(database, transaction, new HashSet<string>(result.TextIds.Keys, StringComparer.OrdinalIgnoreCase));
                 foreach (var item in plan.Rejected.Concat(plan.Disputed))
                     CheckMarks.Add(transaction, space, item.Source.Anchor, ImportReasons.ShortLabel(item.Reason), item.Source.Handle, settings);
+                // Accepted, but the marker is unusually far: marked for checking, not refused.
+                foreach (var item in plan.Accepted.Where(item => item.Warning != null))
+                    CheckMarks.Add(transaction, space, item.Source.Anchor, "маркер далеко?", item.Source.Handle, settings);
 
                 var pairs = KzmStore.ReadConflicts(database, transaction).Where(pair => pair.IsAlive).ToList();
                 foreach (var duplicate in result.Duplicates)
@@ -144,7 +145,7 @@ namespace Kzm.AutoCAD.Services
             result.Summary.Clear();
             result.Summary.Add("Импорт в поверхность " + surface.Title + " выполнен.");
             result.Summary.AddRange(ImportSummary.Lines(plan, result.Duplicates.Count, result.Created.Count));
-            if (plan.Rejected.Any() || plan.Disputed.Any() || result.Duplicates.Count > 0)
+            if (plan.Rejected.Any() || plan.Disputed.Any() || result.Duplicates.Count > 0 || plan.Accepted.Any(item => item.Warning != null))
                 result.Summary.Add("Проблемные места помечены на слое " + Layers.Check + " (не печатается).");
             return result;
         }
