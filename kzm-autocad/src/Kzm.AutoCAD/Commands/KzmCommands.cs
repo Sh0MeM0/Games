@@ -24,6 +24,9 @@ namespace Kzm.AutoCAD.Commands
         {
             ("KZM", "открыть панель «КЗМ» (поверхности, точки, импорт, настройки)"),
             ("KZM_IMPORT", "открыть панель на форме импорта отметок"),
+            ("KZM_POINT", "ввод точек вручную в текущую поверхность (точка → отметка; Enter — повторить отметку)"),
+            ("KZM_CARTOGRAM", "новая картограмма: граница, поверхности, сетка, оформление"),
+            ("KZM_UPDATE", "пересчитать устаревшие картограммы чертежа"),
             ("KZM_SETTINGS", "открыть панель на настройках чертежа"),
             ("KZM_CLEARMARKS", "удалить пометки проверки (слой КЗМ_ПРОВЕРКА)"),
             ("KZM_MENU", "восстановить верхнее меню «Картограмма» и вкладку ленты"),
@@ -35,6 +38,50 @@ namespace Kzm.AutoCAD.Commands
 
         [CommandMethod("KZM_IMPORT", CommandFlags.Modal)]
         public void OpenImport() => Guarded(() => KzmPalette.Open().ShowImport(null));
+
+        [CommandMethod("KZM_CARTOGRAM", CommandFlags.Modal)]
+        public void OpenCartogram() => Guarded(() => KzmPalette.Open().ShowNewCartogram());
+
+        /// <summary>Задание п. 2.2: точка с привязками → отметка в командной строке → повтор до Esc.</summary>
+        [CommandMethod("KZM_POINT", CommandFlags.Modal | CommandFlags.Redraw)]
+        public void Points() => Run("точки вручную", document =>
+        {
+            var database = document.Database;
+            KzmSettings settings;
+            string surfaceId;
+            using (var transaction = database.TransactionManager.StartTransaction())
+            {
+                settings = KzmStore.ReadSettings(database, transaction);
+                surfaceId = KzmStore.ReadCurrentSurfaceId(database, transaction);
+                if (surfaceId == null || KzmStore.ReadSurfaces(database, transaction).All(s => s.Id != surfaceId))
+                    throw new KzmException("Нет текущей поверхности. Создайте поверхность в панели (KZM → «+ Поверхность»).");
+                transaction.Commit();
+            }
+            Services.EditServices.CreatePointsByHand(document, surfaceId, settings);
+            KzmPalette.MarkDirty();
+        });
+
+        /// <summary>Задание п. 7: пересчёт одной командой без повторного ввода параметров.</summary>
+        [CommandMethod("KZM_UPDATE", CommandFlags.Modal | CommandFlags.Redraw)]
+        public void Update() => Run("пересчёт картограмм", document =>
+        {
+            var snapshot = Services.DrawingData.Read(document);
+            var outdated = snapshot.Cartograms.Where(c => c.Info.Built && c.Outdated).ToList();
+            if (outdated.Count == 0)
+            {
+                document.Editor.WriteMessage("\nКЗМ: устаревших картограмм нет.");
+                return;
+            }
+            foreach (var c in outdated)
+            {
+                var computation = Services.CartogramService.Build(document, c.Info.Id, snapshot.Settings);
+                document.Editor.WriteMessage("\nКЗМ: «" + c.Info.Name + "» пересчитана: насыпь " +
+                    Services.CartogramService.Volume(computation.Result.TotalFill, c.Info.VolumeDecimals, true) + " м³, выемка " +
+                    Services.CartogramService.Volume(computation.Result.TotalCut, c.Info.VolumeDecimals, false) + " м³" +
+                    (computation.Result.Balanced ? "; итоги сходятся." : "; ВНИМАНИЕ: итоги не сходятся."));
+            }
+            KzmPalette.MarkDirty();
+        });
 
         [CommandMethod("KZM_SETTINGS", CommandFlags.Modal)]
         public void OpenSettings() => Guarded(() => KzmPalette.Open().ShowSettings());
@@ -129,10 +176,8 @@ namespace Kzm.AutoCAD.Commands
             }
         }
 
-        internal static double ZoomSize(KzmSettings settings) =>
-            settings.LabelHeightMm.HasValue && settings.ScaleDenominator.HasValue
-                ? settings.LabelHeightMm.Value * settings.UnitsPerPaperMm * 30
-                : 20;
+        /// <summary>Zoom window around an object: 30 text heights (20 m when the height is unknown).</summary>
+        internal static double ZoomSize(double? textHeight) => textHeight.HasValue && textHeight.Value > 0 ? textHeight.Value * 30 : 20;
 
         internal static string OneLine(string text)
         {

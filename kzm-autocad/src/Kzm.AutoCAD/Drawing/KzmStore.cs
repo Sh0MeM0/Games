@@ -41,6 +41,7 @@ namespace Kzm.AutoCAD.Drawing
         private const string CurrentName = "CURRENT_SURFACE";
         private const string ConflictsName = "DUPLICATE_PAIRS";
         private const string KeptName = "KEPT_PAIRS";
+        private const string CartogramsName = "CARTOGRAMS";
         private const int MaximumSurfaces = 256;
 
         // ---------- settings ----------
@@ -72,18 +73,9 @@ namespace Kzm.AutoCAD.Drawing
                 var map = ReadPairs(surfaces, entry.Key, transaction).ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
                 try
                 {
-                    result.Add(new SurfaceInfo
-                    {
-                        Id = entry.Key,
-                        Name = map["name"],
-                        Kind = SurfaceKinds.Parse(map["kind"]),
-                        Layer = map["layer"],
-                        Created = map.TryGetValue("created", out string created) ? created : string.Empty,
-                        Revision = map.TryGetValue("revision", out string revision)
-                            ? int.Parse(revision, NumberStyles.Integer, CultureInfo.InvariantCulture) : 0,
-                    });
+                    result.Add(SurfaceRecord.Decode(entry.Key, map));
                 }
-                catch (Exception exception) when (exception is KeyNotFoundException || exception is FormatException || exception is KzmException)
+                catch (KzmException exception)
                 {
                     throw new KzmException("Запись поверхности " + entry.Key + " в чертеже повреждена: " + exception.Message, exception);
                 }
@@ -103,14 +95,7 @@ namespace Kzm.AutoCAD.Drawing
                 throw new KzmException("В чертеже уже " + MaximumSurfaces + " поверхностей.");
             var root = Root(database, transaction, true);
             var surfaces = Child(root, SurfacesName, transaction);
-            WritePairs(surfaces, surface.Id, new[]
-            {
-                Pair("name", surface.Name),
-                Pair("kind", SurfaceKinds.Code(surface.Kind)),
-                Pair("layer", surface.Layer),
-                Pair("created", surface.Created ?? string.Empty),
-                Pair("revision", surface.Revision.ToString(CultureInfo.InvariantCulture)),
-            }, transaction);
+            WritePairs(surfaces, surface.Id, SurfaceRecord.Encode(surface), transaction);
         }
 
         internal static void DeleteSurface(Database database, Transaction transaction, string surfaceId)
@@ -154,6 +139,48 @@ namespace Kzm.AutoCAD.Drawing
         internal static void WriteCurrentSurfaceId(Database database, Transaction transaction, string surfaceId)
         {
             WritePairs(Root(database, transaction, true), CurrentName, new[] { Pair("id", surfaceId) }, transaction);
+        }
+
+        // ---------- cartograms ----------
+
+        internal static List<CartogramInfo> ReadCartograms(Database database, Transaction transaction)
+        {
+            var result = new List<CartogramInfo>();
+            var root = Root(database, transaction, false);
+            if (root == null || !root.Contains(CartogramsName)) return result;
+            var dictionary = (DBDictionary)transaction.GetObject(root.GetAt(CartogramsName), OpenMode.ForRead);
+            foreach (DBDictionaryEntry entry in dictionary)
+            {
+                var map = ReadPairs(dictionary, entry.Key, transaction).ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+                try { result.Add(CartogramInfo.Decode(entry.Key, map)); }
+                catch (KzmException exception)
+                {
+                    throw new KzmException("Запись картограммы " + entry.Key + " в чертеже повреждена: " + exception.Message, exception);
+                }
+            }
+            return result.OrderBy(c => c.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+        }
+
+        internal static void WriteCartogram(Database database, Transaction transaction, CartogramInfo cartogram)
+        {
+            if (string.IsNullOrEmpty(cartogram.Id)) throw new ArgumentException("Нет идентификатора картограммы.");
+            cartogram.Name = SurfaceNames.Validate(cartogram.Name);
+            if (ReadCartograms(database, transaction).Any(other => other.Id != cartogram.Id &&
+                    string.Equals(other.Name, cartogram.Name, StringComparison.CurrentCultureIgnoreCase)))
+                throw new KzmException("Картограмма с именем «" + cartogram.Name + "» уже есть в чертеже.");
+            var root = Root(database, transaction, true);
+            WritePairs(Child(root, CartogramsName, transaction), cartogram.Id, CartogramInfo.Encode(cartogram), transaction);
+        }
+
+        internal static void DeleteCartogram(Database database, Transaction transaction, string cartogramId)
+        {
+            var root = Root(database, transaction, false);
+            if (root == null || !root.Contains(CartogramsName)) return;
+            var dictionary = (DBDictionary)transaction.GetObject(root.GetAt(CartogramsName), OpenMode.ForWrite);
+            if (!dictionary.Contains(cartogramId)) return;
+            var record = transaction.GetObject(dictionary.GetAt(cartogramId), OpenMode.ForWrite);
+            dictionary.Remove(cartogramId);
+            record.Erase();
         }
 
         // ---------- duplicate pairs ----------
@@ -245,6 +272,7 @@ namespace Kzm.AutoCAD.Drawing
             return result;
         }
 
+        /// <summary>Text pairs; values longer than one DXF string are split into several 1-group values.</summary>
         private static void WritePairs(DBDictionary dictionary, string key, IEnumerable<KeyValuePair<string, string>> pairs, Transaction transaction)
         {
             var data = new ResultBuffer();

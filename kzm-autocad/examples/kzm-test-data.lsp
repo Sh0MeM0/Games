@@ -46,5 +46,31 @@
   (princ "\nKZM test data: 9 texts on layer KZM_TEST_ELEV, 7 points on KZM_TEST_MARK.")
   (princ))
 
-(princ "\nLoaded. Run KZM_TEST_DATA in an empty drawing.")
+;;; Cartogram check (like T1): fact texts 100,00 and project texts 100,50 every 10 m
+;;; over 60 x 40 m; boundary 40 x 20 m. Expected: fill 400 m3, cut 0.
+(defun kzm-test:text-on (layer x y value)
+  (entmake (list '(0 . "TEXT") (cons 8 layer) (list 10 x y 0.0) '(40 . 0.8) (cons 1 value))))
+
+(defun c:KZM_TEST_CARTO (/ bx by i j)
+  (setq bx 1000.0 by 2100.0)
+  (kzm-test:layer "KZM_TEST_FACT" 7)
+  (kzm-test:layer "KZM_TEST_PROJ" 1)
+  (kzm-test:layer "KZM_TEST_BOUND" 4)
+  (setq i 0)
+  (while (<= i 6)
+    (setq j 0)
+    (while (<= j 4)
+      (kzm-test:text-on "KZM_TEST_FACT" (+ bx (* i 10.0)) (+ by (* j 10.0)) "100,00")
+      (kzm-test:text-on "KZM_TEST_PROJ" (+ bx (* i 10.0) 3.0) (+ by (* j 10.0) 3.0) "100,50")
+      (setq j (1+ j)))
+    (setq i (1+ i)))
+  (entmake (list '(0 . "LWPOLYLINE") '(100 . "AcDbEntity") '(8 . "KZM_TEST_BOUND") '(100 . "AcDbPolyline")
+                 '(90 . 4) '(70 . 1)
+                 (list 10 (+ bx 5.0) (+ by 5.0)) (list 10 (+ bx 45.0) (+ by 5.0))
+                 (list 10 (+ bx 45.0) (+ by 25.0)) (list 10 (+ bx 5.0) (+ by 25.0))))
+  (command "_.ZOOM" "_E")
+  (princ "\nKZM cartogram test: 35 fact texts, 35 project texts, boundary 40 x 20 m. Expected fill 400 m3, cut 0.")
+  (princ))
+
+(princ "\nLoaded. Commands: KZM_TEST_DATA (import), KZM_TEST_CARTO (cartogram) in an empty drawing.")
 (princ)

@@ -56,6 +56,12 @@ namespace Kzm.AutoCAD.UI.Panel
         private readonly Button import = new Button { Text = "Импортировать", AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont, FontStyle.Bold) };
         private readonly Label summary = new Label { AutoSize = true, MaximumSize = new Size(330, 0) };
         private readonly CheckBox onlyProblems = new CheckBox { Text = "Только проблемные", AutoSize = true };
+        private readonly CheckBox appearanceFromTexts = new CheckBox
+        {
+            Text = "Подписи точек — как у этих текстов (шрифт и высота)",
+            AutoSize = true,
+            MaximumSize = new Size(330, 0),
+        };
         private readonly Button pickXy = new Button { Text = "Указать XY", AutoSize = true };
         private readonly Button showRow = new Button { Text = "Показать", AutoSize = true };
         private readonly DataGridView grid = new DataGridView();
@@ -89,6 +95,16 @@ namespace Kzm.AutoCAD.UI.Panel
             form.Controls.Add(Flow(xyMarker, xyInsertion));
             form.Controls.Add(pickMarker);
             form.Controls.Add(markersNote);
+            form.Controls.Add(Header("3. Оформление и номера"));
+            form.Controls.Add(appearanceFromTexts);
+            form.Controls.Add(new Label
+            {
+                AutoSize = true,
+                MaximumSize = new Size(330, 0),
+                ForeColor = SystemColors.GrayText,
+                Text = "Номер точки берётся из того же текста («т.15 145,32») или из соседнего текста-номера («12»), иначе — по порядку. " +
+                       "Цвета отметок и номеров — в свойствах поверхности.",
+            });
             form.Controls.Add(settingsNote);
 
             grid.Dock = DockStyle.Fill;
@@ -99,7 +115,7 @@ namespace Kzm.AutoCAD.UI.Panel
             grid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
             grid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells;
             grid.Columns.Add(new DataGridViewCheckBoxColumn { Name = "take", HeaderText = "Взять", Width = 45 });
-            foreach (var (name, header) in new[] { ("result", "Результат"), ("reason", "Причина"), ("text", "Текст"), ("z", "Отметка"), ("x", "X"), ("y", "Y"), ("xy", "XY") })
+            foreach (var (name, header) in new[] { ("result", "Результат"), ("reason", "Причина"), ("text", "Текст"), ("z", "Отметка"), ("num", "Номер"), ("x", "X"), ("y", "Y"), ("xy", "XY") })
                 grid.Columns.Add(new DataGridViewTextBoxColumn { Name = name, HeaderText = header, ReadOnly = name != "z" });
             grid.Columns["z"].DefaultCellStyle.BackColor = Color.LightYellow;
             grid.CurrentCellDirtyStateChanged += (s, e) =>
@@ -276,12 +292,16 @@ namespace Kzm.AutoCAD.UI.Panel
             markersNote.Text = state.Mode == XyMode.Marker
                 ? "Маркеры: " + state.MarkersNote
                 : "XY = точка вставки каждого текста.";
-            var drawing = panel.Snapshot.Settings.ValidateDrawing();
-            settingsNote.Text = drawing.Count > 0
-                ? "Для создания точек задайте в «Настройках»: " + string.Join("; ", drawing) + "."
-                : string.Empty;
-            import.Enabled = drawing.Count == 0 && surface.SelectedItem != null;
-            if (surface.Items.Count == 0) settingsNote.Text = "Сначала создайте поверхность: «+ Поверхность».";
+            settingsNote.Text = surface.Items.Count == 0 ? "Сначала создайте поверхность: «+ Поверхность»." : string.Empty;
+            import.Enabled = surface.SelectedItem != null;
+            // Without an appearance of its own the surface takes it from the texts anyway.
+            var selected = (surface.SelectedItem as SurfaceItem)?.Info;
+            if (selected != null && !selected.Appearance.IsSet)
+            {
+                appearanceFromTexts.Checked = true;
+                appearanceFromTexts.Enabled = false;
+            }
+            else appearanceFromTexts.Enabled = true;
         }
 
         private void SelectionChanged()
@@ -405,6 +425,7 @@ namespace Kzm.AutoCAD.UI.Panel
                 Mode = state.Mode,
                 Settings = settings,
                 Overrides = state.Overrides,
+                AppearanceFromTexts = appearanceFromTexts.Checked,
             };
             return true;
         }
@@ -476,7 +497,11 @@ namespace Kzm.AutoCAD.UI.Panel
                 bool warning = item.Status == ImportStatus.Accepted && item.Warning != null;
                 if (onlyProblems.Checked && !problem && !warning) continue;
                 bool created = result.Committed && result.Created.ContainsKey(item);
+                bool numberText = item.NumberFor != null;
+                if (numberText) problem = false;
+                if (onlyProblems.Checked && numberText) continue;
                 string status = item.Status == ImportStatus.Accepted ? (result.Committed ? (created ? "создано" : "принято") : "будет создано")
+                    : numberText ? "номер точки"
                     : item.Status == ImportStatus.Rejected ? "отброшено"
                     : item.Status == ImportStatus.Disputed ? "спорная"
                     : "пропущено";
@@ -489,7 +514,10 @@ namespace Kzm.AutoCAD.UI.Panel
                     : string.Empty;
                 string reason = item.Warning == null ? item.Message
                     : (string.IsNullOrEmpty(item.Message) ? item.Warning : item.Message + "; " + item.Warning);
+                if (numberText) reason = "номер для отметки «" + KzmCommands.OneLine(item.NumberFor.Source.Plain) + "»";
+                if (numberText) z = string.Empty;
                 int index = grid.Rows.Add(item.Status == ImportStatus.Accepted, status, reason, KzmCommands.OneLine(item.Source.Plain), z,
+                    item.Number ?? (numberText ? item.Integers[0] : string.Empty),
                     ElevationFormat.Format(position.X, 3), ElevationFormat.Format(position.Y, 3), xy);
                 var row = grid.Rows[index];
                 row.Tag = item;
@@ -497,6 +525,7 @@ namespace Kzm.AutoCAD.UI.Panel
                 row.Cells["take"].ReadOnly = result.Committed || !(item.Status == ImportStatus.Accepted || item.Reason == ImportReason.ManualSkipped);
                 row.Cells["z"].ReadOnly = result.Committed || !editable;
                 if (problem) row.DefaultCellStyle.ForeColor = Color.Firebrick;
+                if (numberText) row.DefaultCellStyle.ForeColor = Color.SteelBlue;
                 if (warning) row.DefaultCellStyle.ForeColor = Color.DarkOrange;
                 if (item.Status == ImportStatus.Skipped) row.DefaultCellStyle.ForeColor = SystemColors.GrayText;
             }
@@ -504,7 +533,7 @@ namespace Kzm.AutoCAD.UI.Panel
             {
                 int index = grid.Rows.Add(false, "близкие точки",
                     "расстояние " + ElevationFormat.Format(duplicate.Distance, 3) + " м — обе будут созданы, решение в «Близкие точки»",
-                    KzmCommands.OneLine(duplicate.First.Source.Plain), string.Empty,
+                    KzmCommands.OneLine(duplicate.First.Source.Plain), string.Empty, string.Empty,
                     ElevationFormat.Format(duplicate.First.Position.Value.X, 3), ElevationFormat.Format(duplicate.First.Position.Value.Y, 3), string.Empty);
                 grid.Rows[index].ReadOnly = true;
                 grid.Rows[index].DefaultCellStyle.ForeColor = Color.DarkOrange;
@@ -586,7 +615,7 @@ namespace Kzm.AutoCAD.UI.Panel
             if (state.Result.TextIds.TryGetValue(item.Source.Handle, out var textId)) ids.Add(textId);
             if (state.Result.Created.TryGetValue(item, out var pointId)) ids.Add(pointId);
             if (item.ExistingPointHandle != null && state.Result.ExistingIds.TryGetValue(item.ExistingPointHandle, out var existing)) ids.Add(existing);
-            PanelActions.Show(panel.Document, ids, KzmCommands.ZoomSize(state.Settings));
+            PanelActions.Show(panel.Document, ids, KzmCommands.ZoomSize(panel.Snapshot.Find(state.SurfaceId)?.Info.Appearance.TextHeight));
         }
     }
 }

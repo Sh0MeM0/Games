@@ -1,10 +1,16 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Globalization;
 using System.Linq;
 using System.Windows.Forms;
+using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.EditorInput;
+using Kzm.AutoCAD.Drawing;
 using Kzm.AutoCAD.Services;
 using Kzm.Core;
+using AcColor = Autodesk.AutoCAD.Colors.Color;
+using Font = System.Drawing.Font;
 
 namespace Kzm.AutoCAD.UI.Panel
 {
@@ -25,6 +31,24 @@ namespace Kzm.AutoCAD.UI.Panel
         private KzmPanel panel;
         private SurfaceSummary surface;
         private bool isNew;
+
+        // Точки, оформление, триангуляция (только для существующей поверхности).
+        private readonly TableLayoutPanel details = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Padding = new Padding(6) };
+        private readonly ComboBox textStyle = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160 };
+        private readonly TextBox textHeight = new TextBox { Width = 70 };
+        private readonly TextBox numberHeight = new TextBox { Width = 70 };
+        private readonly TextBox signSize = new TextBox { Width = 70 };
+        private readonly CheckBox showNumbers = new CheckBox { Text = "Показывать номера точек", AutoSize = true };
+        private readonly Button elevationColor = new Button { AutoSize = true };
+        private readonly Button numberColor = new Button { AutoSize = true };
+        private readonly Label appearanceNote = new Label { AutoSize = true, MaximumSize = new Size(330, 0), ForeColor = SystemColors.GrayText };
+        private readonly Label boundaryNote = new Label { AutoSize = true, MaximumSize = new Size(330, 0) };
+        private readonly CheckBox showTriangles = new CheckBox { Text = "Показывать треугольники (слой КЗМ_ТРЕУГ)", AutoSize = true };
+        private readonly Label tinNote = new Label { AutoSize = true, MaximumSize = new Size(330, 0) };
+        private readonly Button refreshTriangles = new Button { Text = "Обновить треугольники", AutoSize = true };
+        private string elevationColorValue = PointAppearance.ByLayer;
+        private string numberColorValue = PointAppearance.ByLayer;
+        private bool bindingDetails;
 
         internal SurfaceView()
         {
@@ -52,7 +76,13 @@ namespace Kzm.AutoCAD.UI.Panel
             buttons.Controls.AddRange(new Control[] { save, makeCurrent, import, delete });
             table.Controls.Add(buttons);
             table.SetColumnSpan(buttons, 2);
-            Controls.Add(table);
+            BuildDetails();
+            AutoScroll = false;
+            var root = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = System.Windows.Forms.FlowDirection.TopDown, WrapContents = false, AutoScroll = true };
+            table.Dock = DockStyle.None;
+            root.Controls.Add(table);
+            root.Controls.Add(details);
+            Controls.Add(root);
 
             name.Anchor = layer.Anchor = AnchorStyles.Left | AnchorStyles.Right;
             fact.CheckedChanged += (s, e) => SwapDefaultLayer();
@@ -71,6 +101,271 @@ namespace Kzm.AutoCAD.UI.Panel
         }
 
         internal void PrepareNew() => isNew = true;
+
+        private static Label Section(string text) =>
+            new Label { Text = text, AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont, FontStyle.Bold), Margin = new Padding(3, 12, 3, 3) };
+
+        private void Span(Control control)
+        {
+            details.Controls.Add(control);
+            details.SetColumnSpan(control, 2);
+        }
+
+        private static FlowLayoutPanel Flow(params Control[] controls)
+        {
+            var flow = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = Padding.Empty, MaximumSize = new Size(340, 0) };
+            flow.Controls.AddRange(controls);
+            return flow;
+        }
+
+        private void BuildDetails()
+        {
+            details.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            details.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+            Span(Section("Точки"));
+            var importButton = new Button { Text = "Импорт из текстов…", AutoSize = true };
+            importButton.Click += (s, e) => panel.ShowImport(surface?.Info.Id);
+            var manual = new Button { Text = "Создать вручную…", AutoSize = true };
+            manual.Click += (s, e) => CreateByHand();
+            var table = new Button { Text = "Таблица точек", AutoSize = true };
+            table.Click += (s, e) => panel.ShowPoints(surface?.Info.Id);
+            Span(Flow(importButton, manual, table));
+            Span(new Label
+            {
+                AutoSize = true, MaximumSize = new Size(330, 0), ForeColor = SystemColors.GrayText,
+                Text = "Вручную: укажите точку на чертеже (работают привязки), введите отметку в командной строке; Enter — повторить предыдущую; Esc — закончить.",
+            });
+
+            Span(Section("Оформление подписей"));
+            AddDetail("Шрифт (стиль текста)", textStyle);
+            AddDetail("Высота отметки, м", textHeight);
+            AddDetail("Высота номера, м", numberHeight);
+            AddDetail("Размер знака, м", signSize);
+            AddDetail("Цвет отметок", elevationColor);
+            AddDetail("Цвет номеров", numberColor);
+            Span(showNumbers);
+            var sample = new Button { Text = "Взять с образца…", AutoSize = true };
+            sample.Click += (s, e) => TakeFromSample();
+            var apply = new Button { Text = "Применить ко всем точкам", AutoSize = true };
+            apply.Click += (s, e) => SaveAppearance(true);
+            var saveOnly = new Button { Text = "Сохранить для новых", AutoSize = true };
+            saveOnly.Click += (s, e) => SaveAppearance(false);
+            Span(Flow(sample, apply, saveOnly));
+            Span(appearanceNote);
+            elevationColor.Click += (s, e) => PickColor(ref elevationColorValue, elevationColor);
+            numberColor.Click += (s, e) => PickColor(ref numberColorValue, numberColor);
+
+            Span(Section("Поверхность (триангуляция)"));
+            Span(boundaryNote);
+            var pickBoundary = new Button { Text = "Указать границу…", AutoSize = true };
+            pickBoundary.Click += (s, e) => PickBoundary();
+            var clearBoundary = new Button { Text = "Без границы", AutoSize = true };
+            clearBoundary.Click += (s, e) => SetBoundary(null);
+            Span(Flow(pickBoundary, clearBoundary));
+            Span(showTriangles);
+            showTriangles.CheckedChanged += (s, e) => { if (!bindingDetails) ShowTriangles(showTriangles.Checked); };
+            refreshTriangles.Click += (s, e) => ShowTriangles(true);
+            var check = new Button { Text = "Проверить триангуляцию", AutoSize = true };
+            check.Click += (s, e) => CheckTin();
+            Span(Flow(refreshTriangles, check));
+            Span(tinNote);
+        }
+
+        private void AddDetail(string caption, Control control)
+        {
+            details.Controls.Add(new Label { Text = caption, AutoSize = true, MaximumSize = new Size(160, 0), Anchor = AnchorStyles.Left, Margin = new Padding(3, 7, 6, 3) });
+            details.Controls.Add(control);
+        }
+
+        private void BindDetails()
+        {
+            details.Visible = surface != null && !creating;
+            if (!details.Visible) return;
+            bindingDetails = true;
+            try
+            {
+                var appearance = surface.Info.Appearance;
+                textStyle.Items.Clear();
+                if (panel.Document != null)
+                    foreach (var style in DrawingData.TextStyles(panel.Document)) textStyle.Items.Add(style);
+                textStyle.SelectedItem = appearance.TextStyle != null && textStyle.Items.Contains(appearance.TextStyle) ? appearance.TextStyle : null;
+                textHeight.Text = SettingsView.FormatValue(appearance.TextHeight);
+                numberHeight.Text = SettingsView.FormatValue(appearance.NumberHeight);
+                signSize.Text = SettingsView.FormatValue(appearance.SignSize);
+                showNumbers.Checked = appearance.ShowNumber;
+                elevationColorValue = appearance.ElevationColor ?? PointAppearance.ByLayer;
+                numberColorValue = appearance.NumberColor ?? PointAppearance.ByLayer;
+                ShowColor(elevationColor, elevationColorValue);
+                ShowColor(numberColor, numberColorValue);
+                appearanceNote.Text = appearance.IsSet
+                    ? "Пустые поля: высота номера = высоте отметки, знак = половине высоты отметки."
+                    : "Оформление ещё не задано: оно возьмётся с текстов при импорте или с образца («Взять с образца»).";
+                boundaryNote.Text = string.IsNullOrEmpty(surface.Info.BoundaryHandle)
+                    ? "Граница поверхности не задана: треугольники строятся по всем точкам (выпуклая оболочка)."
+                    : "Граница поверхности: полилиния " + surface.Info.BoundaryHandle + " — треугольники снаружи отбрасываются.";
+                showTriangles.Checked = surface.Info.ShowTriangles;
+                refreshTriangles.Visible = surface.Info.ShowTriangles && surface.TrianglesOutdated;
+                tinNote.Text = surface.TrianglesOutdated
+                    ? "Точки изменились после построения треугольников — нажмите «Обновить треугольники». Картограмма всегда считается по текущим точкам."
+                    : "Отметка в любой точке — линейная интерполяция внутри треугольника; вне поверхности — «нет данных».";
+            }
+            finally
+            {
+                bindingDetails = false;
+            }
+        }
+
+        private static void ShowColor(Button button, string value)
+        {
+            var color = PointBlocks.ParseColor(value);
+            button.Text = color.IsByLayer ? "ПоСлою" : color.IsByAci ? "Индекс " + color.ColorIndex : "RGB " + color.Red + "," + color.Green + "," + color.Blue;
+            button.BackColor = color.IsByLayer ? SystemColors.Control : color.ColorValue;
+            button.ForeColor = color.IsByLayer || color.ColorValue.GetBrightness() > 0.5 ? Color.Black : Color.White;
+        }
+
+        private void PickColor(ref string value, Button button)
+        {
+            var dialog = new Autodesk.AutoCAD.Windows.ColorDialog
+            {
+                Color = PointBlocks.ParseColor(value),
+                IncludeByBlockByLayer = true,
+            };
+            if (dialog.ShowDialog() != DialogResult.OK) return;
+            value = PointBlocks.FormatColor(dialog.Color);
+            ShowColor(button, value);
+        }
+
+        private PointAppearance ReadAppearance(List<string> errors)
+        {
+            var appearance = surface.Info.Appearance.Clone();
+            appearance.TextStyle = textStyle.SelectedItem as string ?? appearance.TextStyle;
+            appearance.TextHeight = SettingsView.Parse(textHeight.Text, "высота отметки", errors);
+            appearance.NumberHeight = SettingsView.Parse(numberHeight.Text, "высота номера", errors);
+            appearance.SignSize = SettingsView.Parse(signSize.Text, "размер знака", errors);
+            appearance.ShowNumber = showNumbers.Checked;
+            appearance.ElevationColor = elevationColorValue;
+            appearance.NumberColor = numberColorValue;
+            if (!appearance.TextHeight.HasValue) errors.Add("задайте высоту отметки или возьмите её с образца");
+            foreach (var value in new[] { appearance.TextHeight, appearance.NumberHeight, appearance.SignSize })
+                if (value.HasValue && !(value.Value > 0)) errors.Add("размеры должны быть больше нуля");
+            return appearance;
+        }
+
+        private void SaveAppearance(bool applyToPoints)
+        {
+            if (surface == null) return;
+            var errors = new List<string>();
+            var appearance = ReadAppearance(errors);
+            if (errors.Count > 0) { PanelMessages.Error(string.Join("; ", errors.Distinct()) + "."); return; }
+            string id = surface.Info.Id;
+            var settings = panel.Snapshot.Settings;
+            PanelActions.Run("оформление точек", document =>
+            {
+                int count = EditServices.SaveAppearance(document.Database, id, appearance, applyToPoints, settings);
+                PanelMessages.Info(applyToPoints ? "Оформление применено к точкам: " + count + "." : "Оформление сохранено для новых точек.");
+            }, panel.RefreshAll);
+        }
+
+        /// <summary>Шрифт и высота — с указанного текста на чертеже (цвета не меняются).</summary>
+        private void TakeFromSample()
+        {
+            if (surface == null) return;
+            PointAppearance taken = null;
+            var current = surface.Info.Appearance;
+            PanelActions.Pick("образец оформления", document =>
+            {
+                var options = new PromptEntityOptions("\nУкажите текст-образец (шрифт и высота подписи): ");
+                options.SetRejectMessage("\nНужен TEXT или MTEXT.");
+                options.AddAllowedClass(typeof(DBText), true);
+                options.AddAllowedClass(typeof(MText), true);
+                var pick = document.Editor.GetEntity(options);
+                if (pick.Status != PromptStatus.OK) return;
+                using (var transaction = document.Database.TransactionManager.StartOpenCloseTransaction())
+                {
+                    taken = EditServices.FromSample((Entity)transaction.GetObject(pick.ObjectId, OpenMode.ForRead), current);
+                    transaction.Commit();
+                }
+            }, () =>
+            {
+                if (taken == null) return;
+                if (!textStyle.Items.Contains(taken.TextStyle)) textStyle.Items.Add(taken.TextStyle);
+                textStyle.SelectedItem = taken.TextStyle;
+                textHeight.Text = SettingsView.FormatValue(taken.TextHeight);
+                numberHeight.Text = string.Empty;
+                signSize.Text = string.Empty;
+                PanelMessages.Info("Шрифт «" + taken.TextStyle + "», высота " + SettingsView.FormatValue(taken.TextHeight) +
+                                   " м взяты с образца. Нажмите «Применить ко всем точкам» или «Сохранить для новых».");
+            });
+        }
+
+        private void CreateByHand()
+        {
+            if (surface == null) return;
+            string id = surface.Info.Id;
+            var settings = panel.Snapshot.Settings;
+            PanelActions.Run("точки вручную", document => EditServices.CreatePointsByHand(document, id, settings), panel.RefreshAll);
+        }
+
+        private void PickBoundary()
+        {
+            if (surface == null) return;
+            string handle = null;
+            PanelActions.Pick("граница поверхности", document =>
+            {
+                var options = new PromptEntityOptions("\nУкажите замкнутую полилинию — внешнюю границу поверхности: ");
+                options.SetRejectMessage("\nНужна замкнутая полилиния.");
+                options.AddAllowedClass(typeof(Curve), false);
+                var pick = document.Editor.GetEntity(options);
+                if (pick.Status == PromptStatus.OK) handle = pick.ObjectId.Handle.ToString();
+            }, () => { if (handle != null) SetBoundary(handle); });
+        }
+
+        private void SetBoundary(string handle)
+        {
+            if (surface == null) return;
+            string id = surface.Info.Id;
+            var settings = panel.Snapshot.Settings;
+            PanelActions.Run("граница поверхности", document =>
+            {
+                EditServices.SetBoundary(document.Database, id, handle, settings);
+                PanelMessages.Info(handle == null ? "Граница поверхности снята." : "Граница поверхности задана.");
+            }, panel.RefreshAll);
+        }
+
+        private void ShowTriangles(bool show)
+        {
+            if (surface == null) return;
+            string id = surface.Info.Id;
+            var settings = panel.Snapshot.Settings;
+            PanelActions.Run(show ? "треугольники" : "скрыть треугольники", document =>
+            {
+                var model = EditServices.ShowTriangles(document.Database, id, show, settings);
+                PanelMessages.Info(model == null ? "Треугольники скрыты." :
+                    "Треугольников: " + model.Tin.TriangleCount + (model.Problems.Count > 0 ? "; " + string.Join("; ", model.Problems) : string.Empty) + ".");
+            }, panel.RefreshAll);
+        }
+
+        private void CheckTin()
+        {
+            if (surface == null || panel.Document == null) return;
+            try
+            {
+                using (panel.Document.LockDocument(Autodesk.AutoCAD.ApplicationServices.DocumentLockMode.Read, null, null, false))
+                using (var transaction = panel.Document.Database.TransactionManager.StartOpenCloseTransaction())
+                {
+                    var model = SurfaceModels.Build(panel.Document.Database, transaction, surface.Info, panel.Snapshot.Settings);
+                    transaction.Commit();
+                    tinNote.Text = "Точек в триангуляции: " + model.Used.Count + ", треугольников: " + model.Tin.TriangleCount +
+                                   (model.Tin.RemovedByBoundary > 0 ? ", отброшено границей: " + model.Tin.RemovedByBoundary : string.Empty) +
+                                   (model.Problems.Count > 0 ? ".\n" + string.Join(".\n", model.Problems) : string.Empty) + ".";
+                }
+            }
+            catch (KzmException exception)
+            {
+                tinNote.Text = exception.Message;
+            }
+        }
 
         public void Bind(KzmPanel owner, string surfaceId)
         {
@@ -92,6 +387,7 @@ namespace Kzm.AutoCAD.UI.Panel
                 isNew = false;
                 creating = true;
                 surface = null;
+                details.Visible = false;
                 title.Text = "Новая поверхность";
                 info.Text = "Сначала задаётся слой: в него попадут точки этой поверхности. " +
                             "Выберите существующий слой или введите новое имя.";
@@ -105,6 +401,7 @@ namespace Kzm.AutoCAD.UI.Panel
             if (surface == null)
             {
                 title.Text = "Поверхность не найдена";
+                details.Visible = false;
                 info.Text = "Её нет в текущем чертеже (удалена или открыт другой чертёж).";
                 save.Visible = movePoints.Visible = makeCurrent.Visible = import.Visible = delete.Visible = false;
                 return;
@@ -123,6 +420,7 @@ namespace Kzm.AutoCAD.UI.Panel
                         (surface.PendingPairs > 0 ? "; пар близких точек: " + surface.PendingPairs : string.Empty) +
                         (surface.IsCurrent ? "\nТекущая поверхность." : string.Empty) +
                         (string.IsNullOrEmpty(surface.Info.Created) ? string.Empty : "\nСоздана: " + surface.Info.Created);
+            BindDetails();
         }
 
         private bool creating;

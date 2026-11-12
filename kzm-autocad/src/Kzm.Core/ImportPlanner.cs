@@ -40,6 +40,12 @@ namespace Kzm.Core
         public string MarkerHandle { get; private set; }
         public double? MarkerDistance { get; private set; }
         public string ExistingPointHandle { get; private set; }
+        /// <summary>Whole numbers of the text (point-number candidates).</summary>
+        public IReadOnlyList<string> Integers { get; private set; } = new string[0];
+        /// <summary>Point number assigned by <see cref="PointNumbering"/>.</summary>
+        public string Number { get; internal set; }
+        /// <summary>An integer-only text used as the number of this point (not an error then).</summary>
+        public ImportItem NumberFor { get; internal set; }
         /// <summary>Accepted, but worth a look (e.g. the marker is unusually far).</summary>
         public string Warning { get; private set; }
         /// <summary>The disputed reason before a manual decision (kept for the report).</summary>
@@ -71,6 +77,8 @@ namespace Kzm.Core
         internal void SetExisting(string handle) { ExistingPointHandle = handle; }
 
         internal void SetWarning(string warning) { Warning = warning; }
+
+        internal void SetIntegers(IReadOnlyList<string> integers) { Integers = integers ?? new string[0]; }
 
         /// <summary>
         /// Способ (в) and manual corrections from the import table: the user typed the
@@ -182,6 +190,7 @@ namespace Kzm.Core
                 }
                 var extracted = ElevationExtractor.Extract(text.Plain);
                 item.SetElevation(extracted.Value, extracted.Decimals);
+                item.SetIntegers(extracted.Integers);
                 item.Set(extracted.Status, extracted.Reason, extracted.Message);
                 if (options.Mode == XyMode.Insertion)
                     item.SetPosition(text.Anchor, XyMode.Insertion, null, null);
@@ -309,6 +318,92 @@ namespace Kzm.Core
             var parts = list.GroupBy(item => item.Reason).OrderBy(group => group.Key)
                 .Select(group => ImportReasons.Title(group.Key) + " — " + group.Count());
             return title + ": " + list.Count + " (" + string.Join("; ", parts) + ")";
+        }
+    }
+}
+
+namespace Kzm.Core
+{
+    /// <summary>
+    /// Номера точек при импорте: число из того же текста («т.15 145,32» → 15); иначе текст-номер
+    /// («12») рядом с точкой: по маркеру — ближайший к тексту-номеру маркер должен быть маркером
+    /// этой точки; по точке вставки — тексты взаимно ближайшие и не дальше 5 высот текста.
+    /// Иначе — по порядку после наибольшего номера поверхности.
+    /// </summary>
+    public static class PointNumbering
+    {
+        public const double TextHeightsLimit = 5;
+
+        public static void Assign(ImportPlan plan, int nextNumber, IReadOnlyList<MarkerCandidate> markers = null)
+        {
+            if (plan == null) throw new ArgumentNullException(nameof(plan));
+            var accepted = plan.Accepted.Where(item => item.Position.HasValue).ToList();
+            foreach (var item in plan.Items) { item.Number = null; item.NumberFor = null; }
+
+            foreach (var item in accepted.Where(item => item.Integers.Count == 1)) item.Number = item.Integers[0];
+
+            var numberTexts = plan.Items.Where(item => item.Status == ImportStatus.Rejected && item.Reason == ImportReason.IntegerOnly &&
+                                                       item.Integers.Count == 1).ToList();
+            var waiting = accepted.Where(item => item.Number == null).ToList();
+            if (numberTexts.Count > 0 && waiting.Count > 0)
+            {
+                if (plan.Options.Mode == XyMode.Marker && markers != null && markers.Count > 0)
+                    ByMarker(numberTexts, waiting, markers);
+                else
+                    ByDistance(numberTexts, waiting);
+            }
+            foreach (var item in accepted.Where(item => item.Number == null))
+                item.Number = (nextNumber++).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        private static void ByMarker(List<ImportItem> numberTexts, List<ImportItem> waiting, IReadOnlyList<MarkerCandidate> markers)
+        {
+            var index = new NearestIndex(markers.Select(m => m.Position).ToList());
+            var byMarker = waiting.Where(item => item.MarkerHandle != null)
+                .GroupBy(item => item.MarkerHandle).Where(g => g.Count() == 1).ToDictionary(g => g.Key, g => g.Single());
+            var claimed = new Dictionary<string, int>();
+            var nearest = new string[numberTexts.Count];
+            for (int k = 0; k < numberTexts.Count; k++)
+            {
+                var (marker, distance, second, secondDistance) = index.TwoNearest(numberTexts[k].Source.Anchor);
+                if (marker < 0 || (second >= 0 && secondDistance - distance <= KzmSettings.DuplicateTolerance)) continue;
+                nearest[k] = markers[marker].Handle;
+                claimed[nearest[k]] = claimed.TryGetValue(nearest[k], out int count) ? count + 1 : 1;
+            }
+            for (int k = 0; k < numberTexts.Count; k++)
+            {
+                // Two number texts at one marker: ambiguous, numbers go in order.
+                if (nearest[k] == null || claimed[nearest[k]] != 1 || !byMarker.TryGetValue(nearest[k], out var point)) continue;
+                point.Number = numberTexts[k].Integers[0];
+                numberTexts[k].NumberFor = point;
+            }
+        }
+
+        private static void ByDistance(List<ImportItem> numberTexts, List<ImportItem> waiting)
+        {
+            var points = new NearestIndex(waiting.Select(item => item.Position.Value).ToList());
+            var texts = new NearestIndex(numberTexts.Select(item => item.Source.Anchor).ToList());
+            for (int k = 0; k < numberTexts.Count; k++)
+            {
+                var (point, distance, second, secondDistance) = points.TwoNearest(numberTexts[k].Source.Anchor);
+                if (point < 0 || (second >= 0 && secondDistance - distance <= KzmSettings.DuplicateTolerance)) continue;
+                double height = Math.Max(numberTexts[k].Source.Height, waiting[point].Source.Height);
+                if (!(height > 0) || distance > TextHeightsLimit * height) continue;
+                var (text, _, _, _) = texts.TwoNearest(waiting[point].Position.Value);
+                if (text != k || waiting[point].Number != null) continue;
+                waiting[point].Number = numberTexts[k].Integers[0];
+                numberTexts[k].NumberFor = waiting[point];
+            }
+        }
+
+        /// <summary>The next free number after the largest numeric one.</summary>
+        public static int Next(IEnumerable<string> numbers)
+        {
+            int max = 0;
+            foreach (var n in numbers)
+                if (int.TryParse(n, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int value))
+                    max = Math.Max(max, value);
+            return max + 1;
         }
     }
 }

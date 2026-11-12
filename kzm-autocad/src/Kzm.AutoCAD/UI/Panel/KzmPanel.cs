@@ -23,7 +23,7 @@ namespace Kzm.AutoCAD.UI.Panel
     /// </summary>
     internal sealed class KzmPanel : UserControl
     {
-        private enum NodeKind { Group, Surface, Points, Pairs }
+        private enum NodeKind { Group, Surface, Points, Pairs, CartogramGroup, Cartogram }
 
         private sealed class NodeTag
         {
@@ -41,6 +41,7 @@ namespace Kzm.AutoCAD.UI.Panel
         private readonly PairsView pairsView = new PairsView();
         private readonly ImportView importView = new ImportView();
         private readonly SettingsView settingsView = new SettingsView();
+        private readonly CartogramView cartogramView = new CartogramView();
         private readonly ContextMenuStrip surfaceMenu = new ContextMenuStrip();
         private Control shown;
         private string shownSurfaceId;
@@ -54,6 +55,7 @@ namespace Kzm.AutoCAD.UI.Panel
 
             var toolbar = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Dock = DockStyle.Top, Stretch = true };
             toolbar.Items.Add(Button("+ Поверхность", "Создать фактическую или проектную поверхность", () => ShowNewSurface()));
+            toolbar.Items.Add(Button("+ Картограмма", "Новая картограмма: граница, поверхности, сетка, оформление", ShowNewCartogram));
             toolbar.Items.Add(Button("Импорт", "Импорт отметок из текстов съёмки", () => ShowImport(SelectedSurfaceId)));
             toolbar.Items.Add(Button("Настройки", "Настройки чертежа: масштаб, размеры, шаблон числа, диапазон", ShowSettings));
             toolbar.Items.Add(new ToolStripSeparator());
@@ -171,6 +173,24 @@ namespace Kzm.AutoCAD.UI.Panel
                     group.Expand();
                     if (((NodeTag)group.Tag).Key == selectedKey) toSelect = group;
                 }
+                var cartograms = new TreeNode("Картограммы (" + Snapshot.Cartograms.Count + ")") { Tag = new NodeTag { Kind = NodeKind.CartogramGroup } };
+                foreach (var cartogram in Snapshot.Cartograms)
+                {
+                    var info = cartogram.Info;
+                    string state = !info.Built ? "  (не построена)"
+                        : cartogram.Outdated ? "  (УСТАРЕЛА)"
+                        : "  +" + Math.Round(info.LastFill).ToString(System.Globalization.CultureInfo.InvariantCulture) + " / −" +
+                          Math.Round(info.LastCut).ToString(System.Globalization.CultureInfo.InvariantCulture) + " м³";
+                    var node = new TreeNode(info.Name + state)
+                    {
+                        Tag = new NodeTag { Kind = NodeKind.Cartogram, SurfaceId = info.Id },
+                        ForeColor = cartogram.Outdated ? Color.Firebrick : tree.ForeColor,
+                    };
+                    cartograms.Nodes.Add(node);
+                    if (((NodeTag)node.Tag).Key == selectedKey) toSelect = node;
+                }
+                tree.Nodes.Add(cartograms);
+                cartograms.Expand();
                 if (toSelect != null) tree.SelectedNode = toSelect;
             }
             finally
@@ -189,6 +209,8 @@ namespace Kzm.AutoCAD.UI.Panel
                 case NodeKind.Surface: Display(surfaceView, tag.SurfaceId); break;
                 case NodeKind.Points: Display(pointsView, tag.SurfaceId); break;
                 case NodeKind.Pairs: Display(pairsView, tag.SurfaceId); break;
+                case NodeKind.Cartogram: Display(cartogramView, tag.SurfaceId); break;
+                case NodeKind.CartogramGroup: ShowNewCartogram(); break;
                 default: Display(null, null); break;
             }
         }
@@ -202,6 +224,7 @@ namespace Kzm.AutoCAD.UI.Panel
             foreach (TreeNode node in group.Nodes)
             {
                 if (((NodeTag)node.Tag).Key == selectedKey) target = node;
+                if (node.Tag is NodeTag nodeTag && nodeTag.Kind == NodeKind.Cartogram) continue;
                 foreach (TreeNode child in node.Nodes)
                     if (((NodeTag)child.Tag).Key == selectedKey) target = child;
             }
@@ -228,6 +251,27 @@ namespace Kzm.AutoCAD.UI.Panel
         }
 
         internal void ShowSettings() => Display(settingsView, null);
+
+        internal void ShowNewCartogram()
+        {
+            cartogramView.PrepareNew();
+            Display(cartogramView, null);
+        }
+
+        internal void ShowCartogram(string cartogramId)
+        {
+            if (cartogramId == null) { ShowNewCartogram(); return; }
+            Select(NodeKind.Cartogram, cartogramId);
+        }
+
+        /// <summary>After a cartogram was saved, built or deleted.</summary>
+        internal void AfterCartogramChange(string cartogramId)
+        {
+            selectedKey = cartogramId == null ? null : new NodeTag { Kind = NodeKind.Cartogram, SurfaceId = cartogramId }.Key;
+            RefreshAll();
+            if (cartogramId != null) Select(NodeKind.Cartogram, cartogramId);
+            else Display(null, null);
+        }
 
         private void Display(Control view, string surfaceId)
         {

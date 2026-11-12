@@ -165,42 +165,29 @@ namespace Kzm.Core.Tests
     public class SettingsAndElevationTests
     {
         [Fact]
-        public void EmptySettingsListEveryMissingDrawingValue()
-        {
-            var problems = new KzmSettings().ValidateDrawing();
-            Assert.Contains(problems, p => p.Contains("масштаб"));
-            Assert.Contains(problems, p => p.Contains("высота подписи"));
-            Assert.Contains(problems, p => p.Contains("размер знака"));
-        }
-
-        [Fact]
         public void SettingsRoundTrip()
         {
-            var settings = new KzmSettings
-            {
-                ScaleDenominator = 500, LabelHeightMm = 2.5, PointSizeMm = 1.5, LastXyMode = XyMode.Insertion, LastSelectionMode = "LAYERS",
-            };
+            var settings = new KzmSettings { Scale = 1000, Decimals = 3, LastXyMode = XyMode.Insertion, LastSelectionMode = "LAYERS" };
             var decoded = SettingsCodec.Decode(SettingsCodec.Encode(settings));
-            Assert.Equal(500, decoded.ScaleDenominator);
-            Assert.Equal(0.5, decoded.UnitsPerPaperMm);
-            Assert.Equal(2.5, decoded.LabelHeightMm);
+            Assert.Equal(1000, decoded.Scale);
+            Assert.Equal(3, decoded.Decimals);
             Assert.Equal(XyMode.Insertion, decoded.LastXyMode);
             Assert.Equal("LAYERS", decoded.LastSelectionMode);
-            Assert.Empty(decoded.ValidateDrawing());
+            Assert.Empty(decoded.Validate());
         }
 
         [Fact]
-        public void SettingsOfVersion02AreStillRead()
+        public void SettingsOfOlderVersionsAreStillRead()
         {
             var old = new List<KeyValuePair<string, string>>
             {
                 new KeyValuePair<string, string>("version", "1"),
                 new KeyValuePair<string, string>("pattern", "[0-9]+"),
                 new KeyValuePair<string, string>("elev_min", "140"),
-                new KeyValuePair<string, string>("marker_radius", "1"),
+                new KeyValuePair<string, string>("label_height_mm", "2.5"),
                 new KeyValuePair<string, string>("scale", "1000"),
             };
-            Assert.Equal(1000, SettingsCodec.Decode(old).ScaleDenominator);
+            Assert.Equal(1000, SettingsCodec.Decode(old).Scale);
         }
 
         [Fact]

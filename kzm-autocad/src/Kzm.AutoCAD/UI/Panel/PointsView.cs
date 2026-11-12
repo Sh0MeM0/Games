@@ -26,7 +26,7 @@ namespace Kzm.AutoCAD.UI.Panel
         internal PointsView()
         {
             table.Columns.Add("Key", typeof(long));
-            table.Columns.Add("№", typeof(int));
+            table.Columns.Add("Номер", typeof(string));
             table.Columns.Add("X", typeof(string));
             table.Columns.Add("Y", typeof(string));
             table.Columns.Add("Отметка", typeof(string));
@@ -44,13 +44,14 @@ namespace Kzm.AutoCAD.UI.Panel
             grid.DataBindingComplete += (s, e) =>
             {
                 grid.Columns["Key"].Visible = false;
-                foreach (DataGridViewColumn column in grid.Columns) column.ReadOnly = column.Name != "Отметка";
+                foreach (DataGridViewColumn column in grid.Columns) column.ReadOnly = column.Name != "Отметка" && column.Name != "Номер";
                 grid.Columns["Отметка"].DefaultCellStyle.BackColor = Color.LightYellow;
+                grid.Columns["Номер"].DefaultCellStyle.BackColor = Color.LightYellow;
                 foreach (DataGridViewRow row in grid.Rows)
                     if (!string.IsNullOrEmpty(row.Cells["Ошибка"].Value as string)) row.DefaultCellStyle.ForeColor = Color.Firebrick;
             };
             grid.CellValidating += ValidateElevation;
-            grid.CellEndEdit += (s, e) => SaveElevation(e.RowIndex);
+            grid.CellEndEdit += (s, e) => SavePoint(e.RowIndex, grid.Columns[e.ColumnIndex].Name);
             grid.CellDoubleClick += (s, e) => { if (e.RowIndex >= 0) ShowSelected(); };
 
             onlyProblems.CheckedChanged += (s, e) => Fill();
@@ -65,7 +66,7 @@ namespace Kzm.AutoCAD.UI.Panel
                 Dock = DockStyle.Top,
                 AutoSize = true,
                 MaximumSize = new Size(340, 0),
-                Text = "Отметку можно исправить прямо в таблице (жёлтый столбец). Двойной щелчок — показать точку на чертеже.",
+                Text = "Отметку и номер можно исправить прямо в таблице (жёлтые столбцы). Двойной щелчок — показать точку на чертеже.",
                 Padding = new Padding(3),
             };
             Controls.Add(grid);
@@ -98,12 +99,10 @@ namespace Kzm.AutoCAD.UI.Panel
             int decimals = panel?.Snapshot.Settings.Decimals ?? KzmSettings.DefaultDecimals;
             table.BeginLoadData();
             table.Rows.Clear();
-            int number = 0;
-            foreach (var point in points.Values.OrderBy(point => point.Position.Y).ThenBy(point => point.Position.X))
+            foreach (var point in points.Values.OrderBy(point => NumberKey(point.Number)).ThenBy(point => point.Number, StringComparer.Ordinal))
             {
-                number++;
                 if (onlyProblems.Checked && point.Elevation.IsValid) continue;
-                table.Rows.Add(point.Id.Handle.Value, number,
+                table.Rows.Add(point.Id.Handle.Value, point.Number ?? string.Empty,
                     ElevationFormat.Format(point.Position.X, 3), ElevationFormat.Format(point.Position.Y, 3),
                     point.Elevation.IsValid ? ElevationFormat.Format(point.Elevation.Value.Value, decimals) : string.Empty,
                     SourceKinds.Code(point.Data.Source) + (string.IsNullOrEmpty(point.Data.SourceHandle) ? string.Empty : " " + point.Data.SourceHandle),
@@ -112,6 +111,9 @@ namespace Kzm.AutoCAD.UI.Panel
             }
             table.EndLoadData();
         }
+
+        private static long NumberKey(string number) =>
+            long.TryParse(number, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out long value) ? value : long.MaxValue;
 
         private SurfacePoint PointOf(int rowIndex)
         {
@@ -131,17 +133,29 @@ namespace Kzm.AutoCAD.UI.Panel
             }
         }
 
-        private void SaveElevation(int rowIndex)
+        private void SavePoint(int rowIndex, string column)
         {
             var point = PointOf(rowIndex);
             if (point == null) return;
-            if (!ElevationFormat.TryParse(Convert.ToString(grid.Rows[rowIndex].Cells["Отметка"].Value), out double value)) return;
-            if (point.Elevation.IsValid && Math.Abs(point.Elevation.Value.Value - value) < 1e-9) return;
             var settings = panel.Snapshot.Settings;
             var id = point.Id;
+            if (column == "Номер")
+            {
+                string number = Convert.ToString(grid.Rows[rowIndex].Cells["Номер"].Value)?.Trim() ?? string.Empty;
+                if (number == (point.Number ?? string.Empty)) return;
+                PanelActions.Run("номер точки", document =>
+                {
+                    EditServices.SetPoint(document.Database, id, null, number, settings);
+                    PanelMessages.Info("Номер точки " + id.Handle + " = «" + number + "».");
+                }, panel.RefreshAll);
+                return;
+            }
+            if (column != "Отметка") return;
+            if (!ElevationFormat.TryParse(Convert.ToString(grid.Rows[rowIndex].Cells["Отметка"].Value), out double value)) return;
+            if (point.Elevation.IsValid && Math.Abs(point.Elevation.Value.Value - value) < 1e-9) return;
             PanelActions.Run("отметка точки", document =>
             {
-                EditServices.SetElevation(document.Database, id, value, settings);
+                EditServices.SetPoint(document.Database, id, value, null, settings);
                 PanelMessages.Info("Отметка точки " + id.Handle + " = " + ElevationFormat.Format(value, settings.Decimals) + ".");
             }, panel.RefreshAll);
         }
@@ -155,7 +169,8 @@ namespace Kzm.AutoCAD.UI.Panel
             if (selected.Count == 0 && grid.CurrentRow != null) selected.Add(PointOf(grid.CurrentRow.Index));
             selected.RemoveAll(point => point == null);
             if (selected.Count == 0) return;
-            PanelActions.Show(panel.Document, selected.Select(point => point.Id), KzmCommands.ZoomSize(panel.Snapshot.Settings));
+            PanelActions.Show(panel.Document, selected.Select(point => point.Id),
+                KzmCommands.ZoomSize(panel.Snapshot.Find(surfaceId)?.Info.Appearance.TextHeight));
         }
 
         private void DeleteSelected()
@@ -167,7 +182,7 @@ namespace Kzm.AutoCAD.UI.Panel
             var ids = selected.Select(point => point.Id).ToList();
             PanelActions.Run("удаление точек", document =>
             {
-                int erased = EditServices.ErasePoints(document.Database, ids);
+                int erased = EditServices.ErasePoints(document.Database, ids, panel.Snapshot.Settings);
                 PanelMessages.Info("Удалено точек: " + erased + ".");
             }, panel.RefreshAll);
         }

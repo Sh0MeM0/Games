@@ -15,16 +15,27 @@ namespace Kzm.AutoCAD.Services
         internal int BrokenPoints { get; set; }
         internal int PendingPairs { get; set; }
         internal bool IsCurrent { get; set; }
+        /// <summary>Triangles are shown but the points changed since (MOVE/ERASE/COPY or attribute edit).</summary>
+        internal bool TrianglesOutdated { get; set; }
+    }
+
+    internal sealed class CartogramSummary
+    {
+        internal CartogramInfo Info { get; set; }
+        internal bool Outdated { get; set; }
     }
 
     internal sealed class DrawingSnapshot
     {
         internal KzmSettings Settings { get; set; } = new KzmSettings();
         internal List<SurfaceSummary> Surfaces { get; } = new List<SurfaceSummary>();
+        internal List<CartogramSummary> Cartograms { get; } = new List<CartogramSummary>();
         internal string CurrentId { get; set; }
         internal string Error { get; set; }
 
         internal SurfaceSummary Find(string id) => Surfaces.FirstOrDefault(surface => surface.Info.Id == id);
+
+        internal CartogramSummary FindCartogram(string id) => Cartograms.FirstOrDefault(c => c.Info.Id == id);
     }
 
     /// <summary>A pending pair of close points, both alive.</summary>
@@ -55,10 +66,14 @@ namespace Kzm.AutoCAD.Services
                     var bySurface = points.GroupBy(point => point.Data.SurfaceId).ToDictionary(group => group.Key, group => group.ToList());
                     var pointSurface = points.ToDictionary(point => point.Id, point => point.Data.SurfaceId);
                     var pairs = KzmStore.ReadConflicts(database, transaction).Where(pair => pair.IsAlive).ToList();
-                    foreach (var surface in KzmStore.ReadSurfaces(database, transaction))
+                    var surfaces = KzmStore.ReadSurfaces(database, transaction);
+                    foreach (var surface in surfaces)
                     {
                         bySurface.TryGetValue(surface.Id, out var own);
                         own = own ?? new List<SurfacePoint>();
+                        bool trianglesOutdated = surface.ShowTriangles &&
+                            surface.TrianglesFingerprint != PointBlocks.FingerprintOf(own) + "|" +
+                                SurfaceModels.OutlineFingerprint(database, transaction, surface.BoundaryHandle);
                         snapshot.Surfaces.Add(new SurfaceSummary
                         {
                             Info = surface,
@@ -66,7 +81,14 @@ namespace Kzm.AutoCAD.Services
                             BrokenPoints = own.Count(point => !point.Elevation.IsValid),
                             PendingPairs = pairs.Count(pair => Belongs(pair, surface.Id, pointSurface)),
                             IsCurrent = surface.Id == snapshot.CurrentId,
+                            TrianglesOutdated = trianglesOutdated,
                         });
+                    }
+                    foreach (var cartogram in KzmStore.ReadCartograms(database, transaction))
+                    {
+                        bool outdated = cartogram.Built && cartogram.BuiltFingerprint != CartogramService.FingerprintOf(database, transaction,
+                            cartogram, surfaces, id => bySurface.TryGetValue(id, out var list) ? list : new List<SurfacePoint>());
+                        snapshot.Cartograms.Add(new CartogramSummary { Info = cartogram, Outdated = outdated });
                     }
                     transaction.Commit();
                 }
@@ -147,6 +169,22 @@ namespace Kzm.AutoCAD.Services
                 transaction.Commit();
             }
             return result;
+        }
+
+        internal static List<string> TextStyles(Document document)
+        {
+            using (document.LockDocument(DocumentLockMode.Read, null, null, false))
+            using (var transaction = document.Database.TransactionManager.StartOpenCloseTransaction())
+            {
+                var table = (TextStyleTable)transaction.GetObject(document.Database.TextStyleTableId, OpenMode.ForRead);
+                var names = table.Cast<ObjectId>()
+                    .Select(id => (TextStyleTableRecord)transaction.GetObject(id, OpenMode.ForRead))
+                    .Where(style => !style.IsShapeFile && !style.Name.Contains("|") && style.Name.Length > 0)
+                    .Select(style => style.Name)
+                    .OrderBy(name => name, StringComparer.CurrentCultureIgnoreCase).ToList();
+                transaction.Commit();
+                return names;
+            }
         }
 
         internal static List<string> Layers(Document document)

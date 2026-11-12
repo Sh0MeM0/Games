@@ -76,11 +76,15 @@ namespace Kzm.AutoCAD
                 // the user opens the ribbon later. Do not poll forever in Classic.
                 if (ribbon == null || ribbon.Tabs.Any(item => item.Id == TabId)) return;
                 var tab = new RibbonTab { Id = TabId, Title = "КЗМ" };
-                tab.Panels.Add(Panel("Картограмма",
+                tab.Panels.Add(Panel("Поверхности",
                     Button("Панель\nКЗМ", "KZM"),
                     Button("Импорт\nотметок", "KZM_IMPORT"),
-                    Button("Настройки\nчертежа", "KZM_SETTINGS")));
-                tab.Panels.Add(Panel("Проверка",
+                    Button("Точки\nвручную", "KZM_POINT")));
+                tab.Panels.Add(Panel("Картограмма",
+                    Button("Новая\nкартограмма", "KZM_CARTOGRAM"),
+                    Button("Пересчитать", "KZM_UPDATE")));
+                tab.Panels.Add(Panel("Сервис",
+                    Button("Настройки", "KZM_SETTINGS"),
                     Button("Убрать\nпометки", "KZM_CLEARMARKS"),
                     Button("Справка", "KZM_HELP")));
                 ribbon.Tabs.Add(tab);

@@ -71,8 +71,9 @@ namespace Kzm.Core
     public sealed class ExtractResult
     {
         internal ExtractResult(ImportStatus status, ImportReason reason, double? value, IReadOnlyList<double> numbers,
-            IReadOnlyList<double> decimals, string message)
+            IReadOnlyList<double> decimals, string message, IReadOnlyList<string> integers = null)
         {
+            Integers = integers ?? new string[0];
             Status = status;
             Reason = reason;
             Value = value;
@@ -88,6 +89,8 @@ namespace Kzm.Core
         public IReadOnlyList<double> Numbers { get; }
         /// <summary>Numbers with a fractional part — elevation candidates.</summary>
         public IReadOnlyList<double> Decimals { get; }
+        /// <summary>Whole numbers as written (point numbers such as «15» in «т.15 145,32»).</summary>
+        public IReadOnlyList<string> Integers { get; }
         public string Message { get; }
     }
 
@@ -112,22 +115,24 @@ namespace Kzm.Core
 
             var numbers = new List<double>();
             var decimals = new List<double>();
+            var integers = new List<string>();
             foreach (Match match in Number.Matches(text))
             {
                 if (!ElevationFormat.TryParseNormalized(match.Value, out double value)) continue;
                 numbers.Add(value);
                 if (match.Value.IndexOf('.') >= 0 || match.Value.IndexOf(',') >= 0) decimals.Add(value);
+                else if (match.Value[0] != '-' && match.Value[0] != '+') integers.Add(match.Value);
             }
 
             if (numbers.Count == 0)
                 return new ExtractResult(ImportStatus.Rejected, ImportReason.NoNumber, null, numbers, decimals, "нет числа");
             if (decimals.Count == 0)
                 return new ExtractResult(ImportStatus.Rejected, ImportReason.IntegerOnly, null, numbers, decimals,
-                    "только целое число (номер точки?) — не отметка: " + Join(numbers));
+                    "только целое число (номер точки?) — не отметка: " + Join(numbers), integers);
             if (decimals.Count > 1)
                 return new ExtractResult(ImportStatus.Disputed, ImportReason.MultipleNumbers, null, numbers, decimals,
-                    "несколько дробных чисел: " + Join(decimals));
-            return new ExtractResult(ImportStatus.Accepted, ImportReason.None, decimals[0], numbers, decimals, string.Empty);
+                    "несколько дробных чисел: " + Join(decimals), integers);
+            return new ExtractResult(ImportStatus.Accepted, ImportReason.None, decimals[0], numbers, decimals, string.Empty, integers);
         }
 
         /// <summary>Numbers as they were read (up to 4 decimals), so «12» stays «12».</summary>

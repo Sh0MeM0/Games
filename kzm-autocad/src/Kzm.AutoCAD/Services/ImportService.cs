@@ -19,6 +19,8 @@ namespace Kzm.AutoCAD.Services
         internal XyMode Mode { get; set; }
         internal KzmSettings Settings { get; set; }
         internal Dictionary<string, ImportOverride> Overrides { get; set; } = new Dictionary<string, ImportOverride>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>Take the text style and height of the points from the imported texts.</summary>
+        internal bool AppearanceFromTexts { get; set; }
     }
 
     internal sealed class ImportResult
@@ -68,6 +70,7 @@ namespace Kzm.AutoCAD.Services
             result.Plan = ImportPlanner.Plan(texts, markers, existingPoints,
                 new ImportOptions(request.Mode, settings.Decimals));
             ImportPlanner.ApplyOverrides(result.Plan, request.Overrides);
+            PointNumbering.Assign(result.Plan, PointNumbering.Next(existing.Select(point => point.Number)), markers);
             result.Duplicates = ImportPlanner.FindDuplicates(result.Plan, existingPoints);
             result.Summary.AddRange(ImportSummary.Lines(result.Plan, result.Duplicates.Count, result.Plan.Accepted.Count(), true));
             if (result.BrokenPoints.Count > 0)
@@ -80,8 +83,6 @@ namespace Kzm.AutoCAD.Services
         {
             var database = document.Database;
             var settings = request.Settings;
-            var problems = settings.ValidateDrawing();
-            if (problems.Count > 0) throw new KzmException("Не хватает настроек: " + string.Join("; ", problems) + ".");
             var result = Prepare(database, request);
             var surface = result.Surface;
             var plan = result.Plan;
@@ -97,7 +98,12 @@ namespace Kzm.AutoCAD.Services
                 Layers.Ensure(database, transaction, Layers.Check, 1, false);
                 PointBlocks.EnsureRegApp(database, transaction, PointBlocks.AppName);
                 PointBlocks.EnsureRegApp(database, transaction, CheckMarks.AppName);
-                var definitionId = PointBlocks.EnsureDefinition(database, transaction, settings);
+                var definitionId = PointBlocks.EnsureDefinition(database, transaction);
+                // «Оформление как у текстов»: style and height of the source texts (the most common style,
+                // the median height); the colours chosen by the user are kept.
+                if (request.AppearanceFromTexts || !surface.Appearance.IsSet)
+                    surface.Appearance = AppearanceOf(plan, surface.Appearance) ?? EditServices.FromDrawing(database, transaction, surface.Appearance);
+                double markHeight = surface.Appearance.TextHeight ?? 1;
 
                 foreach (var item in plan.Accepted)
                 {
@@ -109,17 +115,20 @@ namespace Kzm.AutoCAD.Services
                         SourceHandle = item.Source.Handle,
                         XyMode = item.PositionMode,
                         MarkerHandle = item.MarkerHandle,
+                        Number = item.Number,
                     };
-                    result.Created[item] = PointBlocks.Create(transaction, space, definitionId, item.Position.Value, surface.Layer, data, settings);
+                    result.Created[item] = PointBlocks.Create(transaction, space, definitionId, item.Position.Value, surface.Layer, data,
+                        surface.Appearance, settings.Decimals);
                 }
 
                 // Old marks of these texts are replaced by the marks of this check.
                 CheckMarks.Clear(database, transaction, new HashSet<string>(result.TextIds.Keys, StringComparer.OrdinalIgnoreCase));
-                foreach (var item in plan.Rejected.Concat(plan.Disputed))
-                    CheckMarks.Add(transaction, space, item.Source.Anchor, ImportReasons.ShortLabel(item.Reason), item.Source.Handle, settings);
+                // Integer texts that became point numbers are not errors.
+                foreach (var item in plan.Rejected.Where(item => item.NumberFor == null).Concat(plan.Disputed))
+                    CheckMarks.Add(transaction, space, item.Source.Anchor, ImportReasons.ShortLabel(item.Reason), item.Source.Handle, markHeight);
                 // Accepted, but the marker is unusually far: marked for checking, not refused.
                 foreach (var item in plan.Accepted.Where(item => item.Warning != null))
-                    CheckMarks.Add(transaction, space, item.Source.Anchor, "маркер далеко?", item.Source.Handle, settings);
+                    CheckMarks.Add(transaction, space, item.Source.Anchor, "маркер далеко?", item.Source.Handle, markHeight);
 
                 var pairs = KzmStore.ReadConflicts(database, transaction).Where(pair => pair.IsAlive).ToList();
                 foreach (var duplicate in result.Duplicates)
@@ -128,15 +137,13 @@ namespace Kzm.AutoCAD.Services
                     var second = duplicate.SecondNew != null ? result.Created[duplicate.SecondNew] : result.ExistingIds[duplicate.SecondExisting.Handle];
                     var pair = new StoredPair(first, second, duplicate.Distance);
                     if (!pairs.Any(other => other.Same(pair))) pairs.Add(pair);
-                    CheckMarks.Add(transaction, space, duplicate.First.Position.Value, "близко", first.Handle.ToString(), settings);
+                    CheckMarks.Add(transaction, space, duplicate.First.Position.Value, "близко", first.Handle.ToString(), markHeight);
                 }
                 KzmStore.WriteConflicts(database, transaction, pairs);
 
-                if (result.Created.Count > 0)
-                {
-                    surface.Revision++;
-                    KzmStore.WriteSurface(database, transaction, surface);
-                }
+                surface.Revision++;
+                KzmStore.WriteSurface(database, transaction, surface);
+                EditServices.RefreshTriangles(database, transaction, surface, settings);
                 KzmStore.WriteCurrentSurfaceId(database, transaction, surface.Id);
                 KzmStore.WriteSettings(database, transaction, settings);
                 transaction.Commit();
@@ -148,6 +155,26 @@ namespace Kzm.AutoCAD.Services
             if (plan.Rejected.Any() || plan.Disputed.Any() || result.Duplicates.Count > 0 || plan.Accepted.Any(item => item.Warning != null))
                 result.Summary.Add("Проблемные места помечены на слое " + Layers.Check + " (не печатается).");
             return result;
+        }
+
+        /// <summary>The most common style and the median height of the accepted texts (number height from number texts).</summary>
+        internal static PointAppearance AppearanceOf(ImportPlan plan, PointAppearance current)
+        {
+            var texts = plan.Accepted.Select(item => item.Source).Where(source => source.Height > 0).ToList();
+            if (texts.Count == 0) return null;
+            var appearance = (current ?? new PointAppearance()).Clone();
+            appearance.TextStyle = texts.GroupBy(t => t.Style ?? string.Empty).OrderByDescending(g => g.Count()).First().Key;
+            appearance.TextHeight = Median(texts.Select(t => t.Height));
+            var numbers = plan.Items.Where(item => item.NumberFor != null && item.Source.Height > 0).Select(item => item.Source.Height).ToList();
+            appearance.NumberHeight = numbers.Count > 0 ? Median(numbers) : (double?)null;
+            appearance.SignSize = null;
+            return appearance;
+        }
+
+        private static double Median(IEnumerable<double> values)
+        {
+            var sorted = values.OrderBy(v => v).ToList();
+            return sorted[sorted.Count / 2];
         }
 
         // ---------- picking in the drawing (inside KZM_PICK) ----------

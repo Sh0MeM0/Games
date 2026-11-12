@@ -6,8 +6,8 @@ using System.Linq;
 namespace Kzm.Core
 {
     /// <summary>
-    /// Settings stored in the drawing. Values the task does not fix are empty
-    /// by default and are asked from the user; nothing normative is invented.
+    /// Settings of the drawing. Point appearance lives in each surface (taken from a
+    /// sample text automatically); cartogram appearance lives in each cartogram.
     /// </summary>
     public sealed class KzmSettings
     {
@@ -16,42 +16,25 @@ namespace Kzm.Core
         /// <summary>Two decimals (task, п. 4; СТБ 2073-2010, п. 3.15).</summary>
         public const int DefaultDecimals = 2;
         public static readonly int[] Scales = { 500, 1000, 2000 };
+        /// <summary>СТБ 2073-2010, п. 3.13: plans at 1:500 or 1:1000; 1:500 is offered first.</summary>
+        public const int DefaultScale = 500;
 
-        public int? ScaleDenominator { get; set; }
-        public double? LabelHeightMm { get; set; }
-        public double? PointSizeMm { get; set; }
         public int Decimals { get; set; } = DefaultDecimals;
+        /// <summary>Scale proposed for new cartograms.</summary>
+        public int Scale { get; set; } = DefaultScale;
         /// <summary>Last choices in the import form, offered as defaults next time.</summary>
         public XyMode LastXyMode { get; set; } = XyMode.Marker;
         public string LastSelectionMode { get; set; } = "WINDOW";
 
         public KzmSettings Clone() => (KzmSettings)MemberwiseClone();
 
-        /// <summary>Drawing units per paper millimetre (1 unit = 1 m): 1:500 → 0,5.</summary>
-        public double UnitsPerPaperMm
-        {
-            get
-            {
-                if (!ScaleDenominator.HasValue) throw new KzmException("Масштаб не задан.");
-                return ScaleDenominator.Value / 1000.0;
-            }
-        }
-
-        /// <summary>Values needed to draw points and marks; empty list means complete.</summary>
-        public IReadOnlyList<string> ValidateDrawing()
+        public IReadOnlyList<string> Validate()
         {
             var problems = new List<string>();
-            if (!ScaleDenominator.HasValue) problems.Add("не задан масштаб (1:500 / 1:1000 / 1:2000)");
-            else if (!Scales.Contains(ScaleDenominator.Value)) problems.Add("масштаб должен быть 1:500, 1:1000 или 1:2000");
-            if (!LabelHeightMm.HasValue) problems.Add("не задана высота подписи отметки, мм");
-            else if (!Positive(LabelHeightMm.Value)) problems.Add("высота подписи должна быть больше нуля");
-            if (!PointSizeMm.HasValue) problems.Add("не задан размер знака точки, мм");
-            else if (!Positive(PointSizeMm.Value)) problems.Add("размер знака точки должен быть больше нуля");
             if (Decimals < 0 || Decimals > 4) problems.Add("знаков после запятой: от 0 до 4");
+            if (!Scales.Contains(Scale)) problems.Add("масштаб должен быть 1:500, 1:1000 или 1:2000");
             return problems;
         }
-
-        private static bool Positive(double value) => Guard.Finite(value) && value > 0;
     }
 
     /// <summary>Key/value text form of the settings (stored in an Xrecord, invariant culture).</summary>
@@ -65,16 +48,14 @@ namespace Kzm.Core
             return new List<KeyValuePair<string, string>>
             {
                 Pair("version", Version.ToString(CultureInfo.InvariantCulture)),
-                Pair("scale", settings.ScaleDenominator?.ToString(CultureInfo.InvariantCulture) ?? string.Empty),
-                Pair("label_height_mm", Number(settings.LabelHeightMm)),
-                Pair("point_size_mm", Number(settings.PointSizeMm)),
                 Pair("decimals", settings.Decimals.ToString(CultureInfo.InvariantCulture)),
+                Pair("scale", settings.Scale.ToString(CultureInfo.InvariantCulture)),
                 Pair("last_xy_mode", XyModes.Code(settings.LastXyMode)),
                 Pair("last_selection", settings.LastSelectionMode ?? string.Empty),
             };
         }
 
-        /// <summary>Keys of version 0.1/0.2 (pattern, range, R, tolerance) are ignored.</summary>
+        /// <summary>Keys of versions 0.1–0.3 (pattern, range, R, tolerance, sizes in mm) are ignored.</summary>
         public static KzmSettings Decode(IEnumerable<KeyValuePair<string, string>> values)
         {
             var settings = new KzmSettings();
@@ -83,12 +64,11 @@ namespace Kzm.Core
             foreach (var pair in values) map[pair.Key] = pair.Value ?? string.Empty;
             if (map.TryGetValue("version", out string version) && version != Version.ToString(CultureInfo.InvariantCulture))
                 throw new KzmException("Настройки КЗМ в чертеже записаны более новой версией модуля (" + version + "). Обновите модуль.");
-            if (map.TryGetValue("scale", out string scale) && scale.Length > 0)
-                settings.ScaleDenominator = int.Parse(scale, NumberStyles.Integer, CultureInfo.InvariantCulture);
-            settings.LabelHeightMm = Optional(map, "label_height_mm");
-            settings.PointSizeMm = Optional(map, "point_size_mm");
-            if (map.TryGetValue("decimals", out string decimals) && decimals.Length > 0)
-                settings.Decimals = int.Parse(decimals, NumberStyles.Integer, CultureInfo.InvariantCulture);
+            if (map.TryGetValue("decimals", out string decimals) && int.TryParse(decimals, NumberStyles.Integer, CultureInfo.InvariantCulture, out int d))
+                settings.Decimals = d;
+            if (map.TryGetValue("scale", out string scale) && int.TryParse(scale, NumberStyles.Integer, CultureInfo.InvariantCulture, out int s) &&
+                KzmSettings.Scales.Contains(s))
+                settings.Scale = s;
             if (map.TryGetValue("last_xy_mode", out string mode) && mode.Length > 0) settings.LastXyMode = XyModes.Parse(mode);
             if (map.TryGetValue("last_selection", out string selection) && selection.Length > 0) settings.LastSelectionMode = selection;
             return settings;
@@ -99,7 +79,7 @@ namespace Kzm.Core
         private static string Number(double? value) =>
             value.HasValue ? value.Value.ToString("R", CultureInfo.InvariantCulture) : string.Empty;
 
-        private static double? Optional(Dictionary<string, string> map, string key)
+        internal static double? Optional(Dictionary<string, string> map, string key)
         {
             if (!map.TryGetValue(key, out string text) || text.Length == 0) return null;
             if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value) || !Guard.Finite(value))

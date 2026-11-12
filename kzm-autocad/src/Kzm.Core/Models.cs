@@ -50,8 +50,14 @@ namespace Kzm.Core
         /// <summary>Layer that receives new points of this surface.</summary>
         public string Layer { get; set; }
         public string Created { get; set; }
-        /// <summary>Increases on every change of the surface data (used later to mark cartograms outdated).</summary>
+        /// <summary>Increases on every change of the surface data made by the module.</summary>
         public int Revision { get; set; }
+        /// <summary>Внешняя граница триангуляции (замкнутая полилиния), если задана.</summary>
+        public string BoundaryHandle { get; set; }
+        public bool ShowTriangles { get; set; }
+        /// <summary>Fingerprint of the points when the triangles were drawn (to tell that they are outdated).</summary>
+        public string TrianglesFingerprint { get; set; }
+        public PointAppearance Appearance { get; set; } = new PointAppearance();
 
         public string Title => "«" + Name + "» (" + SurfaceKinds.Title(Kind) + ", слой " + Layer + ")";
 
@@ -144,14 +150,20 @@ namespace Kzm.Core
     /// <summary>Text taken from the drawing for import (already stripped of formatting).</summary>
     public sealed class SourceText
     {
-        public SourceText(string handle, SourceKind kind, string raw, string plain, XY anchor)
+        public SourceText(string handle, SourceKind kind, string raw, string plain, XY anchor, string style = null, double height = 0)
         {
             Handle = handle;
             Kind = kind;
             Raw = raw ?? string.Empty;
             Plain = plain ?? string.Empty;
             Anchor = anchor;
+            Style = style;
+            Height = height;
         }
+
+        /// <summary>Text style name and height of the source text (for the appearance of the points).</summary>
+        public string Style { get; }
+        public double Height { get; }
 
         public string Handle { get; }
         public SourceKind Kind { get; }

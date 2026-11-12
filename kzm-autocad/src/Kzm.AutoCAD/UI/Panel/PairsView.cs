@@ -95,10 +95,9 @@ namespace Kzm.AutoCAD.UI.Panel
             ClearLabels();
             var pair = Current;
             if (pair == null || panel?.Document == null) return;
-            PanelActions.Show(panel.Document, new[] { pair.First.Id, pair.Second.Id }, KzmCommands.ZoomSize(panel.Snapshot.Settings));
-            var settings = panel.Snapshot.Settings;
-            if (!settings.LabelHeightMm.HasValue || !settings.ScaleDenominator.HasValue) return;
-            double height = settings.LabelHeightMm.Value * settings.UnitsPerPaperMm * 1.5;
+            double textHeight = panel.Snapshot.Find(pair.First.Data.SurfaceId)?.Info.Appearance.TextHeight ?? 1;
+            PanelActions.Show(panel.Document, new[] { pair.First.Id, pair.Second.Id }, KzmCommands.ZoomSize(textHeight));
+            double height = textHeight * 1.5;
             // The two points are almost at one place: labels go to opposite sides.
             labels.Add(Label("1", pair.First.Position, height, -2.0, 0.5));
             labels.Add(Label("2", pair.Second.Position, height, 0.7, -1.7));
@@ -139,7 +138,7 @@ namespace Kzm.AutoCAD.UI.Panel
             var stored = pair.Pair;
             PanelActions.Run("близкие точки", document =>
             {
-                int erased = EditServices.ResolvePair(document.Database, stored, decision);
+                int erased = EditServices.ResolvePair(document.Database, stored, decision, panel.Snapshot.Settings);
                 PanelMessages.Info("Пара решена" + (erased > 0 ? ", удалено точек: " + erased : ", обе точки оставлены") + ".");
             }, panel.RefreshAll);
         }
