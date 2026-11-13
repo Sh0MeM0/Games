@@ -60,7 +60,7 @@ namespace Kzm.AutoCAD.Commands
                 transaction.Commit();
             }
             Services.EditServices.CreatePointsByHand(document, surfaceId, settings);
-            KzmPalette.MarkDirty();
+            KzmPalette.MarkChanged();
         });
 
         /// <summary>Задание п. 7: пересчёт одной командой без повторного ввода параметров.</summary>
@@ -68,7 +68,7 @@ namespace Kzm.AutoCAD.Commands
         public void Update() => Run("пересчёт картограмм", document =>
         {
             if (UpdateOutdated(document) == 0) document.Editor.WriteMessage("\nКЗМ: устаревших картограмм нет.");
-            KzmPalette.MarkDirty();
+            KzmPalette.MarkChanged();
         });
 
         /// <summary>Rebuilds every outdated cartogram (in the running command); returns how many.</summary>
@@ -79,7 +79,7 @@ namespace Kzm.AutoCAD.Commands
             var outdated = snapshot.Cartograms.Where(c => c.Info.Built && c.Outdated).ToList();
             foreach (var c in outdated)
             {
-                var computation = Services.CartogramService.Build(document, c.Info.Id, snapshot.Settings);
+                var computation = Services.CartogramService.Build(document, c.Info.Id, snapshot.Settings, c.Info.VolumesDrawn);
                 document.Editor.WriteMessage("\nКЗМ: «" + c.Info.Name + "» пересчитана.");
                 foreach (var line in Services.CartogramService.Summary(computation)) document.Editor.WriteMessage("\n  " + line);
                 foreach (var problem in computation.Problems) document.Editor.WriteMessage("\n  замечание: " + problem);

@@ -20,6 +20,8 @@ namespace Kzm.AutoCAD.UI.Panel
         private static PaletteSet palette;
         private static KzmPanel panel;
         private static bool dirty;
+        /// <summary>Drawings whose module data changed since the panel read them.</summary>
+        private static readonly HashSet<Database> Changed = new HashSet<Database>();
         private static readonly HashSet<Document> Watched = new HashSet<Document>();
 
         internal static KzmPanel Open()
@@ -47,7 +49,17 @@ namespace Kzm.AutoCAD.UI.Panel
 
         internal static bool IsVisible => palette != null && palette.Visible;
 
+        /// <summary>The panel should be redrawn (e.g. another drawing became active); the data is re-read only if it changed.</summary>
         internal static void MarkDirty() => dirty = true;
+
+        /// <summary>The module data of this drawing changed: re-read it at the next refresh.</summary>
+        internal static void MarkChanged(Database database)
+        {
+            if (database != null) Changed.Add(database);
+            dirty = true;
+        }
+
+        internal static void MarkChanged() => MarkChanged(AcadApplication.DocumentManager.MdiActiveDocument?.Database);
 
         /// <summary>Docks to the right on the very first use only; later the user's layout is kept by AutoCAD.</summary>
         private static bool FirstShow()
@@ -98,6 +110,7 @@ namespace Kzm.AutoCAD.UI.Panel
             database.ObjectErased -= OnObjectErased;
             database.ObjectModified -= OnObjectChanged;
             panel?.Forget(document);
+            Changed.Remove(database);
             MarkDirty();
         }
 
@@ -105,18 +118,20 @@ namespace Kzm.AutoCAD.UI.Panel
         {
             string name = e.GlobalCommandName ?? string.Empty;
             // UNDO/REDO restore the module's records without touching our events reliably.
-            if (name == "U" || name == "UNDO" || name == "REDO" || name == "MREDO" || name == "OOPS" || name == "KZM_RUN")
-                MarkDirty();
+            if (name == "U" || name == "UNDO" || name == "REDO" || name == "MREDO" || name == "OOPS" || name == "KZM_RUN" || name == "KZM_UPDATE" ||
+                name == "KZM_POINT")
+                MarkChanged((sender as Document)?.Database);
         }
 
         private static void OnObjectErased(object sender, ObjectErasedEventArgs e)
         {
-            if (e.DBObject is BlockReference) MarkDirty();
+            if (e.DBObject is BlockReference) MarkChanged(sender as Database);
         }
 
         private static void OnObjectChanged(object sender, ObjectEventArgs e)
         {
-            if (dirty) return;
+            var database = sender as Database;
+            if (database != null && Changed.Contains(database)) return;
             try
             {
                 var obj = e.DBObject;
@@ -127,17 +142,17 @@ namespace Kzm.AutoCAD.UI.Panel
                     if (string.Equals(tag, PointBlocks.Tag, StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(tag, Services.CartogramService.ProjectTag, StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(tag, Services.CartogramService.FactTag, StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(tag, Services.CartogramService.WorkingTag, StringComparison.OrdinalIgnoreCase)) MarkDirty();
+                        string.Equals(tag, Services.CartogramService.WorkingTag, StringComparison.OrdinalIgnoreCase)) MarkChanged(database);
                 }
                 else if (obj is BlockReference reference)
                 {
                     using (var xdata = reference.GetXDataForApplication(PointBlocks.AppName))
-                        if (xdata != null) MarkDirty();
+                        if (xdata != null) MarkChanged(database);
                 }
             }
             catch (System.Exception)
             {
-                MarkDirty();
+                MarkChanged(database);
             }
         }
 
@@ -147,7 +162,8 @@ namespace Kzm.AutoCAD.UI.Panel
             var document = AcadApplication.DocumentManager.MdiActiveDocument;
             if (document != null && !document.Editor.IsQuiescent) return;
             dirty = false;
-            try { panel.RefreshAll(); }
+            bool reread = document == null || Changed.Remove(document.Database);
+            try { panel.RefreshAll(reread); }
             catch (System.Exception exception) { PanelMessages.Error(exception.Message); }
         }
     }

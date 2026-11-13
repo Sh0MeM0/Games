@@ -16,6 +16,9 @@ namespace Kzm.AutoCAD.UI.Panel
             Dock = DockStyle.Fill, FlowDirection = System.Windows.Forms.FlowDirection.TopDown, WrapContents = false, AutoScroll = true, Padding = new Padding(6),
         };
         private KzmPanel panel;
+        // One set of fonts for all refreshes (a new Font per label leaked GDI handles and slowed the panel down).
+        private static readonly Font TitleFont = new Font(SystemFonts.MessageBoxFont.FontFamily, 10, FontStyle.Bold);
+        private static readonly Font BoldFont = new Font(SystemFonts.MessageBoxFont, FontStyle.Bold);
 
         internal StartView()
         {
@@ -28,8 +31,11 @@ namespace Kzm.AutoCAD.UI.Panel
             root.SuspendLayout();
             try
             {
+                // Controls removed from the form must be disposed: otherwise every refresh leaks window handles.
+                var old = root.Controls.Cast<Control>().ToList();
                 root.Controls.Clear();
-                root.Controls.Add(new Label { Text = "Порядок работы", AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 10, FontStyle.Bold) });
+                foreach (var control in old) control.Dispose();
+                root.Controls.Add(new Label { Text = "Порядок работы", AutoSize = true, Font = TitleFont });
                 var snapshot = panel.Snapshot;
                 if (snapshot.Project != null)
                 {
@@ -67,10 +73,12 @@ namespace Kzm.AutoCAD.UI.Panel
 
                 var cartograms = snapshot.Cartograms;
                 var outdated = cartograms.Where(c => c.Outdated).ToList();
-                var built = cartograms.Where(c => c.Info.Built && !c.Outdated).ToList();
+                var built = cartograms.Where(c => c.Info.Built && c.Info.VolumesDrawn && !c.Outdated).ToList();
+                var marked = cartograms.Where(c => c.Info.Built && !c.Info.VolumesDrawn && !c.Outdated).ToList();
                 Step(3, "Картограмма: граница работ, поверхности, сетка",
                     cartograms.Count == 0 ? State.Todo("картограммы нет")
-                    : outdated.Count > 0 ? State.Warn("устарела: «" + outdated[0].Info.Name + "» — точки или параметры изменились")
+                    : outdated.Count > 0 ? State.Warn("«" + outdated[0].Info.Name + "»: " + (outdated[0].LabelEdits > 0 ? "исправлены отметки — рассчитайте объёмы" : "точки или параметры изменились — постройте заново"))
+                    : marked.Count > 0 ? State.Warn("«" + marked[0].Info.Name + "»: нанесены сетка и отметки — проверьте их и нажмите «2. Рассчитать объёмы»")
                     : built.Count > 0 ? State.Done("«" + built[0].Info.Name + "»: насыпь " + CartogramService.Volume(built[0].Info.LastFill, built[0].Info.VolumeDecimals, true) +
                                                ", выемка " + CartogramService.Volume(built[0].Info.LastCut, built[0].Info.VolumeDecimals, false) + " м³")
                     : State.Warn("«" + cartograms[0].Info.Name + "» не построена"),
@@ -82,10 +90,11 @@ namespace Kzm.AutoCAD.UI.Panel
                     : State.Info("после построения картограммы"),
                     built.Count > 0 ? Button("Открыть картограмму", () => panel.ShowCartogram(built[0].Info.Id)) : null);
 
-                root.Controls.Add(new Label { Text = "Подсказки", AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont, FontStyle.Bold), Margin = new Padding(3, 14, 3, 3) });
+                root.Controls.Add(new Label { Text = "Подсказки", AutoSize = true, Font = BoldFont, Margin = new Padding(3, 14, 3, 3) });
                 root.Controls.Add(Note(
                     "• Правый щелчок по поверхности или картограмме в списке — все действия; двойной щелчок — показать на чертеже; Delete — удалить.\n" +
-                    "• Отметки на картограмме — блоки: проектную и фактическую можно поправить в «Быстрых свойствах», «Пересчитать» запишет их в поверхности.\n" +
+                    "• Картограмма строится в два шага: «1. Сетка и отметки», проверка и правка отметок, «2. Рассчитать объёмы».\n" +
+                    "• Отметки узла — блок: исправьте проектную, фактическую или рабочую в «Свойствах» — остальные пересчитаются сразу, а при расчёте объёмов правки запишутся в поверхности.\n" +
                     "• Точки — обычные блоки: двигайте, копируйте, удаляйте как всегда; отметку меняйте в «Свойствах» (атрибут ОТМЕТКА) или в таблице точек.\n" +
                     "• Каждое действие панели — одна отмена (U).\n" +
                     "• Проблемные места помечаются красным на слое КЗМ_ПРОВЕРКА (не печатается), убрать — «Убрать пометки».",
@@ -110,7 +119,7 @@ namespace Kzm.AutoCAD.UI.Panel
 
         private void Step(int number, string title, State state, params Button[] buttons)
         {
-            root.Controls.Add(new Label { Text = number + ". " + title, AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont, FontStyle.Bold), Margin = new Padding(3, 10, 3, 0) });
+            root.Controls.Add(new Label { Text = number + ". " + title, AutoSize = true, Font = BoldFont, Margin = new Padding(3, 10, 3, 0) });
             root.Controls.Add(Note(state.Mark + state.Text, state.Color));
             var flow = new FlowLayoutPanel { AutoSize = true, WrapContents = true, MaximumSize = new Size(350, 0), Margin = new Padding(12, 0, 0, 0) };
             foreach (var button in buttons.Where(b => b != null)) flow.Controls.Add(button);

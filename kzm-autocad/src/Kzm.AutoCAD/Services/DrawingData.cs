@@ -18,6 +18,8 @@ namespace Kzm.AutoCAD.Services
         /// <summary>Triangles are shown but the points changed since (MOVE/ERASE/COPY or attribute edit).</summary>
         internal bool TrianglesOutdated { get; set; }
         internal int ExcludedPoints { get; set; }
+        /// <summary>Points, outline and lines of the surface (the points table reloads only when it changes).</summary>
+        internal string Signature { get; set; }
         internal List<StructureLine> Lines { get; set; } = new List<StructureLine>();
         internal int StructureLines => Lines.Count(line => line.Kind == StructureLineKind.Line);
         internal int Flips => Lines.Count(line => line.Kind == StructureLineKind.Flip);
@@ -41,6 +43,9 @@ namespace Kzm.AutoCAD.Services
         internal List<ProjectInfo> Projects { get; } = new List<ProjectInfo>();
         /// <summary>The open project (null — none: the panel offers to create or open one).</summary>
         internal ProjectInfo Project { get; set; }
+        /// <summary>Layers and text styles of the drawing, read once per snapshot when a view needs them.</summary>
+        internal Lazy<List<string>> Layers { get; set; } = new Lazy<List<string>>(() => new List<string>());
+        internal Lazy<List<string>> TextStyles { get; set; } = new Lazy<List<string>>(() => new List<string>());
 
         internal SurfaceSummary Find(string id) => Surfaces.FirstOrDefault(surface => surface.Info.Id == id);
 
@@ -64,6 +69,8 @@ namespace Kzm.AutoCAD.Services
             var snapshot = new DrawingSnapshot();
             if (document == null) return snapshot;
             var database = document.Database;
+            snapshot.Layers = new Lazy<List<string>>(() => Layers(document));
+            snapshot.TextStyles = new Lazy<List<string>>(() => TextStyles(document));
             try
             {
                 using (document.LockDocument(DocumentLockMode.Read, null, null, false))
@@ -74,7 +81,11 @@ namespace Kzm.AutoCAD.Services
                     string projectId = KzmStore.ReadCurrentProjectId(database, transaction);
                     snapshot.Project = snapshot.Projects.FirstOrDefault(project => project.Id == projectId);
                     snapshot.CurrentId = KzmStore.ReadCurrentSurfaceId(database, transaction);
-                    var points = PointBlocks.Read(database, transaction, snapshot.Settings);
+                    // Only the points of the open project are read (the drawing may hold other projects).
+                    var projectSurfaces = new HashSet<string>(KzmStore.ReadSurfaces(database, transaction)
+                        .Where(surface => snapshot.Project != null && ProjectInfo.Of(surface.ProjectId) == snapshot.Project.Id)
+                        .Select(surface => surface.Id), StringComparer.Ordinal);
+                    var points = PointBlocks.Read(database, transaction, snapshot.Settings, id => projectSurfaces.Contains(id));
                     var bySurface = points.GroupBy(point => point.Data.SurfaceId).ToDictionary(group => group.Key, group => group.ToList());
                     var pointSurface = points.ToDictionary(point => point.Id, point => point.Data.SurfaceId);
                     var pairs = KzmStore.ReadConflicts(database, transaction).Where(pair => pair.IsAlive).ToList();
@@ -102,6 +113,7 @@ namespace Kzm.AutoCAD.Services
                             IsCurrent = surface.Id == snapshot.CurrentId,
                             TrianglesOutdated = surface.ShowTriangles && surface.TrianglesFingerprint != signature.ForTriangles(),
                             Lines = ownLines,
+                            Signature = signature.ForTriangles(),
                         });
                     }
                     foreach (var cartogram in KzmStore.ReadCartograms(database, transaction)

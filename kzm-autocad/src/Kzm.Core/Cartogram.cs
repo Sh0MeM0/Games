@@ -577,3 +577,32 @@ namespace Kzm.Core
         }
     }
 }
+
+namespace Kzm.Core
+{
+    /// <summary>
+    /// Три отметки узла картограммы связаны: h = Hпр − Hф (замечание 18). Пользователь меняет одну из них в
+    /// «Свойствах»; по сравнению с последними записанными текстами видно, какую, и остальные пересчитываются.
+    /// </summary>
+    public static class NodeLabels
+    {
+        /// <summary>
+        /// New texts of the working, project and fact labels. A changed project or fact elevation recalculates the
+        /// working one; a changed working elevation (with project and fact as written) changes the project one.
+        /// Unreadable texts are left as typed.
+        /// </summary>
+        public static (string Working, string Project, string Fact) Reconcile(string working, string project, string fact,
+            string writtenWorking, string writtenProject, string writtenFact)
+        {
+            string w = (working ?? string.Empty).Trim(), p = (project ?? string.Empty).Trim(), f = (fact ?? string.Empty).Trim();
+            bool projectChanged = p != (writtenProject ?? string.Empty).Trim();
+            bool factChanged = f != (writtenFact ?? string.Empty).Trim();
+            bool workingChanged = w != (writtenWorking ?? string.Empty).Trim();
+            if ((projectChanged || factChanged) && ElevationFormat.TryParse(p, out double pv) && ElevationFormat.TryParse(f, out double fv))
+                return (ElevationFormat.FormatSigned(pv - fv, 2), ElevationFormat.Format(pv, 2), ElevationFormat.Format(fv, 2));
+            if (workingChanged && ElevationFormat.TryParse(w, out double wv) && ElevationFormat.TryParse(f, out double baseValue))
+                return (ElevationFormat.FormatSigned(wv, 2), ElevationFormat.Format(baseValue + wv, 2), ElevationFormat.Format(baseValue, 2));
+            return (w, p, f);
+        }
+    }
+}

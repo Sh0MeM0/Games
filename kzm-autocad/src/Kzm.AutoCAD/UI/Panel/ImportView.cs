@@ -82,6 +82,9 @@ namespace Kzm.AutoCAD.UI.Panel
         private readonly Button showRow = new Button { Text = "Показать", AutoSize = true };
         private readonly DataGridView grid = new DataGridView();
         private KzmPanel panel;
+        // What the layer list and the grid show: they are rebuilt only when this changes, not on every refresh of the panel.
+        private string layersFor;
+        private object filledFor;
         private bool binding;
         private bool filling;
         private string preselect;
@@ -323,15 +326,17 @@ namespace Kzm.AutoCAD.UI.Panel
                 bySimilar.Checked = state.Selection == Selection.Similar;
                 xyMarker.Checked = state.Mode == XyMode.Marker;
                 xyInsertion.Checked = state.Mode != XyMode.Marker;
-                LoadLayers(state);
+                if (layersFor != LayersKey(state)) LoadLayers(state);
             }
             finally
             {
                 binding = false;
             }
             UpdateControls();
-            FillGrid();
+            if (!ReferenceEquals(filledFor, (object)state.Result ?? state)) FillGrid();
         }
+
+        private string LayersKey(State state) => RuntimeHelpers.GetHashCode(state) + "|" + state.Source + "|" + state.Selection;
 
         private sealed class SurfaceItem
         {
@@ -342,6 +347,7 @@ namespace Kzm.AutoCAD.UI.Panel
 
         private void LoadLayers(State state)
         {
+            layersFor = LayersKey(state);
             layers.Items.Clear();
             if (state.Selection != Selection.Layers) return;
             foreach (var pair in DrawingData.EntityLayers(panel.Document, Types(state)))
@@ -633,6 +639,8 @@ namespace Kzm.AutoCAD.UI.Panel
 
         private void FillGrid()
         {
+            var current = Current;
+            filledFor = current == null ? null : (object)current.Result ?? current;
             filling = true;
             try { FillRows(); }
             finally { filling = false; }

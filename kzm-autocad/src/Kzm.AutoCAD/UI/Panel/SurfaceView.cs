@@ -212,7 +212,7 @@ namespace Kzm.AutoCAD.UI.Panel
                 var appearance = surface.Info.Appearance;
                 textStyle.Items.Clear();
                 if (panel.Document != null)
-                    foreach (var style in DrawingData.TextStyles(panel.Document)) textStyle.Items.Add(style);
+                    foreach (var style in panel.Snapshot.TextStyles.Value) textStyle.Items.Add(style);
                 textStyle.SelectedItem = appearance.TextStyle != null && textStyle.Items.Contains(appearance.TextStyle) ? appearance.TextStyle : null;
                 textHeight.Text = SettingsView.FormatValue(appearance.TextHeight);
                 numberHeight.Text = SettingsView.FormatValue(appearance.NumberHeight);
@@ -454,7 +454,7 @@ namespace Kzm.AutoCAD.UI.Panel
             string typedLayer = layer.Text;
             layer.Items.Clear();
             if (panel.Document != null)
-                foreach (var item in DrawingData.Layers(panel.Document)) layer.Items.Add(item);
+                foreach (var item in panel.Snapshot.Layers.Value) layer.Items.Add(item);
             layer.Text = typedLayer;
             if (surfaceId == null || isNew)
             {

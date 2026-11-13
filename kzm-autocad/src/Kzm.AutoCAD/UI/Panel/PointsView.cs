@@ -30,6 +30,8 @@ namespace Kzm.AutoCAD.UI.Panel
         private string surfaceId;
         private bool filling;
         private Dictionary<long, SurfacePoint> points = new Dictionary<long, SurfacePoint>();
+        /// <summary>Surface and signature of the loaded table: an unchanged surface is not re-read on every refresh.</summary>
+        private string loaded;
 
         internal PointsView()
         {
@@ -154,10 +156,14 @@ namespace Kzm.AutoCAD.UI.Panel
                 title.Text = "Поверхность не найдена";
                 points.Clear();
                 table.Rows.Clear();
+                loaded = null;
                 return;
             }
             title.Text = "Точки поверхности «" + surface.Info.Name + "»: " + surface.Points +
                          (surface.ExcludedPoints > 0 ? ", исключено " + surface.ExcludedPoints : string.Empty);
+            string key = panel.Document.GetHashCode() + "|" + id + "|" + surface.Signature + "|" + panel.Snapshot.Settings.Decimals;
+            if (key == loaded) return;
+            loaded = key;
             points = DrawingData.ReadPoints(panel.Document, panel.Snapshot.Settings, id)
                 .ToDictionary(point => point.Id.Handle.Value, point => point);
             Fill();

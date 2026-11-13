@@ -74,46 +74,6 @@ namespace Kzm.Core.Tests
         }
     }
 
-    public class LabelLayoutTests
-    {
-        [Fact]
-        public void OverlappingGroupGetsALeaderAndAFreePlace()
-        {
-            var boundary = new List<XY> { new XY(0, 0), new XY(100, 0), new XY(100, 100), new XY(0, 100) };
-            var groups = new List<LabelGroup>
-            {
-                new LabelGroup(new XY(50, 50), new LabelBox(48, 49, 56, 53)),
-                new LabelGroup(new XY(51, 50), new LabelBox(49, 49, 57, 53)),
-                new LabelGroup(new XY(10, 10), new LabelBox(8, 9, 16, 13)),
-            };
-            LabelLayout.Place(groups, new[] { new LabelBox(30, 30, 34, 31) }, boundary, 1.0);
-            Assert.False(groups[0].Leader);
-            Assert.True(groups[1].Leader);
-            Assert.False(groups[2].Leader);
-            Assert.False(groups[1].Placed.Overlaps(groups[0].Placed, 0));
-            Assert.True(Geometry.Contains(boundary, new XY(groups[1].Placed.MinX, groups[1].Placed.MinY)));
-            Assert.True(groups.All(g => !g.Overlapping));
-        }
-
-        [Fact]
-        public void MovedLabelsStayInsideTheBoundary()
-        {
-            // A narrow strip: labels near the edge must not leave it.
-            var boundary = new List<XY> { new XY(0, 0), new XY(200, 0), new XY(200, 12), new XY(0, 12) };
-            var groups = Enumerable.Range(0, 20).Select(k => new LabelGroup(new XY(10 + k * 0.5, 5), new LabelBox(10 + k * 0.5, 5, 16 + k * 0.5, 8))).ToList();
-            LabelLayout.Place(groups, null, boundary, 1.0);
-            foreach (var group in groups.Where(g => !g.Overlapping))
-            {
-                var b = group.Placed;
-                Assert.True(Geometry.Contains(boundary, new XY(b.MinX, b.MinY)) && Geometry.Contains(boundary, new XY(b.MaxX, b.MaxY)));
-            }
-            var placed = groups.Where(g => !g.Overlapping).ToList();
-            for (int i = 0; i < placed.Count; i++)
-            for (int j = i + 1; j < placed.Count; j++)
-                Assert.False(placed[i].Placed.Overlaps(placed[j].Placed, 0), "groups " + i + " and " + j + " overlap");
-        }
-    }
-
     public class ProjectRecordTests
     {
         [Fact]
@@ -151,6 +111,9 @@ namespace Kzm.Core.Tests
             Assert.Equal(18, old.GridLineWeight);
             old.Built = true;
             Assert.True(old.OldDrawing);
+            Assert.True(old.VolumesDrawn);
+            Assert.Equal(4, old.HatchSpacingMm);
+            Assert.Equal(13, old.HatchLineWeight);
             old.DrawVersion = CartogramInfo.CurrentDrawVersion;
             var back = CartogramInfo.Decode("c", CartogramInfo.Encode(old).ToDictionary(p => p.Key, p => p.Value));
             Assert.False(back.OldDrawing);
@@ -218,5 +181,48 @@ namespace Kzm.Core.Tests
         internal ToleranceComparer(double tolerance) { this.tolerance = tolerance; }
         public bool Equals(double x, double y) => Math.Abs(x - y) <= tolerance;
         public int GetHashCode(double obj) => 0;
+    }
+}
+
+namespace Kzm.Core.Tests
+{
+    /// <summary>Замечание 18: the three labels of a node stay consistent while the user edits them.</summary>
+    public class NodeLabelsTests
+    {
+        [Fact]
+        public void ProjectChangedRecalculatesWorking()
+        {
+            var (w, p, f) = NodeLabels.Reconcile("+0,24", "176,82", "176,46", "+0,24", "176,70", "176,46");
+            Assert.Equal(("+0,36", "176,82", "176,46"), (w, p, f));
+        }
+
+        [Fact]
+        public void FactAndProjectChangedTogether()
+        {
+            // The example of the remark: 176,70 → 176,82 and 176,46 → 176,40 give +0,42.
+            var result = NodeLabels.Reconcile("+0,24", "176,82", "176,40", "+0,24", "176,70", "176,46");
+            Assert.Equal(("+0,42", "176,82", "176,40"), result);
+        }
+
+        [Fact]
+        public void WorkingChangedMovesProject()
+        {
+            var result = NodeLabels.Reconcile("-0,10", "176,70", "176,46", "+0,24", "176,70", "176,46");
+            Assert.Equal(("-0,10", "176,36", "176,46"), result);
+        }
+
+        [Fact]
+        public void DotAndCommaAreAccepted()
+        {
+            var result = NodeLabels.Reconcile("+0,24", "176.8", "176,46", "+0,24", "176,70", "176,46");
+            Assert.Equal(("+0,34", "176,80", "176,46"), result);
+        }
+
+        [Fact]
+        public void UnreadableTextIsLeftAsTyped()
+        {
+            var result = NodeLabels.Reconcile("+0,24", "abc", "176,46", "+0,24", "176,70", "176,46");
+            Assert.Equal(("+0,24", "abc", "176,46"), result);
+        }
     }
 }

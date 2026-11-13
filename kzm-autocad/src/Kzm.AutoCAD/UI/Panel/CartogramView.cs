@@ -50,7 +50,10 @@ namespace Kzm.AutoCAD.UI.Panel
         private readonly CheckBox keepMoved = new CheckBox { Text = "При пересчёте ставить сдвинутые вручную подписи на их место (п. 7)", AutoSize = true, MaximumSize = new Size(340, 0) };
         private readonly Label status = new Label { AutoSize = true, MaximumSize = new Size(340, 0) };
         private readonly ListBox problems = new ListBox { Width = 330, Height = 90, IntegralHeight = false, HorizontalScrollbar = true };
-        private readonly Button build = new Button { AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont, FontStyle.Bold) };
+        private readonly Button marks = new Button { Text = "1. Сетка и отметки", AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont, FontStyle.Bold) };
+        private readonly Button build = new Button { Text = "2. Рассчитать объёмы", AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont, FontStyle.Bold) };
+        private readonly TextBox hatchSpacing = new TextBox { Width = 60 };
+        private readonly ComboBox hatchWeight = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 90 };
         private readonly Button preview = new Button { Text = "Показать сетку", AutoSize = true };
         private readonly List<Entity> previewEntities = new List<Entity>();
         private KzmPanel panel;
@@ -60,6 +63,7 @@ namespace Kzm.AutoCAD.UI.Panel
         private string boundaryHandle;
         private string lastBound;
         private CartogramComputation lastComputation;
+        private ContextMenuStrip boundaryMenu;
         /// <summary>Id of a new cartogram before it is saved (the boundary drawn by points is tagged with it).</summary>
         private string draftId;
 
@@ -93,7 +97,12 @@ namespace Kzm.AutoCAD.UI.Panel
 
             Span(Section("Граница работ"));
             Span(boundaryNote);
-            boundaryButton.Click += (s, e) => BoundaryMenu().Show(boundaryButton, 0, boundaryButton.Height);
+            boundaryButton.Click += (s, e) =>
+            {
+                boundaryMenu?.Dispose();
+                boundaryMenu = BoundaryMenu();
+                boundaryMenu.Show(boundaryButton, 0, boundaryButton.Height);
+            };
             Span(Flow(boundaryButton, Action("Показать", (s, e) => ShowBoundary())));
             Span(Hint("По точкам: укажите точки границы по очереди — отметка берётся у существующей точки или по выбранной поверхности, " +
                       "её можно заменить. Точки границы войдут в проектную поверхность, сама граница — её структурной линией."));
@@ -115,6 +124,9 @@ namespace Kzm.AutoCAD.UI.Panel
             Row("Текст итогов, мм", totalsText);
             Row("Объёмы: знаков после запятой", volumeDecimals);
             Row("Зазор от сетки до таблицы, мм", tableGap);
+            Row("Шаг штриховки выемки, мм", hatchSpacing);
+            foreach (int weight in CartogramInfo.LineWeights) hatchWeight.Items.Add(ElevationFormat.Format(weight / 100.0, 2) + " мм");
+            Row("Толщина линий штриховки", hatchWeight);
 
             Span(Section("Подписи в узле"));
             string[] titles = { "Рабочая (h)", "Проектная (Hпр)", "Фактическая (Hф)" };
@@ -144,8 +156,13 @@ namespace Kzm.AutoCAD.UI.Panel
             Span(control);
             Span(keepMoved);
 
-            build.Click += (s, e) => Save(true);
-            Span(Flow(build, Action("Проверить", (s, e) => Check()), Action("Сохранить", (s, e) => Save(false))));
+            marks.Click += (s, e) => Save(Step.Marks);
+            build.Click += (s, e) => Save(Step.Volumes);
+            Span(Hint("Шаг 1 — сетка и отметки по углам. Проверьте их, при необходимости исправьте проектные и фактические отметки " +
+                      "в «Свойствах» (рабочая пересчитается сразу) и раздвиньте подписи. Шаг 2 — объёмы, штриховка, линия нулевых работ и таблица; " +
+                      "ваши исправления отметок при этом запишутся в поверхности."));
+            Span(Flow(marks, build));
+            Span(Flow(Action("Проверить", (s, e) => Check()), Action("Сохранить", (s, e) => Save(Step.None))));
             Span(Flow(Action("Показать на чертеже", (s, e) => ShowDrawing()), Action("В Excel…", (s, e) => Export(panel, cartogram?.Info.Id)),
                 Action("Ведомость объёмов…", (s, e) => Statement(panel, cartogram?.Info.Id))));
             Span(Flow(Action("Стереть построение", (s, e) => EraseDrawing()), Action("Сделать шаблоном", (s, e) => MakeTemplate())));
@@ -184,7 +201,7 @@ namespace Kzm.AutoCAD.UI.Panel
             // Either kind may be used on either side if the user wants it (e.g. two project variants).
             foreach (var s in panel.Snapshot.Surfaces.Where(s => s.Info.Kind == SurfaceKind.Project)) fact.Items.Add(new SurfaceItem(s.Info, true));
             foreach (var s in panel.Snapshot.Surfaces.Where(s => s.Info.Kind == SurfaceKind.Fact)) project.Items.Add(new SurfaceItem(s.Info, true));
-            var layerNames = panel.Document != null ? DrawingData.Layers(panel.Document) : new List<string>();
+            var layerNames = panel.Snapshot.Layers.Value;
             foreach (var box in layers)
             {
                 string typed = box.Text;
@@ -270,7 +287,8 @@ namespace Kzm.AutoCAD.UI.Panel
             }
             control.Checked = info.ControlCheck;
             keepMoved.Checked = info.KeepMovedLabels;
-            build.Text = isNew || !info.Built ? "Построить" : "Пересчитать";
+            hatchSpacing.Text = SettingsView.FormatValue(info.HatchSpacingMm);
+            hatchWeight.SelectedIndex = Math.Max(0, Array.IndexOf(CartogramInfo.LineWeights, info.HatchLineWeight));
             ShowResults(info, isNew);
         }
 
@@ -285,7 +303,9 @@ namespace Kzm.AutoCAD.UI.Panel
                 foreach (var (text, at) in lastComputation.Marks) problems.Items.Add(new ProblemItem(text, at));
                 foreach (var problem in lastComputation.Problems) problems.Items.Add(new ProblemItem(problem, null));
             }
-            else if (isNew) status.Text = "Заполните поля и нажмите «Проверить» (чертёж не меняется) или «Построить».";
+            else if (isNew) status.Text = "Заполните поля и нажмите «1. Сетка и отметки» («Проверить» считает, не меняя чертёж).";
+            else if (info.Built && !info.VolumesDrawn)
+                status.Text = "Нанесены сетка и отметки (" + info.BuiltAt + "). Проверьте отметки и нажмите «2. Рассчитать объёмы».";
             else if (!info.Built) status.Text = "Ещё не построена. «Проверить» посчитает объёмы, не меняя чертёж.";
             else
             {
@@ -304,10 +324,10 @@ namespace Kzm.AutoCAD.UI.Panel
             }
             if (outdated)
                 status.Text += cartogram.LabelEdits > 0
-                    ? "\nУСТАРЕЛА: на картограмме исправлены отметки (" + cartogram.LabelEdits + ") — «Пересчитать» запишет их в поверхности и пересчитает объёмы."
+                    ? "\nИсправлены отметки на картограмме (" + cartogram.LabelEdits + ") — «2. Рассчитать объёмы» запишет их в поверхности и пересчитает объёмы."
                     : info.OldDrawing
-                        ? "\nПостроена прежней версией модуля — нажмите «Пересчитать», чтобы получить новое оформление (блоки, цвета, сетка по границе)."
-                        : "\nУСТАРЕЛА: точки, структурные линии, границы или параметры изменились — нажмите «Пересчитать».";
+                        ? "\nПостроена прежней версией модуля — постройте заново («1. Сетка и отметки», затем «2. Рассчитать объёмы»), чтобы получить новое оформление."
+                        : "\nУСТАРЕЛА: точки, структурные линии, границы или параметры изменились — постройте заново.";
             status.ForeColor = outdated ? Color.Firebrick : SystemColors.ControlText;
             if (problems.Items.Count == 0) problems.Items.Add(new ProblemItem(lastComputation != null ? "Замечаний нет." : "Замечания появятся после проверки или построения.", null));
         }
@@ -371,6 +391,8 @@ namespace Kzm.AutoCAD.UI.Panel
             info.AngleDegrees = 0;
             info.TableGapMm = SettingsView.Parse(tableGap.Text, "зазор до таблицы", errors) ?? 10;
             info.GridLineWeight = CartogramInfo.LineWeights[Math.Max(0, gridWeight.SelectedIndex)];
+            info.HatchSpacingMm = SettingsView.Parse(hatchSpacing.Text, "шаг штриховки", errors) ?? 4;
+            info.HatchLineWeight = CartogramInfo.LineWeights[Math.Max(0, hatchWeight.SelectedIndex)];
             info.Scale = KzmSettings.Scales[Math.Max(0, scale.SelectedIndex)];
             info.NodeTextMm = SettingsView.Parse(nodeText.Text, "текст отметок", errors) ?? 0;
             info.VolumeTextMm = SettingsView.Parse(volumeText.Text, "текст объёмов", errors) ?? 0;
@@ -400,7 +422,9 @@ namespace Kzm.AutoCAD.UI.Panel
             return false;
         }
 
-        private void Save(bool andBuild)
+        private enum Step { None, Marks, Volumes }
+
+        private void Save(Step step)
         {
             if (panel?.Document == null) return;
             if (panel.Snapshot.Project == null) { PanelMessages.Error("сначала создайте или откройте проект (кнопка «Проект» вверху панели)."); return; }
@@ -408,20 +432,20 @@ namespace Kzm.AutoCAD.UI.Panel
             ClearPreview();
             var settings = panel.Snapshot.Settings;
             CartogramComputation computation = null;
-            PanelActions.Run(andBuild ? "картограмма" : "сохранение картограммы", document =>
+            PanelActions.Run(step == Step.None ? "сохранение картограммы" : step == Step.Marks ? "сетка и отметки" : "объёмы картограммы", document =>
             {
                 using (var transaction = document.Database.TransactionManager.StartTransaction())
                 {
                     KzmStore.WriteCartogram(document.Database, transaction, info);
                     transaction.Commit();
                 }
-                if (!andBuild)
+                if (step == Step.None)
                 {
                     PanelMessages.Info("Картограмма «" + info.Name + "» сохранена.");
                     return;
                 }
-                computation = CartogramService.Build(document, info.Id, settings);
-                Report(document, computation);
+                computation = CartogramService.Build(document, info.Id, settings, step == Step.Volumes);
+                Report(document, computation, step == Step.Volumes);
             }, () =>
             {
                 if (computation != null) lastComputation = computation;
@@ -429,8 +453,19 @@ namespace Kzm.AutoCAD.UI.Panel
             });
         }
 
-        private static void Report(Document document, CartogramComputation computation)
+        private static void Report(Document document, CartogramComputation computation, bool volumes)
         {
+            if (!volumes)
+            {
+                var r = computation.Result;
+                string text = "сетка и отметки нанесены: узлов " + r.Nodes.Values.Count(n => n.Used && n.Inside && n.Working.HasValue) +
+                              ", точек на границе " + r.BoundaryPoints.Count(b => b.Working.HasValue) + ". Проверьте отметки и нажмите «2. Рассчитать объёмы».";
+                document.Editor.WriteMessage("\nКЗМ: «" + computation.Info.Name + "»: " + text);
+                foreach (var line in computation.Applied) document.Editor.WriteMessage("\n  " + line);
+                foreach (var problem in computation.Problems) document.Editor.WriteMessage("\n  замечание: " + problem);
+                PanelMessages.Info("«" + computation.Info.Name + "»: " + text);
+                return;
+            }
             var lines = CartogramService.Summary(computation);
             document.Editor.WriteMessage("\nКЗМ: картограмма «" + computation.Info.Name + "»:");
             foreach (var line in lines) document.Editor.WriteMessage("\n  " + line);
@@ -454,7 +489,7 @@ namespace Kzm.AutoCAD.UI.Panel
                 ShowResults(info, false);
                 status.Text = "Проверка (чертёж не изменён):\n" + string.Join("\n", CartogramService.Summary(lastComputation)) +
                               (cartogram != null && cartogram.LabelEdits > 0
-                                  ? "\nПравки отметок на картограмме (" + cartogram.LabelEdits + ") в проверке не учтены — они войдут при «Пересчитать»." : string.Empty);
+                                  ? "\nПравки отметок на картограмме (" + cartogram.LabelEdits + ") в проверке не учтены — они войдут при «2. Рассчитать объёмы»." : string.Empty);
                 PanelMessages.Info("Проверка выполнена: " + CartogramService.Summary(lastComputation)[0]);
             }
             catch (KzmException exception)
@@ -465,15 +500,15 @@ namespace Kzm.AutoCAD.UI.Panel
         }
 
         /// <summary>Build or rebuild with the stored parameters (context menu of the tree).</summary>
-        internal void Build(KzmPanel owner, string cartogramId)
+        internal void Build(KzmPanel owner, string cartogramId, bool volumes)
         {
             if (owner?.Document == null || cartogramId == null) return;
             var settings = owner.Snapshot.Settings;
             CartogramComputation computation = null;
-            PanelActions.Run("картограмма", document =>
+            PanelActions.Run(volumes ? "объёмы картограммы" : "сетка и отметки", document =>
             {
-                computation = CartogramService.Build(document, cartogramId, settings);
-                Report(document, computation);
+                computation = CartogramService.Build(document, cartogramId, settings, volumes);
+                Report(document, computation, volumes);
             }, () =>
             {
                 if (computation != null) lastComputation = computation;
@@ -697,7 +732,7 @@ namespace Kzm.AutoCAD.UI.Panel
                 if (handle == null) return;
                 boundaryHandle = handle;
                 boundaryNote.Text = "Граница: нарисована по точкам, полилиния " + handle + " (сохраните или постройте картограмму).";
-                PanelMessages.Info("Граница нарисована: точки и структурная линия добавлены в проектную поверхность. Нажмите «Проверить» или «Построить».");
+                PanelMessages.Info("Граница нарисована: точки и структурная линия добавлены в проектную поверхность. Дальше — «1. Сетка и отметки».");
                 panel.RefreshAll();
             });
         }

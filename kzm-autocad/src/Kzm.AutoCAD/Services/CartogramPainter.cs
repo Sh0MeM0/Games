@@ -16,7 +16,7 @@ namespace Kzm.AutoCAD.Services
     /// - отметки — блок «КЗМ_УЗЕЛ» с атрибутами «РАБОЧАЯ», «ПРОЕКТНАЯ», «ФАКТИЧЕСКАЯ» в узлах внутри
     ///   границы и в точках пересечения сетки с границей; значения правятся в «Быстрых свойствах»;
     /// - насыпь — красным (объём и рабочая отметка), выемка — синим, штриховка выемки синяя (45°);
-    /// - близкие подписи разводятся, с выноской к своей точке;
+    /// - подписи стоят по углам своей точки (как в шаблоне); где тесно — раздвигает пользователь (замечание 16);
     /// - таблица объёмов по столбцам (рис. 8 СТБ 2073-2010) — один блок ниже сетки, с зазором;
     /// - за границей работ ничего не рисуется.
     /// Every created object is listed in <see cref="Created"/>.
@@ -83,7 +83,8 @@ namespace Kzm.AutoCAD.Services
         private void Mark(XY at, string label, double height) =>
             Created.AddRange(CheckMarks.Add(transaction, space, at, label, c.Id, height));
 
-        internal void Draw()
+        /// <param name="volumes">false — шаг 1: только сетка и отметки; true — всё, с объёмами (замечание 17).</param>
+        internal void Draw(bool volumes)
         {
             Layers.Ensure(database, transaction, Layers.Grid, 3);
             foreach (var layer in new[] { Layers.Volumes, Layers.Totals, Layers.Nodes }
@@ -99,11 +100,14 @@ namespace Kzm.AutoCAD.Services
             using (var meter = Progress.Start("КЗМ: картограмма «" + c.Name + "»", result.Squares.Count * 4))
             {
                 DrawGrid();
-                DrawHatches(meter);
-                DrawZeroLines();
-                var volumes = DrawVolumes(meter);
-                DrawLabels(volumes, meter);
-                DrawTable();
+                if (volumes)
+                {
+                    DrawHatches(meter);
+                    DrawZeroLines();
+                    DrawVolumes(meter);
+                }
+                DrawLabels(meter);
+                if (volumes) DrawTable();
             }
         }
 
@@ -148,19 +152,31 @@ namespace Kzm.AutoCAD.Services
 
         // ---------- cut hatch, zero lines ----------
 
-        /// <summary>Площадь выемок — штриховкой под углом 45° (СТБ 2073-2010, п. 7.1 б), синим.</summary>
+        /// <summary>
+        /// Площадь выемок — штриховкой под углом 45° (СТБ 2073-2010, п. 7.1 б), синим, тонкой линией. Шаг задан
+        /// в мм на листе: штриховка своими линиями («_USER») не зависит от образцов acad.pat / acadiso.pat и
+        /// от системы единиц чертежа (замечание 15: в дюймовом чертеже ANSI31 сливалась в сплошную заливку).
+        /// </summary>
         private void DrawHatches(Progress meter)
         {
+            double spacing = c.HatchSpacingMm * k;
+            var weight = (LineWeight)c.HatchLineWeight;
             foreach (var square in result.Squares.Where(s => s.Computed && s.CutPolygons.Count > 0))
             {
                 meter.Step();
                 var hatch = Add(new Hatch(), Layers.CutHatch);
                 try
                 {
-                    hatch.SetHatchPattern(HatchPatternType.PreDefined, "ANSI31");
-                    hatch.PatternScale = k;
+                    // Angle and spacing go before SetHatchPattern, otherwise they do not take effect.
+                    hatch.PatternAngle = Math.PI / 4;
+                    hatch.PatternSpace = spacing;
+                    hatch.PatternDouble = false;
+                    hatch.SetHatchPattern(HatchPatternType.UserDefined, "_USER");
+                    hatch.PatternAngle = Math.PI / 4;
+                    hatch.PatternSpace = spacing;
                     hatch.Associative = false;
                     hatch.Color = Blue;
+                    hatch.LineWeight = weight;
                     foreach (var polygon in square.CutPolygons)
                     {
                         var points = new Point2dCollection();
@@ -215,10 +231,9 @@ namespace Kzm.AutoCAD.Services
             return text;
         }
 
-        /// <summary>Объёмы в квадратах: насыпь «+…» красным, выемка «-…» синим. Returns their rectangles (they do not move).</summary>
-        private List<LabelBox> DrawVolumes(Progress meter)
+        /// <summary>Объёмы в квадратах: насыпь «+…» красным, выемка «-…» синим.</summary>
+        private void DrawVolumes(Progress meter)
         {
-            var boxes = new List<LabelBox>();
             double h = c.VolumeTextMm * k;
             foreach (var square in result.Squares)
             {
@@ -233,33 +248,16 @@ namespace Kzm.AutoCAD.Services
                 bool hasFill = fill != "0", hasCut = cut != "0";
                 string key = ":" + square.I.ToString(CultureInfo.InvariantCulture) + ":" + square.J.ToString(CultureInfo.InvariantCulture);
                 var at = square.LabelPoint;
-                var texts = new List<DBText>();
                 if (hasFill && hasCut)
                 {
-                    texts.Add(Label(fill, new XY(at.X, at.Y + 0.15 * h), h, TextHorizontalMode.TextCenter, TextVerticalMode.TextBottom, Layers.Volumes, Red, "V+" + key));
-                    texts.Add(Label(cut, new XY(at.X, at.Y - 0.15 * h), h, TextHorizontalMode.TextCenter, TextVerticalMode.TextTop, Layers.Volumes, Blue, "V-" + key));
+                    Label(fill, new XY(at.X, at.Y + 0.15 * h), h, TextHorizontalMode.TextCenter, TextVerticalMode.TextBottom, Layers.Volumes, Red, "V+" + key);
+                    Label(cut, new XY(at.X, at.Y - 0.15 * h), h, TextHorizontalMode.TextCenter, TextVerticalMode.TextTop, Layers.Volumes, Blue, "V-" + key);
                 }
                 else
                 {
-                    texts.Add(Label(hasCut ? cut : fill, at, h, TextHorizontalMode.TextCenter, TextVerticalMode.TextVerticalMid, Layers.Volumes,
-                        hasCut ? Blue : hasFill ? Red : null, "V" + key));
+                    Label(hasCut ? cut : fill, at, h, TextHorizontalMode.TextCenter, TextVerticalMode.TextVerticalMid, Layers.Volumes,
+                        hasCut ? Blue : hasFill ? Red : null, "V" + key);
                 }
-                foreach (var text in texts) boxes.Add(BoxOf(text, h));
-            }
-            return boxes;
-        }
-
-        private static LabelBox BoxOf(Entity entity, double height)
-        {
-            try
-            {
-                var extents = entity.GeometricExtents;
-                return new LabelBox(extents.MinPoint.X, extents.MinPoint.Y, extents.MaxPoint.X, extents.MaxPoint.Y);
-            }
-            catch (Autodesk.AutoCAD.Runtime.Exception)
-            {
-                var p = entity is DBText text ? text.Position : Point3d.Origin;
-                return new LabelBox(p.X, p.Y, p.X + height, p.Y + height);
             }
         }
 
@@ -301,15 +299,14 @@ namespace Kzm.AutoCAD.Services
             internal BlockReference Block;
             internal string Key;
             internal XY Anchor;
-            internal LabelGroup Group;
-            internal bool Fixed;
         }
 
         /// <summary>
-        /// Подписи в узлах внутри границы и в точках пересечения сетки с границей. Подписи, сдвинутые
-        /// вручную, ставятся туда же; остальные при наложении разводятся с выноской.
+        /// Подписи в узлах внутри границы и в точках пересечения сетки с границей — по углам точки, как в
+        /// шаблоне (пример Б.4). Где тесно, подписи раздвигает пользователь; при пересчёте сдвинутые им
+        /// подписи ставятся туда же (задание п. 7).
         /// </summary>
-        private void DrawLabels(List<LabelBox> volumes, Progress meter)
+        private void DrawLabels(Progress meter)
         {
             double h = c.NodeTextMm * k;
             var labels = new List<NodeLabel>();
@@ -333,32 +330,7 @@ namespace Kzm.AutoCAD.Services
                 }
                 labels.Add(NodeLabelAt(point.Key, point.Position, point.Fact.Value, point.Project.Value, h));
             }
-
-            var obstacles = new List<LabelBox>(volumes);
-            var groups = new List<LabelGroup>();
-            foreach (var label in labels)
-            {
-                var box = Box(label.Block, h);
-                if (label.Fixed) obstacles.Add(box);
-                else
-                {
-                    label.Group = new LabelGroup(label.Anchor, box);
-                    groups.Add(label.Group);
-                }
-            }
-            LabelLayout.Place(groups, obstacles, computation.Boundary, h);
-            int overlapping = 0;
-            foreach (var label in labels.Where(l => l.Group != null))
-            {
-                if (label.Group.Overlapping) overlapping++;
-                if (!label.Group.Leader) continue;
-                label.Block.TransformBy(Matrix3d.Displacement(new Vector3d(label.Group.Dx, label.Group.Dy, 0)));
-                var end = label.Group.Placed.Nearest(label.Anchor);
-                if (end.DistanceTo(label.Anchor) > 0.3 * h) Add(new Line(P(label.Anchor), P(end)), Layers.Nodes);
-            }
             foreach (var label in labels) Stamp(label);
-            if (overlapping > 0)
-                computation.Problems.Add("подписи в точках: " + overlapping + " — не удалось развести без наложения (мелкий шаг сетки или крупный текст)");
         }
 
         private NodeLabel NodeLabelAt(string key, XY at, double fact, double project, double h)
@@ -368,6 +340,7 @@ namespace Kzm.AutoCAD.Services
             var definition = (BlockTableRecord)transaction.GetObject(nodeDefinition, OpenMode.ForRead);
             var label = new NodeLabel { Block = reference, Key = key, Anchor = at };
             moved.Nodes.TryGetValue(key, out var offsets);
+            bool shifted = false;
             foreach (ObjectId id in definition)
             {
                 if (!(transaction.GetObject(id, OpenMode.ForRead) is AttributeDefinition attributeDefinition) || attributeDefinition.Constant) continue;
@@ -399,10 +372,10 @@ namespace Kzm.AutoCAD.Services
                 if (offsets != null && offsets[index].Length > 1e-6)
                 {
                     attribute.TransformBy(Matrix3d.Displacement(offsets[index]));
-                    label.Fixed = true;
+                    shifted = true;
                 }
             }
-            if (label.Fixed) Moved++;
+            if (shifted) Moved++;
             reference.XData = Tag(Text(CartogramService.NodeMark), Text(key),
                 new TypedValue((int)DxfCode.ExtendedDataReal, fact),
                 new TypedValue((int)DxfCode.ExtendedDataReal, project),
@@ -432,19 +405,6 @@ namespace Kzm.AutoCAD.Services
             attribute.AdjustAlignment(database);
         }
 
-        /// <summary>Rectangle of the three attributes of a node block.</summary>
-        private LabelBox Box(BlockReference reference, double h)
-        {
-            LabelBox? box = null;
-            foreach (ObjectId id in reference.AttributeCollection)
-            {
-                var attribute = (AttributeReference)transaction.GetObject(id, OpenMode.ForRead);
-                var part = BoxOf(attribute, h);
-                box = box.HasValue ? box.Value.Union(part) : part;
-            }
-            return box ?? new LabelBox(reference.Position.X, reference.Position.Y, reference.Position.X + h, reference.Position.Y + h);
-        }
-
         /// <summary>
         /// Writes into the node block where the module finally put each attribute: a later move by the user
         /// is measured from here (задание п. 7), a typed value is compared with the written ones.
@@ -454,11 +414,15 @@ namespace Kzm.AutoCAD.Services
             List<TypedValue> values;
             using (var xdata = label.Block.GetXDataForApplication(CartogramService.App)) values = xdata.AsArray().ToList();
             var attributes = Sources.Attributes(label.Block, transaction);
-            foreach (var tag in new[] { CartogramService.WorkingTag, CartogramService.ProjectTag, CartogramService.FactTag })
+            var tags = new[] { CartogramService.WorkingTag, CartogramService.ProjectTag, CartogramService.FactTag };
+            foreach (var tag in tags)
             {
                 var anchor = attributes.TryGetValue(tag, out var attribute) ? Sources.TextAnchor(attribute) : label.Block.Position;
                 values.Add(new TypedValue((int)DxfCode.ExtendedDataXCoordinate, anchor));
             }
+            // The texts as written: a later change shows which value the user typed (NodeSync).
+            foreach (var tag in tags)
+                values.Add(new TypedValue((int)DxfCode.ExtendedDataAsciiString, attributes.TryGetValue(tag, out var attribute) ? attribute.TextString ?? string.Empty : string.Empty));
             label.Block.XData = new ResultBuffer(values.ToArray());
         }
 

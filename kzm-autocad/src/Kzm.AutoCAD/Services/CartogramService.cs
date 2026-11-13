@@ -300,9 +300,8 @@ namespace Kzm.AutoCAD.Services
         }
 
         /// <summary>
-        /// Elevations the user typed into the labels of the cartogram (Быстрые свойства / двойной щелчок):
-        /// проектная и фактическая — для записи в поверхности; правка рабочей не принимается (она всегда
-        /// Hпр − Hф) — в <paramref name="notes"/>.
+        /// Elevations the user typed into the labels of the cartogram («Свойства» / двойной щелчок): проектная и
+        /// фактическая — для записи в поверхности (правка рабочей уже превращена NodeSync в проектную).
         /// </summary>
         internal static List<LabelEdit> ReadLabelEdits(Database database, Transaction transaction, string cartogramId, List<string> notes)
         {
@@ -328,12 +327,7 @@ namespace Kzm.AutoCAD.Services
                     else
                         notes.Add((isProject ? "проектная" : "фактическая") + " отметка «" + text + "» у точки " + at + " не читается — не учтена");
                 }
-                if (attributes.TryGetValue(WorkingTag, out var workingAttribute))
-                {
-                    string text = (workingAttribute.TextString ?? string.Empty).Trim();
-                    if (text != ElevationFormat.FormatSigned(working, 2))
-                        notes.Add("рабочая отметка у точки " + at + " всегда Hпр − Hф: правка «" + text + "» не принята, меняйте проектную или фактическую");
-                }
+                // The working elevation needs no write-back: NodeSync turned its change into a project elevation (замечание 18).
             }
             return edits;
         }
@@ -399,39 +393,59 @@ namespace Kzm.AutoCAD.Services
             return messages;
         }
 
-        /// <summary>Расчёт и построение (пересчёт): старые объекты картограммы заменяются новыми. Одна отмена.</summary>
-        internal static CartogramComputation Build(Document document, string cartogramId, KzmSettings settings)
+        /// <summary>
+        /// Построение и пересчёт (одна команда — одна отмена). Шаг 1 (<paramref name="volumes"/> = false): сетка и
+        /// отметки. Шаг 2 (true): объёмы, штриховка, линия нулевых работ, таблица. Перед расчётом отметки, исправленные
+        /// на картограмме, приводятся в согласие (NodeSync) и записываются в поверхности — отдельными транзакциями,
+        /// чтобы расчёт видел новые точки поверхностей.
+        /// </summary>
+        internal static CartogramComputation Build(Document document, string cartogramId, KzmSettings settings, bool volumes)
         {
             var database = document.Database;
+            CartogramInfo c;
+            var notes = new List<string>();
+            var applied = new List<string>();
             using (var transaction = database.TransactionManager.StartTransaction())
             {
-                var c = KzmStore.ReadCartograms(database, transaction).FirstOrDefault(x => x.Id == cartogramId)
-                        ?? throw new KzmException("Картограмма не найдена.");
-                // Elevations typed on the cartogram go into the surfaces first, then everything is recalculated.
-                var notes = new List<string>();
+                c = KzmStore.ReadCartograms(database, transaction).FirstOrDefault(x => x.Id == cartogramId)
+                    ?? throw new KzmException("Картограмма не найдена.");
+                NodeSync.NormalizeCartogram(database, transaction, c.Id);
+                transaction.Commit();
+            }
+            using (var transaction = database.TransactionManager.StartTransaction())
+            {
                 var edits = ReadLabelEdits(database, transaction, c.Id, notes);
-                var applied = edits.Count > 0 ? ApplyLabelEdits(database, transaction, c, edits, settings) : new List<string>();
+                if (edits.Count > 0) applied.AddRange(ApplyLabelEdits(database, transaction, c, edits, settings));
+                transaction.Commit();
+            }
+            using (var transaction = database.TransactionManager.StartTransaction())
+            {
+                c = KzmStore.ReadCartograms(database, transaction).First(x => x.Id == cartogramId);
                 var computation = Compute(database, transaction, c, settings);
                 computation.Applied.AddRange(applied);
                 computation.Problems.AddRange(notes);
                 var moved = c.KeepMovedLabels ? ReadMoved(database, transaction, c.Id) : new MovedLabels();
                 Erase(database, transaction, c.Id);
                 var painter = new CartogramPainter(database, transaction, computation, moved);
-                painter.Draw();
+                painter.Draw(volumes);
                 computation.MovedLabels = painter.Moved;
                 KzmStore.WriteCartogramObjects(database, transaction, c.Id, painter.Created);
                 c.Built = true;
+                c.VolumesDrawn = volumes;
                 c.DrawVersion = CartogramInfo.CurrentDrawVersion;
                 c.BuiltFingerprint = computation.Fingerprint;
-                c.LastFill = computation.Result.TotalFill;
-                c.LastCut = computation.Result.TotalCut;
-                c.LastControlFill = computation.Control?.Fill;
-                c.LastControlCut = computation.Control?.Cut;
-                c.LastArea = computation.Result.ComputedArea;
-                c.LastSquares = computation.Result.Squares.Count;
                 c.BuiltAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+                if (volumes)
+                {
+                    c.LastFill = computation.Result.TotalFill;
+                    c.LastCut = computation.Result.TotalCut;
+                    c.LastControlFill = computation.Control?.Fill;
+                    c.LastControlCut = computation.Control?.Cut;
+                    c.LastArea = computation.Result.ComputedArea;
+                    c.LastSquares = computation.Result.Squares.Count;
+                }
                 KzmStore.WriteCartogram(database, transaction, c);
-                UpdateStatements(database, transaction, c, computation.Problems);
+                if (volumes) UpdateStatements(database, transaction, c, computation.Problems);
                 transaction.Commit();
                 return computation;
             }

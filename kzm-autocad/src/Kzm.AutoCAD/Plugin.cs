@@ -15,12 +15,16 @@ namespace Kzm.AutoCAD
             catch (System.Exception exception) { StartupError("верхнее меню", exception); }
             try { StartRibbon(); }
             catch (System.Exception exception) { StartupError("ленту", exception); }
+            // Отметки узла картограммы пересчитываются сразу после правки в «Свойствах» (и без открытой панели).
+            try { Services.NodeSync.Start(); }
+            catch (System.Exception exception) { StartupError("пересчёт отметок картограммы", exception); }
         }
 
         public void Terminate()
         {
             try { KzmClassicMenu.Stop(); } catch (System.Exception) { }
             try { KzmRibbon.Stop(); } catch (System.Exception) { }
+            try { Services.NodeSync.Stop(); } catch (System.Exception) { }
         }
 
         // Keeps AdWindows out of Initialize's JIT scope: a missing ribbon must not

@@ -59,6 +59,9 @@ namespace Kzm.AutoCAD.UI.Panel
         private readonly List<ToolStripItem> projectOnly = new List<ToolStripItem>();
         private Control shown;
         private string shownSurfaceId;
+        private ContextMenuStrip contextMenu;
+        /// <summary>Last snapshot of each drawing: switching drawing tabs does not re-read an unchanged drawing.</summary>
+        private readonly Dictionary<Document, DrawingSnapshot> snapshots = new Dictionary<Document, DrawingSnapshot>();
         private string selectedKey;
         private bool rebuilding;
 
@@ -96,8 +99,9 @@ namespace Kzm.AutoCAD.UI.Panel
             {
                 if (e.Button != MouseButtons.Right) return;
                 tree.SelectedNode = e.Node;
-                var menu = MenuFor(e.Node.Tag as NodeTag);
-                if (menu != null) menu.Show(tree, e.Location);
+                contextMenu?.Dispose();
+                contextMenu = MenuFor(e.Node.Tag as NodeTag);
+                contextMenu?.Show(tree, e.Location);
             };
             tree.NodeMouseDoubleClick += (s, e) => ShowOnDrawing(e.Node?.Tag as NodeTag);
             tree.KeyDown += (s, e) =>
@@ -201,10 +205,15 @@ namespace Kzm.AutoCAD.UI.Panel
         }
 
         /// <summary>Re-reads the drawing and redraws the tree and the open view.</summary>
-        internal void RefreshAll()
+        internal void RefreshAll() => RefreshAll(true);
+
+        /// <param name="reread">false — the drawing did not change since it was read (another drawing tab was active): use the last snapshot.</param>
+        internal void RefreshAll(bool reread)
         {
             Document = AcadApplication.DocumentManager.MdiActiveDocument;
-            Snapshot = DrawingData.Read(Document);
+            if (reread || Document == null || !snapshots.TryGetValue(Document, out var cached)) Snapshot = DrawingData.Read(Document);
+            else Snapshot = cached;
+            if (Document != null) snapshots[Document] = Snapshot;
             if (Snapshot.Error != null) PanelMessages.Error("данные КЗМ в чертеже не читаются: " + Snapshot.Error);
             int outdated = Snapshot.Cartograms.Count(c => c.Outdated);
             updateButton.Enabled = outdated > 0;
@@ -218,7 +227,11 @@ namespace Kzm.AutoCAD.UI.Panel
             if (Document == null) PanelMessages.Info("Нет открытого чертежа.");
         }
 
-        internal void Forget(Document document) => importView.Forget(document);
+        internal void Forget(Document document)
+        {
+            importView.Forget(document);
+            snapshots.Remove(document);
+        }
 
         // ---------- projects ----------
 
@@ -227,7 +240,9 @@ namespace Kzm.AutoCAD.UI.Panel
             var project = Snapshot.Project;
             projectButton.Text = project != null ? "Проект: " + project.Name : "Проект: не открыт";
             projectButton.ForeColor = project != null ? SystemColors.ControlText : Color.DarkOrange;
+            var oldItems = projectButton.DropDownItems.Cast<ToolStripItem>().ToList();
             projectButton.DropDownItems.Clear();
+            foreach (var item in oldItems) item.Dispose();
             foreach (var item in Snapshot.Projects)
             {
                 string id = item.Id;
@@ -328,12 +343,14 @@ namespace Kzm.AutoCAD.UI.Panel
                 {
                     var info = cartogram.Info;
                     string state = !info.Built ? "  (не построена)"
+                        : !info.VolumesDrawn && !cartogram.Outdated ? "  (сетка и отметки)"
                         : cartogram.Outdated ? "  (УСТАРЕЛА)"
                         : "  +" + Math.Round(info.LastFill).ToString(System.Globalization.CultureInfo.InvariantCulture) + " / −" +
                           Math.Round(info.LastCut).ToString(System.Globalization.CultureInfo.InvariantCulture) + " м³";
                     cartograms.Nodes.Add(Node(info.Name + state, new NodeTag { Kind = NodeKind.Cartogram, SurfaceId = info.Id },
                         !info.Built ? IconDraft : cartogram.Outdated ? IconOutdated : IconCartogram,
-                        cartogram.Outdated ? "Точки, границы или параметры изменились после построения — «Пересчитать»"
+                        cartogram.Outdated ? (cartogram.LabelEdits > 0 ? "Исправлены отметки на картограмме — «2. Рассчитать объёмы» запишет их в поверхности"
+                            : "Точки, границы или параметры изменились после построения — постройте заново")
                             : "Двойной щелчок — показать на чертеже, правый — действия",
                         cartogram.Outdated ? Color.Firebrick : (Color?)null));
                 }
@@ -411,7 +428,8 @@ namespace Kzm.AutoCAD.UI.Panel
                     if (cartogram == null) return null;
                     string id = cartogram.Info.Id;
                     Item("Свойства", () => ShowCartogram(id));
-                    Item(cartogram.Info.Built ? "Пересчитать" : "Построить", () => cartogramView.Build(this, id));
+                    Item("1. Сетка и отметки", () => cartogramView.Build(this, id, false));
+                    Item("2. Рассчитать объёмы", () => cartogramView.Build(this, id, true));
                     Item("Показать на чертеже", () => ShowOnDrawing(tag), cartogram.Info.Built);
                     Item("В Excel…", () => cartogramView.Export(this, id), cartogram.Info.Built);
                     Item("Ведомость объёмов…", () => cartogramView.Statement(this, id), cartogram.Info.Built);

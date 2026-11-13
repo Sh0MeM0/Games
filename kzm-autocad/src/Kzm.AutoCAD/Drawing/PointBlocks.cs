@@ -311,7 +311,14 @@ namespace Kzm.AutoCAD.Drawing
         internal static string ReadLabel(BlockReference reference, Transaction transaction) => ReadAttribute(reference, transaction, Tag);
 
         /// <summary>All live point blocks; when <paramref name="surfaceId"/> is set, only that surface.</summary>
-        internal static List<SurfacePoint> Read(Database database, Transaction transaction, KzmSettings settings, string surfaceId = null)
+        internal static List<SurfacePoint> Read(Database database, Transaction transaction, KzmSettings settings, string surfaceId = null) =>
+            Read(database, transaction, settings, surfaceId == null ? (Func<string, bool>)null : id => string.Equals(id, surfaceId, StringComparison.Ordinal));
+
+        /// <summary>
+        /// Point blocks of the surfaces accepted by <paramref name="include"/> (all when null). The XData is checked
+        /// first: attributes of points of other surfaces are not read (the panel reads only the open project).
+        /// </summary>
+        internal static List<SurfacePoint> Read(Database database, Transaction transaction, KzmSettings settings, Func<string, bool> include)
         {
             var result = new List<SurfacePoint>();
             var blocks = (BlockTable)transaction.GetObject(database.BlockTableId, OpenMode.ForRead);
@@ -325,7 +332,7 @@ namespace Kzm.AutoCAD.Drawing
                 if (!(transaction.GetObject(reference.OwnerId, OpenMode.ForRead) is BlockTableRecord owner) || !owner.IsLayout) continue;
                 var data = Decode(reference);
                 if (data == null) continue;
-                if (surfaceId != null && !string.Equals(data.SurfaceId, surfaceId, StringComparison.Ordinal)) continue;
+                if (include != null && !include(data.SurfaceId)) continue;
                 string number = ReadAttribute(reference, transaction, NumberTag);
                 result.Add(new SurfacePoint
                 {
