@@ -39,6 +39,8 @@ namespace Kzm.AutoCAD.Services
         /// <summary>Volume labels by key.</summary>
         internal Dictionary<string, Vector3d> Texts { get; } = new Dictionary<string, Vector3d>(StringComparer.Ordinal);
         internal Vector3d? Table { get; set; }
+        /// <summary>The block with the areas, when the user moved it by itself (otherwise it follows the table).</summary>
+        internal Vector3d? Areas { get; set; }
     }
 
     /// <summary>An elevation typed into a label of the cartogram (задание: правка отметок прямо на картограмме).</summary>
@@ -66,6 +68,8 @@ namespace Kzm.AutoCAD.Services
         internal const string NodeMark = "N";
         internal const string TableMark = "T";
         internal const string GridMark = "G";
+        /// <summary>Text with the areas of fill, cut, zero and the whole cartogram (version 0.8).</summary>
+        internal const string AreasMark = "AREA";
         /// <summary>Boundary polyline drawn by points for this cartogram (not part of the drawing that is rebuilt).</summary>
         internal const string BoundaryMark = "BOUNDARY";
         private const string StatementsSuffix = ".statements";
@@ -164,6 +168,8 @@ namespace Kzm.AutoCAD.Services
                       (Math.Abs(balance) < 0.5 * Math.Pow(10, -dec) ? "0 м³" : ElevationFormat.FormatSigned(balance, dec) + " м³ — " + (balance > 0 ? "недостаток грунта" : "избыток грунта")) + ".");
             lines.Add("Квадратов " + r.Squares.Count + " (полных " + r.Squares.Count(s => s.Full) + ", неполных " + r.Squares.Count(s => !s.Full) +
                       "); площадь " + ElevationFormat.Format(r.ComputedArea, 1) + " м² из " + ElevationFormat.Format(r.BoundaryArea, 1) + " м².");
+            lines.Add("Площадь насыпи " + ElevationFormat.Format(r.FillArea, 1) + " м², выемки " + ElevationFormat.Format(r.CutArea, 1) +
+                      " м², 0-области (рабочая отметка 0) " + ElevationFormat.Format(r.ZeroArea, 1) + " м².");
             if (computation.Control != null)
             {
                 var fill = ControlVolumeResult.Difference(r.TotalFill, computation.Control.Fill);
@@ -294,6 +300,12 @@ namespace Kzm.AutoCAD.Services
                 {
                     var offset = table.Position - Point3d.Origin;
                     if (offset.Length > 1e-6 && Straight(table.Rotation)) result.Table = offset;
+                }
+                else if (entity is BlockReference areas && mark == AreasMark)
+                {
+                    // Where the module put the block is kept in its XData: a block that is not there was moved by the user.
+                    var drawnAt = values.Length >= 4 && values[3].Value is Point3d at ? at : Point3d.Origin;
+                    if (areas.Position.DistanceTo(drawnAt) > 1e-6 && Straight(areas.Rotation)) result.Areas = areas.Position - Point3d.Origin;
                 }
             }
             return result;
@@ -430,6 +442,7 @@ namespace Kzm.AutoCAD.Services
                 painter.Draw(volumes);
                 computation.MovedLabels = painter.Moved;
                 KzmStore.WriteCartogramObjects(database, transaction, c.Id, painter.Created);
+                OutlineBoundary(database, transaction, c);
                 c.Built = true;
                 c.VolumesDrawn = volumes;
                 c.DrawVersion = CartogramInfo.CurrentDrawVersion;
@@ -457,6 +470,19 @@ namespace Kzm.AutoCAD.Services
             int statements = (KzmStore.ReadCartogramObjects(database, transaction, c.Id + StatementsSuffix) ?? new List<ObjectId>())
                 .Count(id => id.IsValid && !id.IsErased);
             return (statements, ModuleBoundary(database, transaction, c) != ObjectId.Null);
+        }
+
+        /// <summary>
+        /// The boundary drawn by points for this cartogram gets 0,30 mm, like the zero line (замечание 22). A polyline the
+        /// user drew and picked as the boundary is the user's object and keeps its own properties.
+        /// </summary>
+        private static void OutlineBoundary(Database database, Transaction transaction, CartogramInfo c)
+        {
+            var id = ModuleBoundary(database, transaction, c);
+            if (id.IsNull || !(transaction.GetObject(id, OpenMode.ForRead) is Entity boundary) || boundary.LineWeight == CartogramPainter.OutlineWeight) return;
+            if (!Layers.IsUsable(database, transaction, boundary.Layer, out _)) return;
+            boundary.UpgradeOpen();
+            boundary.LineWeight = CartogramPainter.OutlineWeight;
         }
 
         /// <summary>The boundary polyline drawn by points for this cartogram (never a polyline the user drew).</summary>
@@ -581,8 +607,8 @@ namespace Kzm.AutoCAD.Services
                     continue;
                 }
                 table.UpgradeOpen();
-                table.Cells[row, 1].TextString = Volume(c.LastFill, c.VolumeDecimals, true).TrimStart('+');
-                table.Cells[row, 2].TextString = Volume(c.LastCut, c.VolumeDecimals, false).TrimStart('-');
+                table.Cells[row, 1].TextString = ElevationFormat.Grouped(c.LastFill, c.VolumeDecimals);
+                table.Cells[row, 2].TextString = ElevationFormat.Grouped(c.LastCut, c.VolumeDecimals);
             }
             if (alive.Count != ids.Count) KzmStore.WriteCartogramObjects(database, transaction, c.Id + StatementsSuffix, alive);
         }
@@ -595,8 +621,14 @@ namespace Kzm.AutoCAD.Services
         }
 
         /// <summary>
-        /// Ведомость объёмов земляных масс по форме рис. 9 СТБ 2073-2010: строку «Грунт планировки
-        /// территории» заполняет модуль, остальные строки — проектировщик (значения не подставляются).
+        /// Ведомость объёмов земляных масс по форме рис. 9 СТБ 2073-2010 (замечание 20):
+        /// - над таблицей заголовок «Ведомость объемов земляных масс» (строка без рамки);
+        /// - графы 85 + 20 + 20 + 20 + 20 + 20 = 185 мм: наименование грунта, две территории по графе «Насыпь (+)» и
+        ///   «Выемка (–)», «Примечание»; строки головки 5, 10 и 10 мм, строки ведомости — не менее 8 мм (длинное
+        ///   наименование переносится, строка растёт); поля ячеек заданы, чтобы строки не раздувались стилем таблицы;
+        /// - все линии 0,25 мм (замечание 21);
+        /// - заполняется первая территория: её название — имя картограммы, в строке «Грунт планировки территории» —
+        ///   объёмы (числа как в примере А.6: «150 000», ноль — «—»). Остальное — проектировщик (п. 7.5, примечания к рис. 9).
         /// </summary>
         internal static void InsertStatement(Document document, string cartogramId)
         {
@@ -617,16 +649,17 @@ namespace Kzm.AutoCAD.Services
                 PointBlocks.EnsureRegApp(database, transaction, App);
                 var space = (BlockTableRecord)transaction.GetObject(database.CurrentSpaceId, OpenMode.ForWrite);
                 double k = c.UnitsPerMm;
+                const string indent = "     "; // подпункты «а)», «б)» … с отступом, как на рис. 9
                 string[] names =
                 {
                     PlanningRow,
                     "Вытесненный грунт, всего",
-                    "в том числе при устройстве:\nа) подземных частей зданий (сооружений)",
-                    "б) автодорожных покрытий",
-                    "в) железнодорожных путей",
-                    "г) подземных сетей",
-                    "д) водоотводных сооружений",
-                    "е) плодородной почвы на участках озеленения",
+                    "в том числе при устройстве:\\P" + indent + "а) подземных частей зданий (сооружений)",
+                    indent + "б) автодорожных покрытий",
+                    indent + "в) железнодорожных путей",
+                    indent + "г) подземных сетей",
+                    indent + "д) водоотводных сооружений",
+                    indent + "е) плодородной почвы на участках озеленения",
                     "Грунт для засыпки существующих канав, котлованов, образуемых от разбираемых подземных частей зданий (сооружений)",
                     "Грунт для устройства земляного полотна автодорог, железнодорожных путей",
                     "Грунт для устройства высоких полов зданий и обвалований сооружений",
@@ -635,44 +668,74 @@ namespace Kzm.AutoCAD.Services
                     "Недостаток (избыток) пригодного грунта",
                     "Грунт, непригодный для устройства насыпи оснований зданий (сооружений) и подлежащий удалению с территории",
                     "Плодородный грунт, всего",
-                    "в том числе:\nа) используемый для озеленения территории",
-                    "б) недостаток (избыток) плодородного грунта",
+                    "в том числе:\\P" + indent + "а) используемый для озеленения территории",
+                    indent + "б) недостаток (избыток) плодородного грунта",
                     "Итого перерабатываемого грунта",
                 };
-                var table = new Table { TableStyle = database.Tablestyle, Position = new Point3d(at.X, at.Y, 0), Layer = Layers.Totals };
+                const int body = 4, columns = 6; // строка 0 — заголовок, 1–3 — головка, дальше — ведомость
+                double[] widths = { 85, 20, 20, 20, 20, 20 };
+                var table = new Table
+                {
+                    TableStyle = database.Tablestyle, Position = new Point3d(at.X, at.Y, 0), Layer = Layers.Totals,
+                    LineWeight = CartogramPainter.TextWeight,
+                };
                 // All rows are data rows: the head of the form is built by merging cells below.
 #pragma warning disable CS0618 // obsolete since 2008, still supported by AutoCAD 2021–2026 (checked by compiling all six targets)
                 table.IsTitleSuppressed = true;
                 table.IsHeaderSuppressed = true;
 #pragma warning restore CS0618
-                table.SetSize(3 + names.Length, 4);
-                double[] widths = { 85, 20, 20, 20 };
-                for (int col = 0; col < 4; col++) table.Columns[col].Width = widths[col] * k;
-                table.Rows[0].Height = 5 * k;
-                table.Rows[1].Height = 10 * k;
+                table.SetSize(body + names.Length, columns);
+                for (int col = 0; col < columns; col++) table.Columns[col].Width = widths[col] * k;
+                table.Rows[0].Height = 8 * k;
+                table.Rows[1].Height = 5 * k;
                 table.Rows[2].Height = 10 * k;
-                for (int row = 3; row < table.Rows.Count; row++) table.Rows[row].Height = 8 * k;
-                double text = 2.5 * k;
+                table.Rows[3].Height = 10 * k;
+                for (int row = body; row < table.Rows.Count; row++) table.Rows[row].Height = 8 * k;
                 for (int row = 0; row < table.Rows.Count; row++)
-                for (int col = 0; col < 4; col++)
+                for (int col = 0; col < columns; col++)
                 {
-                    table.Cells[row, col].TextHeight = text;
-                    table.Cells[row, col].Alignment = row < 3 || col > 0 ? CellAlignment.MiddleCenter : CellAlignment.MiddleLeft;
+                    var cell = table.Cells[row, col];
+                    cell.TextStyleId = database.Textstyle;
+                    cell.TextHeight = (row == 0 ? 3.5 : 2.5) * k;
+                    cell.Alignment = row < body || col > 0 ? CellAlignment.MiddleCenter : CellAlignment.MiddleLeft;
+                    var borders = cell.Borders;
+                    foreach (var border in new[] { borders.Top, borders.Bottom, borders.Left, borders.Right })
+                        border.LineWeight = CartogramPainter.TextWeight;
+                    // Text 2,5 mm + 2 × 0,75 mm fits the 5 mm row of the head; a style made for millimetres would add metres here.
+                    borders.Top.Margin = 0.75 * k;
+                    borders.Bottom.Margin = 0.75 * k;
+                    borders.Left.Margin = 1 * k;
+                    borders.Right.Margin = 1 * k;
+                    if (row == 0)
+                    {
+                        borders.Top.IsVisible = false;
+                        borders.Left.IsVisible = false;
+                        borders.Right.IsVisible = false;
+                    }
                 }
-                table.MergeCells(CellRange.Create(table, 0, 0, 2, 0));
-                table.MergeCells(CellRange.Create(table, 0, 1, 0, 2));
-                table.MergeCells(CellRange.Create(table, 1, 1, 1, 2));
-                table.MergeCells(CellRange.Create(table, 0, 3, 2, 3));
-                table.Cells[0, 0].TextString = "Наименование грунта";
-                table.Cells[0, 1].TextString = "Количество, м³";
-                table.Cells[1, 1].TextString = c.Name;
-                table.Cells[2, 1].TextString = "Насыпь\n(+)";
-                table.Cells[2, 2].TextString = "Выемка\n(–)";
-                table.Cells[0, 3].TextString = "Примечание";
-                for (int i = 0; i < names.Length; i++) table.Cells[3 + i, 0].TextString = names[i];
-                table.Cells[3, 1].TextString = Volume(c.LastFill, c.VolumeDecimals, true).TrimStart('+');
-                table.Cells[3, 2].TextString = Volume(c.LastCut, c.VolumeDecimals, false).TrimStart('-');
-                table.Cells[3, 3].TextString = "КЗМ «" + c.Name + "»";
+                var title = CellRange.Create(table, 0, 0, 0, columns - 1);
+                table.MergeCells(title);
+                title.Borders.Top.IsVisible = false;
+                title.Borders.Left.IsVisible = false;
+                title.Borders.Right.IsVisible = false;
+                table.MergeCells(CellRange.Create(table, 1, 0, 3, 0));
+                table.MergeCells(CellRange.Create(table, 1, 1, 1, 4));
+                table.MergeCells(CellRange.Create(table, 2, 1, 2, 2));
+                table.MergeCells(CellRange.Create(table, 2, 3, 2, 4));
+                table.MergeCells(CellRange.Create(table, 1, 5, 3, 5));
+                table.Cells[0, 0].TextString = "Ведомость объемов земляных масс";
+                table.Cells[1, 0].TextString = "Наименование грунта";
+                table.Cells[1, 1].TextString = "Количество, м³";
+                table.Cells[2, 1].TextString = c.Name;
+                for (int col = 1; col <= 3; col += 2)
+                {
+                    table.Cells[3, col].TextString = "Насыпь\\P(+)";
+                    table.Cells[3, col + 1].TextString = "Выемка\\P(–)";
+                }
+                table.Cells[1, 5].TextString = "Приме-\\Pчание";
+                for (int i = 0; i < names.Length; i++) table.Cells[body + i, 0].TextString = names[i];
+                table.Cells[body, 1].TextString = ElevationFormat.Grouped(c.LastFill, c.VolumeDecimals);
+                table.Cells[body, 2].TextString = ElevationFormat.Grouped(c.LastCut, c.VolumeDecimals);
                 table.XData = new ResultBuffer(
                     new TypedValue((int)DxfCode.ExtendedDataRegAppName, App),
                     new TypedValue((int)DxfCode.ExtendedDataAsciiString, c.Id),

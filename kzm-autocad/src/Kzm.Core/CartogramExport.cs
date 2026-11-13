@@ -86,6 +86,9 @@ namespace Kzm.Core
             totals.Row("Баланс: насыпь − выемка, м³ (+ недостаток грунта, − избыток)", r.TotalFill - r.TotalCut);
             totals.Row("Площадь в границе работ, м²", r.BoundaryArea);
             totals.Row("Рассчитано, м²", r.ComputedArea);
+            totals.Row("Площадь насыпи (рабочая отметка > 0), м²", r.FillArea);
+            totals.Row("Площадь выемки (рабочая отметка < 0), м²", r.CutArea);
+            totals.Row("Площадь 0-области (рабочая отметка = 0), м²", r.ZeroArea);
             if (report.Control != null && report.Control.MissingArea > 0)
                 totals.Row("Нет данных поверхностей (контрольный расчёт), м²", report.Control.MissingArea);
             totals.Row("Квадратов всего / полных / неполных", r.Squares.Count + " / " + r.Squares.Count(s => s.Full) + " / " + r.Squares.Count(s => !s.Full));

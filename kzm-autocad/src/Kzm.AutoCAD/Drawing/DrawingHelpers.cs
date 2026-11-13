@@ -50,7 +50,7 @@ namespace Kzm.AutoCAD.Drawing
             {
                 layer.UpgradeOpen();
                 layer.LinetypeObjectId = types[name];
-                layer.LineWeight = LineWeight.LineWeight018;
+                layer.LineWeight = LineWeight.LineWeight030; // as the zero line itself (замечание 22)
             }
         }
 

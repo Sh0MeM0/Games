@@ -142,7 +142,7 @@ namespace Kzm.Core
         /// <summary>Version of the drawing rules the cartogram was built with (0 — before 0.6).</summary>
         public int DrawVersion { get; set; }
         /// <summary>Drawing rules of this version: labels at the corners, hatch by spacing on the sheet (0.7).</summary>
-        public const int CurrentDrawVersion = 3;
+        public const int CurrentDrawVersion = 4;
         /// <summary>
         /// Построение в два шага (замечание 17): false — нанесены только сетка и отметки, объёмы ещё не рассчитаны.
         /// Картограммы прежних версий построены целиком.

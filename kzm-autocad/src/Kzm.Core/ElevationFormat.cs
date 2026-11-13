@@ -40,6 +40,32 @@ namespace Kzm.Core
             return "+" + text;
         }
 
+        /// <summary>
+        /// Число в ведомости объёмов, как в примере А.6 СТБ 2073-2010: в целой части из пяти и более цифр тысячи
+        /// отделяются пробелом («150 000», «94 480»), четырёхзначные — без пробела («7320»); ноль — прочерк «—».
+        /// </summary>
+        public static string Grouped(double value, int decimals)
+        {
+            string text = Format(value, decimals);
+            if (IsZero(text)) return "—";
+            bool negative = text.StartsWith("-", StringComparison.Ordinal);
+            if (negative) text = text.Substring(1);
+            int comma = text.IndexOf(',');
+            string whole = comma < 0 ? text : text.Substring(0, comma);
+            string rest = comma < 0 ? string.Empty : text.Substring(comma);
+            if (whole.Length >= 5)
+            {
+                var builder = new System.Text.StringBuilder();
+                for (int i = 0; i < whole.Length; i++)
+                {
+                    if (i > 0 && (whole.Length - i) % 3 == 0) builder.Append(' ');
+                    builder.Append(whole[i]);
+                }
+                whole = builder.ToString();
+            }
+            return (negative ? "-" : string.Empty) + whole + rest;
+        }
+
         /// <summary>Exactly one number typed by the user: «145,32», «145.32», «−0,5».</summary>
         public static bool TryParse(string text, out double value)
         {

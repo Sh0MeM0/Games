@@ -453,7 +453,7 @@ namespace Kzm.AutoCAD.Services
                 }
                 Layers.Ensure(database, transaction, Layers.Boundary, 6);
                 PointBlocks.EnsureRegApp(database, transaction, CartogramService.App);
-                var polyline = new Polyline { Layer = Layers.Boundary, Closed = true };
+                var polyline = new Polyline { Layer = Layers.Boundary, Closed = true, LineWeight = CartogramPainter.OutlineWeight };
                 for (int i = 0; i < vertices.Count; i++) polyline.AddVertexAt(i, new Autodesk.AutoCAD.Geometry.Point2d(vertices[i].P.X, vertices[i].P.Y), 0, 0, 0);
                 polyline.XData = new ResultBuffer(
                     new TypedValue((int)DxfCode.ExtendedDataRegAppName, CartogramService.App),

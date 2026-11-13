@@ -101,6 +101,12 @@ namespace Kzm.Core
         public double Cut { get; internal set; }
         /// <summary>Area inside the boundary, m².</summary>
         public double Area { get; internal set; }
+        /// <summary>Part of <see cref="Area"/> where the working elevation is positive (насыпь), m².</summary>
+        public double FillArea { get; internal set; }
+        /// <summary>Part of <see cref="Area"/> where the working elevation is negative (выемка), m².</summary>
+        public double CutArea { get; internal set; }
+        /// <summary>Part of <see cref="Area"/> where the working elevation is zero («0-область»: ни насыпи, ни выемки), m².</summary>
+        public double ZeroArea { get; internal set; }
         public bool Full { get; internal set; }
         public XY LabelPoint { get; internal set; }
         public string Problem { get; internal set; }
@@ -126,6 +132,14 @@ namespace Kzm.Core
         public double TotalCut { get; internal set; }
         public double BoundaryArea { get; internal set; }
         public double ComputedArea { get; internal set; }
+        /// <summary>
+        /// Площади по рассчитанным квадратам, м²: насыпи (h &gt; 0), выемки (h &lt; 0) и «0-области» (h = 0).
+        /// Их сумма равна <see cref="ComputedArea"/>; каждая — сумма площадей частей квадратов, на которые
+        /// их делит линия нулевых работ (та же разбивка, что и для объёмов).
+        /// </summary>
+        public double FillArea { get; internal set; }
+        public double CutArea { get; internal set; }
+        public double ZeroArea { get; internal set; }
         public List<List<XY>> ZeroLines { get; } = new List<List<XY>>();
         /// <summary>Grid lines clipped by the boundary (drawing coordinates).</summary>
         public List<(XY A, XY B)> GridSegments { get; } = new List<(XY, XY)>();
@@ -211,6 +225,9 @@ namespace Kzm.Core
             foreach (var square in result.Squares.Where(s => s.Computed))
             {
                 result.ComputedArea += square.Area;
+                result.FillArea += square.FillArea;
+                result.CutArea += square.CutArea;
+                result.ZeroArea += square.ZeroArea;
                 result.ColumnTotals[square.I] = Add(result.ColumnTotals, square.I, square.Fill, square.Cut);
                 result.RowTotals[square.J] = Add(result.RowTotals, square.J, square.Fill, square.Cut);
                 result.TotalFill += square.Fill;
@@ -415,6 +432,7 @@ namespace Kzm.Core
         {
             square.Problem = "нет данных поверхности в точке " + ElevationFormat.Format(point.X, 2) + "; " + ElevationFormat.Format(point.Y, 2);
             square.Fill = square.Cut = 0;
+            square.FillArea = square.CutArea = square.ZeroArea = 0;
             square.CutPolygons.Clear();
             square.ZeroSegments.Clear();
         }
@@ -442,13 +460,20 @@ namespace Kzm.Core
                 if (inside.Count < 3) continue;
                 double area = Geometry.Area(inside);
                 double value = area * Plane(triangle, h, Geometry.Centroid(inside));
-                if (sign > 0) square.Fill += Math.Max(0, value);
+                if (sign > 0)
+                {
+                    square.Fill += Math.Max(0, value);
+                    square.FillArea += area;
+                }
                 else
                 {
                     square.Cut += Math.Max(0, -value);
+                    square.CutArea += area;
                     square.CutPolygons.Add(inside.ToArray());
                 }
             }
+            // h = 0 in all three corners: the whole part of the triangle is «0-область».
+            if (positive.Count < 3 && negative.Count < 3) square.ZeroArea += Geometry.Area(clipped);
             if (zero.HasValue)
                 foreach (var segment in Geometry.ClipSegment(zero.Value.A, zero.Value.B, clipped))
                     square.ZeroSegments.Add(segment);
@@ -513,12 +538,19 @@ namespace Kzm.Core
                 for (int v = 0; v < 3; v++) if (p[v].Equals(q)) return h[v];
                 return 0; // a zero point
             }
-            if (positive.Count >= 3) square.Fill += Math.Max(0, Value(positive));
+            if (positive.Count >= 3)
+            {
+                square.Fill += Math.Max(0, Value(positive));
+                square.FillArea += Geometry.Area(positive);
+            }
             if (negative.Count >= 3)
             {
                 square.Cut += Math.Max(0, -Value(negative));
+                square.CutArea += Geometry.Area(negative);
                 square.CutPolygons.Add(negative.ToArray());
             }
+            // h = 0 in all three corners: the whole triangle is «0-область» (ни насыпи, ни выемки).
+            if (positive.Count < 3 && negative.Count < 3) square.ZeroArea += Geometry.Area(p);
             if (zero.HasValue) square.ZeroSegments.Add(zero.Value);
         }
 
