@@ -107,7 +107,8 @@ function newRegion(rect, options = {}) {
   if (page.regions.length >= 80) throw new Error('На странице можно сохранить до 80 объектов.');
   const x = Math.max(0, Math.floor(rect.x)), y = Math.max(0, Math.floor(rect.y)), kind = rect.kind || 'candidate';
   const number = String(page.next).padStart(2, '0');
-  const region = { id: page.next++, rect: { x, y, w: Math.min(state.source.width - x, Math.ceil(rect.w)), h: Math.min(state.source.height - y, Math.ceil(rect.h)) },
+  const width = page.width ?? state.source.width, height = page.height ?? state.source.height;
+  const region = { id: page.next++, rect: { x, y, w: Math.min(width - x, Math.ceil(rect.w)), h: Math.min(height - y, Math.ceil(rect.h)) },
     name: `${KIND_NAMES[kind] || 'область'}_${number}`, scale: 1, confidence: rect.confidence || 0,
     options: { objectKey: rect.key, kind, mode: 'all', stampLayer: 'printed', isolate: true, repair: false, repairGap: 12,
       removeText: true, removeLines: true, threshold: 16, speckle: 3, contrast: 1.1, sensitivity: Number($('sensitivityMode').value), ...options },

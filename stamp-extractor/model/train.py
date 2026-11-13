@@ -158,8 +158,10 @@ def train(data: Path, steps: int, out: Path, batch: int, crop: int, lr: float, r
         if step % 50 == 0:
             print(f'step {step} loss {loss.item():.4f} bce {bce.item():.4f} dice {dice.detach().numpy().round(3)} '
                   f'{(time.time() - start) / step:.2f}s/step', flush=True)
-        if step % 1000 == 0 or step == steps:
+        if step % 250 == 0 or step == steps:
             torch.save(model.state_dict(), out)
+            (out.parent / (out.stem + '.step')).write_text(str(step))
+        if step % 1000 == 0 or step == steps:
             evaluate(model, images[:val], labels[:val])
             model.train()
 

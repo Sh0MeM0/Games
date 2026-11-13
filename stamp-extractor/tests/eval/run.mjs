@@ -21,7 +21,7 @@ for (const item of gt) {
   const png = PNG.sync.read(fs.readFileSync(path.join(setDir, item.file)));
   const source = { width: png.width, height: png.height, data: new Uint8ClampedArray(png.data) };
   const t0 = Date.now(), { work, scale } = workingImage(source);
-  const maps = await (args.includes('--multiscale') ? segmentMultiScale : segmentImage)(session, ort, work), t1 = Date.now();
+  const maps = await (args.includes('--multiscale') ? (s, o, w) => segmentMultiScale(s, o, w, { minSide: Number(option('--ms-min', 1000)) }) : segmentImage)(session, ort, work), t1 = Date.now();
   const found = detectObjects(work, maps, { sensitivity: Number(option('--sensitivity', 0.5)) });
   results.push({ file: item.file, modelMs: t1 - t0, detectMs: Date.now() - t1,
     regions: regionsToSource(found.regions, scale, source).map(r => ({ kind: r.kind, x: r.x, y: r.y, w: r.w, h: r.h, confidence: r.confidence })) });

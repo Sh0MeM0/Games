@@ -1,21 +1,15 @@
 # Готовая portable-программа
 
-[**StampExtractor-Portable-3.0.0.exe**](https://github.com/Sh0MeM0/Games/blob/stamp-extractor/downloads/StampExtractor-Portable-3.0.0.exe)
+[**StampExtractor-Portable-x64-4.0.0.zip**](https://github.com/Sh0MeM0/Games/raw/claude/admiring-franklin-lc42l2/downloads/StampExtractor-Portable-x64-4.0.0.zip)
 
-На странице файла нажмите **Download raw file**. Программа для Windows 10/11 x64,
-без установки, со встроенными OCR-моделями. Все изображения обрабатываются локально.
+Это распакованная portable-версия для Windows 10/11 x64. Архив содержит папку
+`StampExtractor-Portable-x64` с файлами `StampExtractor.exe`, `resources.neu`,
+`README.txt` и лицензиями. Распакуйте архив целиком и запустите `StampExtractor.exe`.
+Нужен системный Microsoft Edge WebView2 Runtime (в Windows 11 он встроен).
 
-Актуальная версия — **3.0.0**. Версии
-[2.0.0](https://github.com/Sh0MeM0/Games/blob/stamp-extractor/downloads/StampExtractor-Portable-2.0.0.exe)
-и [1.0.0](https://github.com/Sh0MeM0/Games/blob/stamp-extractor/downloads/StampExtractor-Portable-1.0.0.exe)
-оставлены для истории.
-Не скачивайте ZIP исходников вместо EXE: архив может содержать LFS-указатель.
-SHA-256 приведены в `SHA256SUMS.txt`.
+SHA-256 архива и каждого файла внутри приведены в `SHA256SUMS.txt`.
 
-В 3.0 есть разделение рамки/печатного текста печати и рукописных штрихов,
-а также отключаемая достройка коротких разрывов. Если в PNG добавлены
-предполагаемые штрихи, к имени файла добавляется `_достроено`.
-Одноцветные наложения требуют проверки; скрытые детали нельзя достоверно
-восстановить из единственного изображения.
+Версии 1.0.0–3.0.0 (`StampExtractor-Portable-*.exe`, Electron, Git LFS) оставлены
+для истории. Их контрольные суммы также записаны в `SHA256SUMS.txt`.
 
 [Инструкция](../stamp-extractor/README.md) · [Фактические проверки](../stamp-extractor/VALIDATION.md)

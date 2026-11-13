@@ -136,7 +136,7 @@ export function detectObjects(work, maps, options = {}) {
   const t = { ...TUNING, ...(options.tuning || {}) };
   const sensitivity = clamp(Number(options.sensitivity ?? 0.5), 0.2, 0.85);
   const strong = Math.round(255 * sensitivity), weak = Math.round(255 * sensitivity * 0.7);
-  const ink = inkGrid(work, options);
+  const ink = options.ink || inkGrid(work, options);
   const scale = Math.max(maps.width, maps.height) / 800; // proposals tuned on ~800 px grids
 
   let stamps = proposals(maps, ink, STAMP, { threshold: strong, rx: Math.round(3 * scale) + 1, ry: Math.round(3 * scale) + 1,

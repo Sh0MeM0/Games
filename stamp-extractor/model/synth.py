@@ -588,27 +588,32 @@ def round_stamp(rng, radius):
 
 def rect_stamp(rng, xh):
     fpath = rng.choice(available(STAMP_FONTS))
-    th = max(7, int(xh * rng.uniform(1.8, 3.2)))
+    th = max(7, int(xh * rng.uniform(1.8, 4.2)))
     fnt = font(fpath, th)
-    lines = [rng.choice(RECT_TEXT)]
-    if rng.random() < .7:
-        lines.append(rng.choice([rng.choice(FORMS)[:24], f'«{rng.choice(ORGS)}»', f'Вх. № {rng.randint(1, 999)}',
-                                 '«___» ____________ 20__ г.', f'{rng.randint(1, 28):02d}.{rng.randint(1, 12):02d}.2026', 'Подпись ________']))
-    if rng.random() < .4:
-        lines.append(rng.choice(['Директор ________', f'УНП {rng.randint(100000000, 999999999)}', 'Исп. ________', rng.choice(CITIES)]))
-    small = font(fpath, max(6, int(th * .75)))
+    lines = [rng.choice(RECT_TEXT + ['Проект СОГЛАСОВАН', 'СОГЛАСОВАНО', 'УТВЕРЖДАЮ', 'Для служебного пользования', 'ВЕРНО'])]
+    extra = [rng.choice(FORMS)[:26], f'«{rng.choice(ORGS)}»', f'УП «{rng.choice(ORGS).capitalize()}»', f'Вх. № {rng.randint(1, 999)}',
+             '«___» ____________ 20__ г.', f'{rng.randint(1, 28):02d}.{rng.randint(1, 12):02d}.2026', 'Подпись ________',
+             f'с {rng.choice(["филиалом", "отделом", "ПУ", "управлением"])} «{rng.choice(ORGS).capitalize()}»',
+             f'{rng.choice(["Гл. инженер", "Директор", "Начальник", "Гл. бухгалтер", "Исп."])}   {rng.choice("АБВГДЕИКЛМНОПРСТ")}. {rng.choice("АБВГДЕИКЛМНОПРСТ")}. {rng.choice(SURNAMES)}',
+             f'УНП {rng.randint(100000000, 999999999)}', rng.choice(CITIES).capitalize(), 'Директор ________']
+    for _ in range(rng.choice([0, 1, 1, 2, 2, 3, 4])):
+        lines.append(rng.choice(extra))
+    small = font(fpath, max(6, int(th * rng.uniform(.65, .85))))
     widths = [fnt.getlength(lines[0])] + [small.getlength(t) for t in lines[1:]]
-    pad = th * rng.uniform(.5, 1.0)
-    w = int(max(widths) + pad * 2); h = int(th * 1.35 + (len(lines) - 1) * small.size * 1.35 + pad * 2)
+    pad = th * rng.uniform(.4, 1.0)
+    w = int(max(widths) + pad * 2); h = int(th * 1.35 + (len(lines) - 1) * small.size * 1.4 + pad * 2)
     img = Image.new('L', (w + 8, h + 8), 0); d = ImageDraw.Draw(img)
-    bw = max(1, int(th * rng.uniform(.06, .15)))
-    d.rectangle((4, 4, w + 3, h + 3), outline=255, width=bw)
-    if rng.random() < .35:
+    bw = max(1, int(th * rng.uniform(.05, .18)))
+    if rng.random() < .92:
+        d.rectangle((4, 4, w + 3, h + 3), outline=255, width=bw)
+    if rng.random() < .3:
         d.rectangle((4 + bw + 2, 4 + bw + 2, w + 1 - bw, h + 1 - bw), outline=255, width=max(1, bw - 1))
+    align = rng.choice(['mm', 'mm', 'lm'])
     y = 4 + pad
-    d.text((4 + w / 2, y + th / 2), lines[0], font=fnt, fill=255, anchor='mm'); y += th * 1.35
+    tx = (4 + w / 2) if align == 'mm' else 4 + pad
+    d.text((tx, y + th / 2), lines[0], font=fnt, fill=255, anchor=align); y += th * 1.35
     for line in lines[1:]:
-        d.text((4 + w / 2, y + small.size / 2), line, font=small, fill=255, anchor='mm'); y += small.size * 1.35
+        d.text((tx, y + small.size / 2), line, font=small, fill=255, anchor=align); y += small.size * 1.4
     return np.asarray(img, np.float32) / 255
 
 
@@ -631,7 +636,7 @@ def oval_or_triangle(rng, radius):
 
 def stamp(canvas: Canvas, rng, xh, cx, cy):
     r = rng.random()
-    if r < .62:
+    if r < .57:
         radius = xh * rng.uniform(9, 19)
         alpha = round_stamp(rng, radius)
         angle = rng.uniform(0, 360)
@@ -644,7 +649,10 @@ def stamp(canvas: Canvas, rng, xh, cx, cy):
     alpha = transform_patch(alpha, rng, angle, 0, scale=rng.uniform(.95, 1.05))
     if rng.random() < .3:  # slightly elliptical impression (tilted press / photo)
         alpha = cv2.resize(alpha, (alpha.shape[1], max(4, int(alpha.shape[0] * rng.uniform(.85, 1.0)))))
-    alpha = stamp_texture(alpha, rng)
+    if rng.random() < .25:  # digital facsimile in a PDF: crisp, nearly uniform ink
+        alpha = np.clip(alpha * rng.uniform(.8, 1.0), 0, 1)
+    else:
+        alpha = stamp_texture(alpha, rng)
     if rng.random() < .12:  # partial impression: one side missing
         h, w = alpha.shape
         gx, gy = np.meshgrid(np.arange(w), np.arange(h))
