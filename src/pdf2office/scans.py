@@ -23,6 +23,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps, UnidentifiedImageError, f
 from .extract import (PdfExtractionError, _find_tesseract, _run_tesseract,
                       _tesseract_options, _trace_scan, parse_page_range)
 from .models import PdfPage, RasterImage, TextSpan
+from .text_quality import fix_mixed_scripts
 from .input_formats import EXTENSION_FORMATS, IMAGE_FORMATS
 
 MAX_SCAN_PIXELS = 160_000_000
@@ -228,6 +229,122 @@ def deskew_scan(image: Image.Image, *, check_cancel=None) -> tuple[Image.Image, 
     return result, angle
 
 
+def estimate_text_skew(engine, image: Image.Image) -> float:
+    """Page skew from neural text-line directions, for sheets without ruled lines.
+
+    Uses only long horizontal-ish lines; requires a consensus so that a few
+    inclined labels on a drawing never rotate the whole sheet.
+    """
+    preview = image.copy()
+    preview.thumbnail((2200, 2200))
+    gray = np.asarray(preview.convert("L"))
+    factor = preview.width / image.width
+    try:
+        quads = engine.detect(gray, 300 * factor)
+    except (RuntimeError, ValueError, OSError):
+        return 0.0
+    angles, weights = [], []
+    for quad in quads:
+        direction = quad[1] - quad[0]
+        length = float(np.hypot(*direction))
+        height = float(np.hypot(*(quad[3] - quad[0])))
+        if length < 4 * height or length < 60:
+            continue
+        angle = math.degrees(math.atan2(direction[1], direction[0]))
+        if abs(angle) <= 15:
+            angles.append(angle)
+            weights.append(length)
+    if len(angles) < 3:
+        return 0.0
+    values, lengths = np.array(angles), np.array(weights)
+    order = np.argsort(values)
+    cumulative = np.cumsum(lengths[order])
+    median = float(values[order][np.searchsorted(cumulative, cumulative[-1] / 2)])
+    close = np.abs(values - median) <= 1.0
+    if lengths[close].sum() < lengths.sum() * 0.6:
+        return 0.0
+    refined = float(np.average(values[close], weights=lengths[close]))
+    # PIL rotates counter-clockwise for positive angles; a line descending to
+    # the right (positive image angle) is corrected by a positive rotation.
+    return refined if abs(refined) >= 0.15 else 0.0
+
+
+def rotate_page(image: Image.Image, angle: float) -> Image.Image:
+    radians = math.radians(angle)
+    width = math.ceil(abs(image.width * math.cos(radians)) + abs(image.height * math.sin(radians))) + 2
+    height = math.ceil(abs(image.height * math.cos(radians)) + abs(image.width * math.sin(radians))) + 2
+    if width * height > MAX_SCAN_PIXELS:
+        raise PdfExtractionError("После выравнивания изображение превышает предел памяти. Отключите выравнивание или разделите лист на части без уменьшения DPI.")
+    return image.rotate(angle, resample=Image.Resampling.BICUBIC, expand=True, fillcolor=255)
+
+
+def find_paper_quad(image: Image.Image) -> np.ndarray | None:
+    """Corners of a photographed sheet lying on a darker background.
+
+    Flatbed scans fill the frame with paper, so they are left alone: the
+    region outside the sheet must be clearly darker than the paper and the
+    sheet must be visibly non-rectangular in the frame.
+    """
+    preview = image.copy()
+    preview.thumbnail((1400, 1400))
+    gray = cv2.GaussianBlur(np.asarray(preview.convert("L")), (7, 7), 0)
+    _, paper = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    paper = cv2.morphologyEx(paper, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))
+    contours, _ = cv2.findContours(paper, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    contour = max(contours, key=cv2.contourArea)
+    area = cv2.contourArea(contour)
+    if area < gray.size * 0.25 or area > gray.size * 0.97:
+        return None
+    hull = cv2.convexHull(contour)
+    approx = cv2.approxPolyDP(hull, 0.02 * cv2.arcLength(hull, True), True)
+    if len(approx) != 4:
+        return None
+    mask = np.zeros_like(gray)
+    cv2.fillPoly(mask, [approx.reshape(-1, 2)], 255)
+    inside = float(gray[mask > 0].mean())
+    outside = float(gray[mask == 0].mean()) if np.any(mask == 0) else inside
+    if inside - outside < 45:
+        return None
+    points = approx.reshape(4, 2).astype(np.float64) / (preview.width / image.width)
+    # Order as top-left, top-right, bottom-right, bottom-left.
+    total = points.sum(axis=1)
+    difference = np.diff(points, axis=1).ravel()
+    ordered = np.array([points[np.argmin(total)], points[np.argmin(difference)],
+                        points[np.argmax(total)], points[np.argmax(difference)]])
+    if len({tuple(np.round(point)) for point in ordered}) != 4:
+        return None
+    return ordered
+
+
+def correct_perspective(image: Image.Image, quad: np.ndarray) -> Image.Image:
+    top = np.linalg.norm(quad[1] - quad[0])
+    bottom = np.linalg.norm(quad[2] - quad[3])
+    left = np.linalg.norm(quad[3] - quad[0])
+    right = np.linalg.norm(quad[2] - quad[1])
+    width, height = max(2, round(max(top, bottom))), max(2, round(max(left, right)))
+    if width * height > MAX_SCAN_PIXELS:
+        raise PdfExtractionError("После исправления перспективы изображение превышает предел памяти.")
+    target = np.float32([(0, 0), (width, 0), (width, height), (0, height)])
+    matrix = cv2.getPerspectiveTransform(quad.astype(np.float32), target)
+    warped = cv2.warpPerspective(np.asarray(image.convert("L")), matrix, (width, height),
+                                 flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=255)
+    return Image.fromarray(warped)
+
+
+def _neural_engine(enabled: bool, messages: list[str]):
+    if not enabled:
+        return None
+    from .neural import shared_engine, unavailable_reason
+    engine = shared_engine()
+    if engine is None:
+        message = f"Нейросетевой OCR недоступен ({unavailable_reason()}); используется только Tesseract."
+        if message not in messages:
+            messages.append(message)
+    return engine
+
+
 def _ocr_environment(executable: Path, language: str, check_cancel=None):
     if not re.fullmatch(r"[A-Za-z0-9_]+(?:\+[A-Za-z0-9_]+)*", language):
         raise PdfExtractionError("Некорректный язык OCR. Пример: rus+eng.")
@@ -341,13 +458,16 @@ def _reject_ocr_geometry(image: Image.Image, dpi: tuple[float, float], spans: li
     """
     if len(spans) < 8 or not _ocr_check_fonts():
         return spans
-    ordinary_height = float(np.median([span.bbox[3] - span.bbox[1] for span in spans]))
+    ordinary_height = float(np.median([span.size for span in spans]))
     retained = []
     rejected = 0
     for span in spans:
         _check(check_cancel)
-        height = span.bbox[3] - span.bbox[1]
-        if height <= ordinary_height * 2.2 or sum(c.isalnum() for c in span.text) > 4:
+        height = span.size
+        # Shape matching renders upright text into an axis-aligned crop, so
+        # rotated phrases are judged by the recogniser's confidence instead.
+        if (height <= ordinary_height * 2.2 or sum(c.isalnum() for c in span.text) > 4
+                or span.angle or (span.confidence or 0) >= 0.93):
             retained.append(span)
             continue
         x0, y0, x1, y1 = [round(value * dpi[index % 2] / 72) for index, value in enumerate(span.bbox)]
@@ -389,54 +509,67 @@ def _ocr_tiles(image: Image.Image, dpi: tuple[float, float], environment, langua
     executable, options, cwd, _ = environment
     sx, sy = 72 / dpi[0], 72 / dpi[1]
     result = []
-    columns = math.ceil(image.width / OCR_TILE_SIZE)
-    rows = math.ceil(image.height / OCR_TILE_SIZE)
-    for row, top in enumerate(range(0, image.height, OCR_TILE_SIZE)):
+    jobs = []
+    for top in range(0, image.height, OCR_TILE_SIZE):
         bottom = min(image.height, top + OCR_TILE_SIZE)
-        for column, left in enumerate(range(0, image.width, OCR_TILE_SIZE)):
-            _check(check_cancel)
+        for left in range(0, image.width, OCR_TILE_SIZE):
             right = min(image.width, left + OCR_TILE_SIZE)
             box = (max(0, left - OCR_TILE_OVERLAP), max(0, top - OCR_TILE_OVERLAP),
                    min(image.width, right + OCR_TILE_OVERLAP), min(image.height, bottom + OCR_TILE_OVERLAP))
-            tile = image.crop(box)
-            if tile.convert("L").getextrema()[0] >= 245:
+            jobs.append((box, (left, top, right, bottom)))
+    filtered_any = False
+
+    def run_tile(job):
+        nonlocal filtered_any
+        box = job[0]
+        _check(check_cancel)
+        tile = image.crop(box)
+        if tile.convert("L").getextrema()[0] >= 245:
+            return job, None
+        if preprocess:
+            tile, filtered = _prepare_ocr_tile(tile, math.sqrt(dpi[0] * dpi[1]))
+            filtered_any |= filtered
+        run = _run_tesseract([str(executable), "stdin", "stdout", *options, "-l", language,
+                              "--dpi", str(round(math.sqrt(dpi[0] * dpi[1]))), "--psm", "11",
+                              "-c", "tessedit_create_tsv=1"], input_data=_png(tile), cwd=cwd,
+                              check_cancel=check_cancel)
+        if run.returncode:
+            raise PdfExtractionError("Ошибка распознавания Tesseract: " + run.stderr.strip()[-1200:])
+        return job, run.stdout
+
+    from .recognition import parallel_map
+    for number, (job, output) in enumerate(parallel_map(run_tile, jobs), start=1):
+        _check(check_cancel)
+        if progress:
+            progress(f"Распознавание изображения без уменьшения: участок {number} из {len(jobs)}")
+        if output is None:
+            continue
+        box, (left, top, right, bottom) = job
+        for record in csv.DictReader(io.StringIO(output), delimiter="\t", quoting=csv.QUOTE_NONE):
+            text = (record.get("text") or "").strip()
+            if record.get("level") != "5" or not text or not any(character.isalnum() for character in text):
                 continue
-            if progress:
-                progress(f"Распознавание изображения без уменьшения: участок {row * columns + column + 1} из {rows * columns}")
-            if preprocess:
-                tile, filtered = _prepare_ocr_tile(tile, math.sqrt(dpi[0] * dpi[1]))
-                message = "Для OCR подавлен плотный точечный шум в отдельной копии; мелкие знаки и десятичные разделители требуют проверки. Геометрия и подложка этим фильтром не изменены."
-                if filtered and message not in messages:
-                    messages.append(message)
-            run = _run_tesseract([str(executable), "stdin", "stdout", *options, "-l", language,
-                                  "--dpi", str(round(math.sqrt(dpi[0] * dpi[1]))), "--psm", "11",
-                                  "-c", "tessedit_create_tsv=1"], input_data=_png(tile), cwd=cwd,
-                                  check_cancel=check_cancel,
-                                  heartbeat=lambda elapsed: progress(f"Распознавание изображения продолжается: {int(elapsed)} с; ограничение времени отключено.") if progress else None)
-            if run.returncode:
-                raise PdfExtractionError("Ошибка распознавания Tesseract: " + run.stderr.strip()[-1200:])
-            for record in csv.DictReader(io.StringIO(run.stdout), delimiter="\t", quoting=csv.QUOTE_NONE):
-                text = (record.get("text") or "").strip()
-                if record.get("level") != "5" or not text or not any(character.isalnum() for character in text):
+            try:
+                confidence = float(record["conf"])
+                x, y, width, height = (float(record[key]) for key in ("left", "top", "width", "height"))
+                if confidence < 55 or min(width, height) <= 0 or not all(math.isfinite(v) for v in (x, y, width, height, confidence)):
                     continue
-                try:
-                    confidence = float(record["conf"])
-                    x, y, width, height = (float(record[key]) for key in ("left", "top", "width", "height"))
-                    if confidence < 55 or min(width, height) <= 0 or not all(math.isfinite(v) for v in (x, y, width, height, confidence)):
-                        continue
-                except (ValueError, KeyError, TypeError):
-                    continue
-                x += box[0]
-                y += box[1]
-                # Only the tile owning the word centre emits it. Overlap gives
-                # OCR full glyphs at tile boundaries without duplicate entities.
-                if not (left <= x + width / 2 < right and top <= y + height / 2 < bottom):
-                    continue
-                bbox = (max(0, x * sx), max(0, y * sy), min(image.width, x + width) * sx, min(image.height, y + height) * sy)
-                if bbox[2] <= bbox[0] or bbox[3] <= bbox[1]:
-                    continue
-                result.append(TextSpan(text, bbox, "Liberation Sans", max(2, height * sy), (0, 0, 0),
-                                       origin=(bbox[0], bbox[3]), from_ocr=True, advance=width * sx))
+            except (ValueError, KeyError, TypeError):
+                continue
+            x += box[0]
+            y += box[1]
+            # Only the tile owning the word centre emits it. Overlap gives
+            # OCR full glyphs at tile boundaries without duplicate entities.
+            if not (left <= x + width / 2 < right and top <= y + height / 2 < bottom):
+                continue
+            bbox = (max(0, x * sx), max(0, y * sy), min(image.width, x + width) * sx, min(image.height, y + height) * sy)
+            if bbox[2] <= bbox[0] or bbox[3] <= bbox[1]:
+                continue
+            result.append(TextSpan(fix_mixed_scripts(text), bbox, "Liberation Sans", max(2, height * sy), (0, 0, 0),
+                                   origin=(bbox[0], bbox[3]), from_ocr=True, advance=width * sx,
+                                   confidence=confidence / 100, engine="tesseract"))
+    if filtered_any:
+        messages.append("Для OCR подавлен плотный точечный шум в отдельной копии; мелкие знаки и десятичные разделители требуют проверки. Геометрия и подложка этим фильтром не изменены.")
     result = _reject_ocr_geometry(image, dpi, result, messages, preprocess=preprocess, check_cancel=check_cancel)
     messages.append("OCR скана требует проверки: рукописные, повреждённые и наклонные надписи могут быть пропущены или распознаны неверно; шрифт определяется приблизительно.")
     if not result:
@@ -448,35 +581,36 @@ def extract_tiff(path: Path, pages: str = "", password: str = "", ocr_mode: str 
                  ocr_language: str = "rus+eng", tesseract_path: Path | None = None,
                  vectorize_scans: bool = True, progress: Callable[[str], None] | None = None,
                  check_cancel: Callable[[], None] | None = None, *, preprocess: bool = True,
-                 deskew: bool = True, dpi: int = 0) -> list[PdfPage]:
+                 deskew: bool = True, dpi: int = 0, neural: bool = True) -> list[PdfPage]:
     """Compatibility entry point that accepts only actual TIFF files."""
     return _extract_image(path, pages, password, ocr_mode, ocr_language, tesseract_path,
                           vectorize_scans, progress, check_cancel, preprocess=preprocess,
-                          deskew=deskew, dpi=dpi, tiff_only=True)
+                          deskew=deskew, dpi=dpi, tiff_only=True, neural=neural)
 
 
 def extract_image(path: Path, pages: str = "", password: str = "", ocr_mode: str = "auto",
                   ocr_language: str = "rus+eng", tesseract_path: Path | None = None,
                   vectorize_scans: bool = True, progress: Callable[[str], None] | None = None,
                   check_cancel: Callable[[], None] | None = None, *, preprocess: bool = True,
-                  deskew: bool = True, dpi: int = 0) -> list[PdfPage]:
+                  deskew: bool = True, dpi: int = 0, neural: bool = True) -> list[PdfPage]:
     """Read selected raster frames at native resolution and physical scale.
 
     TIFF pages and displayed animation frames become separate pages. APNG's
     optional separate default image is page one. ``dpi=0`` uses physical image
     metadata or an explicit, warned 300 dpi fallback; a nonzero DPI overrides
     it. ``password`` is accepted for the common PDF/image service interface.
+    ``neural`` enables the bundled neural OCR when its models are present.
     """
     return _extract_image(path, pages, password, ocr_mode, ocr_language, tesseract_path,
                           vectorize_scans, progress, check_cancel, preprocess=preprocess,
-                          deskew=deskew, dpi=dpi, tiff_only=False)
+                          deskew=deskew, dpi=dpi, tiff_only=False, neural=neural)
 
 
 def _extract_image(path: Path, pages: str, password: str, ocr_mode: str,
                    ocr_language: str, tesseract_path: Path | None,
                    vectorize_scans: bool, progress: Callable[[str], None] | None,
                    check_cancel: Callable[[], None] | None, *, preprocess: bool,
-                   deskew: bool, dpi: int, tiff_only: bool) -> list[PdfPage]:
+                   deskew: bool, dpi: int, tiff_only: bool, neural: bool = True) -> list[PdfPage]:
     if ocr_mode not in {"auto", "always", "off"}:
         raise PdfExtractionError("Режим OCR должен быть auto, always или off.")
     if isinstance(dpi, bool) or not isinstance(dpi, (int, float)) or not math.isfinite(dpi) or (dpi != 0 and not 72 <= dpi <= 2400):
@@ -551,30 +685,75 @@ def _extract_image(path: Path, pages: str, password: str, ocr_mode: str,
                 raise PdfExtractionError(f"Не удалось прочитать страницу изображения {index + 1}: файл повреждён или слишком велик.") from error
             if progress:
                 progress(f"{detected} {image.width}×{image.height}, DPI {resolution[0]:g}×{resolution[1]:g}; исходное разрешение сохранено.")
+            engine = _neural_engine(neural, messages) if ocr_mode != "off" else None
+            if deskew:
+                paper = find_paper_quad(image)
+                if paper is not None:
+                    if progress:
+                        progress("Исправление перспективы сфотографированного листа")
+                    image = correct_perspective(image, paper)
+                    messages.append("Обнаружен сфотографированный лист на более тёмном фоне: перспектива исправлена по углам листа, фон за листом отброшен. Задайте масштаб по известному размеру — фотография не хранит реальный DPI.")
+            # The neural recogniser reads the natural grey image: binarization
+            # removes anti-aliasing it relies on. Geometry uses the cleaned copy.
+            natural = image if engine is not None and image.width * image.height <= 80_000_000 else None
             if preprocess:
                 image, removed = clean_scan(image, math.sqrt(resolution[0] * resolution[1]), check_cancel=check_cancel, progress=progress)
                 messages.append(f"Фон изображения осветлён, удалены изолированные шумовые пиксели: {removed:,}. Мелкие условные знаки и повреждённые линии требуют сверки с оригиналом.")
             if ocr_mode != "off":
                 if environment is None:
-                    environment = _ocr_environment(_find_tesseract(tesseract_path), ocr_language, check_cancel)
+                    try:
+                        executable = _find_tesseract(tesseract_path)
+                    except PdfExtractionError as error:
+                        if engine is None:
+                            raise
+                        executable = None
+                        messages.append(f"Tesseract не найден ({error}). Текст распознан только нейросетью; ориентация листа по тексту не определялась.")
+                    # Missing language data is a configuration error and is reported.
+                    environment = _ocr_environment(executable, ocr_language, check_cancel) if executable else False
                 rotation = 0
-                if deskew:
+                if deskew and environment:
                     image, resolution, rotation = _orient_scan(image, environment, resolution, check_cancel=check_cancel, progress=progress)
+                    if rotation and natural is not None:
+                        natural = natural.rotate(-rotation, expand=True, fillcolor=255)
                 if rotation:
                     messages.append(f"Ориентация изображения исправлена по тексту: поворот на {rotation}° по часовой стрелке.")
             if deskew:
                 if progress:
                     progress("Определение перекоса изображения по длинным линиям")
                 image, angle = deskew_scan(image, check_cancel=check_cancel)
+                evidence = "по длинным линиям"
+                if not angle and engine is not None:
+                    if progress:
+                        progress("Определение перекоса по строкам текста (нейросеть)")
+                    angle = estimate_text_skew(engine, natural if natural is not None else image)
+                    if angle:
+                        image = rotate_page(image, angle)
+                        evidence = "по строкам текста"
+                if angle and natural is not None:
+                    natural = rotate_page(natural, angle)
                 if angle:
-                    messages.append(f"Перекос изображения исправлен на {angle:+.2f}° без обрезки; размер листа расширен. Перспектива и деформация бумаги автоматически не исправляются.")
+                    messages.append(f"Перекос изображения исправлен {evidence} на {angle:+.2f}° без обрезки; размер листа расширен.")
                 elif progress:
                     progress("Достоверный перекос изображения не обнаружен; ориентация сохранена.")
             width, height = image.width * 72 / resolution[0], image.height * 72 / resolution[1]
             page = PdfPage(index + 1, width, height, [], [], [], warnings=messages, raster_source=True)
             if ocr_mode != "off":
-                page.texts = _ocr_tiles(image, resolution, environment, ocr_language, messages, check_cancel=check_cancel, progress=progress, preprocess=preprocess)
+                if engine is not None:
+                    from .recognition import recognise
+                    scale = np.array((72 / resolution[0], 72 / resolution[1]))
+                    gray = np.asarray((natural if natural is not None else image).convert("L"))
+                    page.texts = recognise(gray, math.sqrt(resolution[0] * resolution[1]), lambda points: points * scale,
+                                           engine=engine, environment=environment or None, language=ocr_language,
+                                           messages=messages, check_cancel=check_cancel, progress=progress)
+                    del gray
+                    page.texts = _reject_ocr_geometry(image, resolution, page.texts, messages, preprocess=preprocess, check_cancel=check_cancel)
+                    messages.append("OCR скана требует проверки: рукописные и сильно повреждённые надписи могут быть распознаны неверно; шрифт определяется приблизительно.")
+                    if not page.texts:
+                        messages.append("На изображении не удалось уверенно распознать текст; растровая подложка сохранена.")
+                else:
+                    page.texts = _ocr_tiles(image, resolution, environment, ocr_language, messages, check_cancel=check_cancel, progress=progress, preprocess=preprocess)
                 page.ocr_used = True
+            natural = None
             if vectorize_scans:
                 page.drawings = _trace_scan(image, page, check_cancel=check_cancel, progress=progress)
             _check(check_cancel)

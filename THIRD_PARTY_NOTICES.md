@@ -30,10 +30,32 @@ Tesseract. Шрифты сторонних коммерческих продук
 | OpenCV headless | 4.11.0.86 | Apache-2.0 и лицензии зависимостей; https://github.com/opencv/opencv/tree/4.11.0 ; https://github.com/opencv/opencv-python/tree/86 |
 | lxml | 6.0.2 | BSD и лицензии libxml2/libxslt; исходный архив указан в `DEPENDENCIES.json` |
 | pyparsing, typing_extensions | версии в `DEPENDENCIES.json` | MIT / PSF; тексты в `licenses/python` |
+| ONNX Runtime | 1.31.1 | MIT; https://github.com/microsoft/onnxruntime/tree/v1.31.1 ; `runtime/Lib/site-packages/onnxruntime/LICENSE` и `ThirdPartyNotices.txt` |
+| SentencePiece | 0.2.2 | Apache-2.0; `licenses/general/SentencePiece-LICENSE.txt`; исходный архив указан в `DEPENDENCIES.json` |
+| Модели OCR PP-OCRv6 det small, ch_ppocr_mobile_v2.0_cls | RapidOCR 3.10.0 | Apache-2.0 (правообладатели весов — Baidu / PaddleOCR); `licenses/models/RapidOCR-MODEL_LICENSES.md` |
+| Модель OCR PP-OCRv5 eslav mobile (ONNX) | RapidOCR model hub v3.10.0 | Apache-2.0 по лицензии проекта PaddleOCR; см. `licenses/models/MODELS_NOTICE.txt` |
+| Модели перевода Argos Translate ru→en, en→ru | 1.9 | проект Argos Translate: MIT или CC0; отдельного файла лицензии в пакетах нет; `licenses/models` |
 | osifont, Liberation | см. `assets/fonts` | лицензии и сведения об авторах рядом с файлами шрифтов |
 | PT Sans, PT Serif, PT Mono, Caption и Narrow | Debian fonts-paratype 20181108-4 | ParaType Free Font License; `assets/fonts/ParaType-LICENSE.txt`; https://company.paratype.com/pt-sans-pt-serif |
 | DejaVu Sans, Serif, Sans Mono | 2.37, Debian 2.37-8 | Bitstream Vera; изменения DejaVu — public domain; `assets/fonts/DejaVu-LICENSE.txt`; https://dejavu-fonts.github.io/ |
 | Noto Sans, Serif, Math, Symbols, Symbols2 | Debian fonts-noto-core 20201225-2 | SIL OFL 1.1; `assets/fonts/Noto-LICENSE.txt`; https://github.com/notofonts/noto-fonts |
+
+Модели перевода хранятся в формате CTranslate2, но выполняются собственным
+модулем PDF Мастер на NumPy (`app/pdf2office/nmt.py`); библиотека CTranslate2
+не поставляется. Причина: её колесо для Windows содержит проприетарные
+компоненты Intel (MKL, OpenMP `libiomp5md.dll`), а лицензия Intel для
+разработчиков (п. 3.1 (x)) запрещает распространять их так, чтобы они
+становились частью ПО с взаимной (copyleft) лицензией, тогда как PDF Мастер
+распространяется по AGPL-3.0.
+Нейросетевые модели (папка `models`) и их происхождение описаны в
+`licenses/models/MODELS_NOTICE.txt`; URL и SHA-256 каждого файла модели — в
+`DEPENDENCIES-MODELS.json`. Для модели распознавания eslav отдельного
+модельного уведомления у RapidOCR нет; её лицензия указана по лицензии проекта
+PaddleOCR (Apache-2.0). Для моделей Argos Translate в пакетах нет отдельного
+лицензионного файла: указана лицензия проекта Argos Translate, а README пакетов
+с перечнем обучающих корпусов OPUS сохранены без изменений.
+В `runtime` добавлены `msvcp140.dll`, `msvcp140_1.dll`, `msvcp140_2.dll` из уже
+входящего conda-пакета `vc14_runtime` 14.51 (распространяемый Microsoft VC Runtime).
 
 Полные тексты основных свободных лицензий находятся в `licenses/general` и
 `assets/licenses`. Сохранены оригинальные лицензии Python-пакетов в

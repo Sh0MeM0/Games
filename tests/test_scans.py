@@ -178,7 +178,10 @@ def test_overlapping_ocr_tiles_emit_one_complete_word_with_physical_bbox(monkeyp
     calls = []
     def fake(command, **kwargs):
         calls.append(kwargs)
-        x = 90 if len(calls) == 1 else 20  # same word, different tile crop origin
+        # Tiles may be recognised in parallel: report the word where it is in
+        # this tile crop (x=90 in the first tile, x=20 in the second).
+        with Image.open(io.BytesIO(kwargs["input_data"])) as tile:
+            x = int(np.flatnonzero((np.asarray(tile.convert("L")) < 128).any(axis=0))[0])
         return subprocess.CompletedProcess(command, 0, f"level\tleft\ttop\twidth\theight\tconf\ttext\n5\t{x}\t20\t30\t10\t90\tWord\n", "")
     monkeypatch.setattr(scans, "_run_tesseract", fake)
     spans = scans._ocr_tiles(image, (300, 300), (Path("tesseract"), [], None, {"eng"}), "eng", [])
@@ -195,9 +198,13 @@ def test_real_tiff_ocr_is_editable_at_native_resolution(tmp_path):
     font = ImageFont.truetype(str(bundled_font_dir() / "LiberationSans-Regular.ttf"), 62)
     ImageDraw.Draw(image).text((90, 150), "Engineering drawing 12345", fill=0, font=font)
     path = save_tiff(tmp_path, image, dpi=(400, 400))
+    legacy, = extract_tiff(path, ocr_language="eng", vectorize_scans=False, deskew=False, neural=False)
+    assert legacy.ocr_used
+    assert "Engineering" in [span.text for span in legacy.texts]
     page, = extract_tiff(path, ocr_language="eng", vectorize_scans=False, deskew=False)
     assert page.ocr_used
-    assert "Engineering" in [span.text for span in page.texts]
+    # The neural engine (when its models are installed) returns whole phrases.
+    assert "Engineering" in " ".join(span.text for span in page.texts).split()
     assert all(span.from_ocr and span.advance and span.origin for span in page.texts)
     assert page.width == 288
     assert all(0 <= span.bbox[0] < span.bbox[2] <= page.width for span in page.texts)

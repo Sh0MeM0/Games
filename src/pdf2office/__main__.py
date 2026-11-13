@@ -35,6 +35,10 @@ def main(argv: list[str] | None = None) -> int:
                      help="DPI изображений: 0 — из файла (при отсутствии 300); вручную 72–2400. Влияет на физический размер")
     cli.add_argument("--no-vectorize-images", "--no-vectorize-tiff", dest="no_vectorize_images",
                      action="store_true", help="Отключить восстановление линий изображений (включая TIFF)")
+    cli.add_argument("--no-ai-ocr", action="store_true",
+                     help="Не использовать локальную нейросеть OCR (только Tesseract, как в 0.3.0)")
+    cli.add_argument("--translate", choices=["en", "ru"], default="",
+                     help="Дополнительно создать переведённые копии (офлайн-модель Argos Translate)")
     cli.add_argument("--docx-mode", choices=["layout", "flow"], default="layout")
     cli.add_argument("--scale", type=float, default=1.0, help="Масштаб CAD; 1 = размер страницы в мм")
     cli.add_argument("--font-dir", action="append", type=Path, default=[])
@@ -47,10 +51,20 @@ def main(argv: list[str] | None = None) -> int:
         from .gui import main as gui_main
         return gui_main()
     if args.command == "doctor":
-        from importlib.metadata import version
-        info = {package: version(package) for package in
-                ("PyMuPDF", "ezdxf", "python-docx", "PySide6-Essentials", "Pillow", "opencv-python-headless")}
+        from importlib.metadata import PackageNotFoundError, version
+        info = {}
+        for package in ("PyMuPDF", "ezdxf", "python-docx", "PySide6-Essentials", "Pillow",
+                        "opencv-python-headless", "onnxruntime", "sentencepiece"):
+            try:
+                info[package] = version(package)
+            except PackageNotFoundError:
+                info[package] = "MISSING"
         info.update({name: str(tool_path(name) or "MISSING") for name in ("dxf2dwg", "tesseract")})
+        from .neural import missing_models, ocr_models_dir, unavailable_reason
+        from .translate import available_packages
+        info["neural_ocr_models"] = str(ocr_models_dir()) if not missing_models() else "MISSING: " + ", ".join(missing_models())
+        info["neural_ocr"] = unavailable_reason() or "OK"
+        info["translation_models"] = [f"{p.source}->{p.target}" for p in available_packages()] or "MISSING"
         print(json.dumps(info, ensure_ascii=False, indent=2))
         return 0 if all(tool_path(name) for name in ("dxf2dwg", "tesseract")) else 1
     from .service import ConversionRequest, convert
@@ -70,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
             scan_cleanup=not args.no_scan_cleanup, scan_deskew=not args.no_scan_deskew,
             scan_dpi=args.scan_dpi, vectorize_images=not args.no_vectorize_images,
             vectorize_tiff=not args.no_vectorize_images,
+            ai_ocr=not args.no_ai_ocr, translate_to=args.translate,
         ), progress=lambda line: print(line, file=sys.stderr))
         print(json.dumps([{"input": str(r.input), "outputs": [str(p) for p in r.outputs],
                            "warnings": r.warnings, "error": r.error} for r in results],

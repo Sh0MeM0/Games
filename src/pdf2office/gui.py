@@ -507,17 +507,35 @@ class MainWindow(QMainWindow):
         self.docx_mode.addItem("Сохранить расположение на странице", "layout")
         self.docx_mode.addItem("Потоковый текст для редактирования", "flow")
         form.addRow("Оформление DOCX", self.docx_mode)
-        for combo in (self.ocr_mode, self.ocr_language, self.docx_mode):
+        self.translate_to = QComboBox()
+        self.translate_to.addItem("Не переводить", "")
+        self.translate_to.addItem("На английский (копия EN)", "en")
+        self.translate_to.addItem("На русский (копия RU)", "ru")
+        self.translate_to.setToolTip(
+            "Офлайн-перевод текста локальной моделью. Создаются отдельные файлы с суффиксом (EN) или (RU); "
+            "исходные результаты сохраняются. Машинный перевод требует проверки специалистом."
+        )
+        form.addRow("Перевод", self.translate_to)
+        for combo in (self.ocr_mode, self.ocr_language, self.docx_mode, self.translate_to):
             combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
             combo.setMinimumContentsLength(12)
         layout.addLayout(form)
+        self.ai_ocr = QCheckBox("Нейросетевое распознавание (ИИ)")
+        self.ai_ocr.setChecked(True)
+        self.ai_ocr.setToolTip(
+            "PP-OCR через ONNX Runtime на этом компьютере: находит строки под любым углом "
+            "(наклонные и вертикальные надписи чертежей, перекошенные сканы), читает русский, "
+            "белорусский, украинский и английский. Tesseract проверяет каждую строку по словарю."
+        )
+        layout.addWidget(self.ai_ocr)
         layout.addWidget(_hint(
             "Текст на изображениях и сканах распознаётся автоматически. Качество зависит от исходного изображения; "
-            "проверяйте числа, обозначения и таблицы после конвертации."
+            "проверяйте числа, обозначения и таблицы после конвертации. Все вычисления выполняются локально."
         ))
         layout.addStretch()
         self.ocr_mode.currentIndexChanged.connect(
-            lambda: self.ocr_language.setEnabled(self.ocr_mode.currentData() != "off")
+            lambda: (self.ocr_language.setEnabled(self.ocr_mode.currentData() != "off"),
+                     self.ai_ocr.setEnabled(self.ocr_mode.currentData() != "off"))
         )
         self.docx.toggled.connect(self.docx_mode.setEnabled)
         return self._scroll(content)
@@ -621,6 +639,7 @@ class MainWindow(QMainWindow):
             ("ocr_mode", self.ocr_mode, "auto"),
             ("ocr_language", self.ocr_language, "rus+eng"),
             ("docx_mode", self.docx_mode, "layout"),
+            ("translate_to", self.translate_to, ""),
         ):
             index = box.findData(settings.value(key, default))
             box.setCurrentIndex(max(0, index))
@@ -632,6 +651,7 @@ class MainWindow(QMainWindow):
             "vectorize_images", settings.value("vectorize_tiff", True, type=bool), type=bool,
         ))
         self.scan_dpi.setValue(settings.value("scan_dpi", 0, type=int))
+        self.ai_ocr.setChecked(settings.value("ai_ocr", True, type=bool))
         # Destructive replacement must be deliberately enabled for each session.
         self.overwrite.setChecked(False)
         try:
@@ -660,6 +680,8 @@ class MainWindow(QMainWindow):
             "vectorize_images": self.vectorize_images.isChecked(),
             "vectorize_tiff": self.vectorize_images.isChecked(),
             "scan_dpi": self.scan_dpi.value(),
+            "ai_ocr": self.ai_ocr.isChecked(),
+            "translate_to": self.translate_to.currentData(),
             "font_dirs": json.dumps([str(path) for path in self._font_dirs]),
             "font_overrides": json.dumps(self._font_overrides, ensure_ascii=False),
             "geometry": self.saveGeometry(),
@@ -759,6 +781,7 @@ class MainWindow(QMainWindow):
                 vectorize_tiff=self.vectorize_images.isChecked(), scan_dpi=self.scan_dpi.value(),
                 scale=self.scale.value(), font_overrides=dict(self._font_overrides),
                 font_dirs=list(self._font_dirs), overwrite=self.overwrite.isChecked(),
+                ai_ocr=self.ai_ocr.isChecked(), translate_to=self.translate_to.currentData() or "",
             )
         except Exception as exc:
             QMessageBox.critical(self, "Не удалось начать обработку", str(exc))

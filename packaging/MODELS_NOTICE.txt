@@ -1,0 +1,47 @@
+PDF Master — offline AI models
+==============================
+
+All models run locally on the CPU. PDF Master never sends documents anywhere.
+Exact files and SHA-256 checksums: packaging/models.lock.json (DEPENDENCIES-MODELS.json
+in the portable build).
+
+1. Neural OCR (folder models/ocr)
+---------------------------------
+PP-OCRv6_det_small.onnx            text-line detector
+ch_ppocr_mobile_v2.0_cls_mobile.onnx  0°/180° text direction classifier
+    Source: RapidOCR 3.10.0 wheel on PyPI (rapidocr-3.10.0-py3-none-any.whl).
+    Model weights: Baidu / PaddleOCR rights holders; distributed under the
+    Apache License 2.0. See RapidOCR-LICENSE.txt and RapidOCR-MODEL_LICENSES.md
+    (copied unchanged from the wheel) and Apache-2.0.txt.
+
+eslav_PP-OCRv5_rec_mobile.onnx     text recogniser: Russian, Belarusian,
+                                   Ukrainian, Latin, digits, engineering symbols
+    Source: RapidOCR model hub on ModelScope, revision v3.10.0
+    (RapidAI/RapidOCR, onnx/PP-OCRv5/rec/eslav_PP-OCRv5_rec_mobile.onnx).
+    ONNX conversion of the PaddleOCR PP-OCRv5 "eslav" mobile recognition model.
+    PaddleOCR is released under the Apache License 2.0
+    (https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE).
+    RapidOCR-MODEL_LICENSES.md lists PP-OCRv6 and the classifier explicitly; it
+    does not list this recogniser. Its licence is therefore stated here from the
+    PaddleOCR project licence, not from a model-specific notice.
+
+2. Offline translation (folder models/translate)
+------------------------------------------------
+ru_en, en_ru: Argos Translate packages version 1.9
+    (https://argos-net.com/v1/translate-ru_en-1_9.argosmodel,
+     https://argos-net.com/v1/translate-en_ru-1_9.argosmodel).
+    Transformer models in the CTranslate2 file format with SentencePiece
+    tokenizers. PDF Master runs them with its own NumPy implementation
+    (src/pdf2office/nmt.py); the CTranslate2 library itself is not shipped.
+    The Argos Translate project states that it is dual licensed under the MIT
+    License or CC0 (https://github.com/argosopentech/argos-translate).
+    The model packages themselves contain no separate licence file; their
+    README files (copied as Argos-*-README.md) credit the OPUS training corpora
+    and Wiktionary data. The unused Stanza sentence-splitting folder is removed.
+
+Runtime libraries (Python wheels):
+    onnxruntime 1.31.1 (MIT; LICENSE and ThirdPartyNotices.txt inside
+    runtime/Lib/site-packages/onnxruntime), sentencepiece 0.2.2 (Apache-2.0;
+    licenses/general/SentencePiece-LICENSE.txt).
+
+Machine translation and OCR results are approximate and must be reviewed.

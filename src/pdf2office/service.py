@@ -36,6 +36,10 @@ class ConversionRequest:
     vectorize_tiff: bool = True
     # None preserves callers/settings from versions that named this TIFF-only.
     vectorize_images: bool | None = None
+    # Local neural OCR (PP-OCR via ONNX Runtime) with a Tesseract cross-check.
+    ai_ocr: bool = True
+    # "" = no translation; "en"/"ru" = additionally write translated copies.
+    translate_to: str = ""
 
 
 @dataclass
@@ -65,6 +69,16 @@ def _unique_stem(directory: Path, stem: str, formats: tuple[str, ...], overwrite
         index += 1
     reserved.add(candidate.casefold())
     return candidate
+
+
+def _engine_counts(pages) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for page in pages:
+        for span in page.texts:
+            if span.from_ocr:
+                key = span.engine or "tesseract"
+                counts[key] = counts.get(key, 0) + 1
+    return counts
 
 
 def _publish_file(source: Path, destination: Path, overwrite: bool) -> None:
@@ -110,6 +124,8 @@ def convert(
     if (not isinstance(request.scan_dpi, int) or isinstance(request.scan_dpi, bool)
             or (request.scan_dpi != 0 and not 72 <= request.scan_dpi <= 2400)):
         raise ValueError("DPI скана: 0 для автоматического выбора или целое число от 72 до 2400.")
+    if request.translate_to not in {"", "en", "ru"}:
+        raise ValueError("Перевод: пустое значение, en или ru.")
     if request.vectorize_images is not None and not isinstance(request.vectorize_images, bool):
         raise ValueError("Восстановление линий изображений должно быть включено или выключено.")
     vectorize_images = request.vectorize_tiff if request.vectorize_images is None else request.vectorize_images
@@ -138,12 +154,16 @@ def convert(
         results.append(result)
         stem = _unique_stem(directory, source.stem, formats, request.overwrite, reserved_stems)
         errors: list[str] = []
+        pages_for_report = []
+        report_stem = stem
+        translation_report = None
         try:
             notify(f"Чтение: {source.name}")
             options = dict(pages=request.pages, ocr_mode=request.ocr_mode,
                            ocr_language=request.ocr_language,
                            tesseract_path=tool_path("tesseract"),
-                           progress=notify, check_cancel=check_cancel)
+                           progress=notify, check_cancel=check_cancel,
+                           neural=request.ai_ocr)
             if source.suffix.lower() in IMAGE_EXTENSIONS:
                 pages = extract_image(source, **options,
                                   vectorize_scans=vectorize_images,
@@ -154,6 +174,7 @@ def convert(
                                     vectorize_scans=request.vectorize_scans)
             else:
                 raise ValueError("Поддерживаются PDF и изображения: " + ", ".join(sorted(IMAGE_EXTENSIONS)) + ".")
+            pages_for_report = pages
             for page in pages:
                 result.warnings.extend(page.warnings)
             overrides = dict(request.font_overrides)
@@ -168,30 +189,51 @@ def convert(
                                 f"Шрифт «{span.font}» заменён на «{match.family}»; "
                                 "проверьте размеры и переносы текста."
                             )
+            variants = [(stem, pages, "")]
+            if request.translate_to:
+                from .translate import translate_pages
+                notify(f"Офлайн-перевод текста: {source.name}")
+                translated_pages, stats = translate_pages(pages, request.translate_to, check_cancel=check_cancel,
+                                                          progress=notify, warnings=result.warnings)
+                translation_report = {"target": request.translate_to, "blocks": stats.blocks,
+                                      "translated": stats.translated, "unchanged": stats.unchanged,
+                                      "without_model": stats.unsupported}
+                if stats.translated:
+                    suffix = request.translate_to.upper()
+                    translated_stem = _unique_stem(directory, f"{stem} ({suffix})", formats,
+                                                   request.overwrite, reserved_stems)
+                    variants.append((translated_stem, translated_pages, suffix))
+                    result.warnings.append(
+                        f"Перевод ({suffix}) выполнен локальной моделью Argos Translate: фрагментов {stats.translated}. "
+                        "Машинный перевод требует проверки; числа, обозначения осей и коды сохраняются. "
+                        "Результат записан в отдельные файлы с суффиксом " + f"({suffix})."
+                    )
+                else:
+                    result.warnings.append("Перевод не выполнен: текста на другом языке не найдено или нет модели перевода.")
             # Each target has its own staging directory. A failed format cannot
             # publish a half-written output or prevent the other formats.
-            for fmt in formats:
+            for (variant_stem, variant_pages, label), fmt in ((variant, fmt) for variant in variants for fmt in formats):
                 check_cancel()
                 try:
-                    notify(f"Запись {fmt.upper()}: {source.name}")
+                    notify(f"Запись {fmt.upper()}{' ' + label if label else ''}: {source.name}")
                     with TemporaryDirectory(prefix=".pdf-master-", dir=directory) as staging:
-                        staged = Path(staging) / f"{stem}.{fmt}"
+                        staged = Path(staging) / f"{variant_stem}.{fmt}"
                         if fmt == "docx":
-                            warnings = export_docx(pages, staged, mode=request.docx_mode,
+                            warnings = export_docx(variant_pages, staged, mode=request.docx_mode,
                                                    font_overrides=overrides, font_catalog=fonts)
                         elif fmt == "dwg":
-                            warnings = export_dwg(pages, staged, converter_path=tool_path("dxf2dwg"),
+                            warnings = export_dwg(variant_pages, staged, converter_path=tool_path("dxf2dwg"),
                                                   scale=request.scale, font_overrides=overrides,
                                                   font_catalog=fonts, check_cancel=check_cancel,
                                                   progress=notify)
                         else:
-                            warnings = export_dxf(pages, staged, scale=request.scale,
+                            warnings = export_dxf(variant_pages, staged, scale=request.scale,
                                                   font_overrides=overrides, font_catalog=fonts)
                         result.warnings.extend(warnings)
                         check_cancel()
                         if not staged.is_file() or staged.stat().st_size == 0:
                             raise RuntimeError("Конвертер не создал выходной файл.")
-                        images = Path(staging) / image_directory_name(stem)
+                        images = Path(staging) / image_directory_name(variant_stem)
                         if images.is_dir():
                             target_images = directory / images.name
                             target_images.mkdir(exist_ok=True)
@@ -239,11 +281,14 @@ def convert(
                               "vectorize": vectorize_images},
             "cad_scale": request.scale,
             "docx_mode": request.docx_mode,
+            "ai_ocr": request.ai_ocr,
+            "ocr_engines": _engine_counts(pages_for_report),
+            "translation": translation_report,
             "warnings": result.warnings,
             "error": result.error,
         }
         try:
-            report_path = directory / f"{stem}.conversion.json"
+            report_path = directory / f"{report_stem}.conversion.json"
             with report_path.open("w" if request.overwrite else "x", encoding="utf-8") as stream:
                 json.dump(report, stream, ensure_ascii=False, indent=2)
         except OSError as exc:

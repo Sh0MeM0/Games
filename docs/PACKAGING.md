@@ -1,5 +1,29 @@
 # Сборка Windows x64
 
+## Выпуск 0.4.0: обновление проверенной portable 0.3.0
+
+Нативные части (CPython, Qt, Tesseract, LibreDWG, launchers) в 0.4.0 не менялись.
+`scripts/update_portable.py` берёт проверенный по SHA-256 архив portable 0.3.0 и:
+заменяет `app/pdf2office`, документацию и примеры; добавляет колёса ONNX Runtime
+1.31.1 и SentencePiece 0.2.2 (URL и SHA-256 — в `packaging/windows-assets.lock.json`);
+кладёт в `runtime` `msvcp140*.dll` 14.51 из уже входящего conda-пакета
+`vc14_runtime`; добавляет модели из `scripts/fetch_models.py`
+(`packaging/models.lock.json`); создаёт ZIP, части по 45 МиБ, `manifest.json`,
+`SHA256SUMS.txt` и архив исходников.
+
+```bash
+python scripts/fetch_models.py
+python scripts/update_portable.py --base PDFMaster-Portable-x64.zip --base-sha256 b52c6fa1ad97c5ff4e4a71cfcc67d0c9a8b6a652630c18fdc434644b206ce3c3
+```
+
+Модели (~390 МБ) не хранятся в Git: `fetch_models.py` скачивает их с PyPI
+(колесо RapidOCR 3.10.0), ModelScope (RapidOCR model hub v3.10.0) и argos-net.com
+и проверяет SHA-256 каждого файла. Полная сборка `build_windows.py` также вызывает
+этот скрипт. CTranslate2 не используется: модели перевода выполняет `nmt.py`
+на NumPy (см. `THIRD_PARTY_NOTICES.md`).
+
+## Выпуск 0.3.0
+
 Для выпуска 0.3.0 распространяется только portable-версия. Готовые файлы после сборки
 с `--portable-only`:
 

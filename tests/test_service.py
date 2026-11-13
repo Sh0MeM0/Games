@@ -331,3 +331,28 @@ def test_cancel_image_cleanup_leaves_input_and_no_result(tmp_path):
     assert "остановлена" in result.error and not result.outputs
     assert source.read_bytes() == original
     assert not list((tmp_path / "out").glob("*.dxf"))
+
+
+def test_translated_copies_are_written_next_to_originals(tmp_path):
+    from pdf2office.translate import available_packages
+    if ("ru", "en") not in {(p.source, p.target) for p in available_packages()}:
+        pytest.skip("translation models are not installed")
+    source = tmp_path / "план.pdf"
+    with fitz.open() as document:
+        page = document.new_page(width=400, height=200)
+        page.insert_font(fontname="LS", fontfile=str(Path(__file__).resolve().parents[1] / "assets/fonts/LiberationSans-Regular.ttf"))
+        page.insert_text((30, 60), "План первого этажа", fontname="LS", fontsize=14)
+        page.insert_text((30, 120), "3600", fontname="LS", fontsize=10)
+        document.save(source)
+    output = tmp_path / "out"
+    result, = convert(ConversionRequest([source], output, formats=("dxf", "docx"), ocr_mode="off", translate_to="en"))
+    assert result.error is None
+    names = sorted(path.name for path in result.outputs)
+    assert names == ["план (EN).docx", "план (EN).dxf", "план.docx", "план.dxf"]
+    report = json.loads((output / "план.conversion.json").read_text(encoding="utf-8"))
+    assert report["translation"]["translated"] == 1 and report["translation"]["target"] == "en"
+    import docx
+    text = " ".join(paragraph.text for paragraph in docx.Document(output / "план (EN).docx").paragraphs)
+    xml = (output / "план (EN).dxf").read_text(encoding="utf-8", errors="replace")
+    assert "First floor plan" in xml or "First floor plan" in text
+    assert "3600" in xml

@@ -18,6 +18,7 @@ from PIL import Image
 from .fonts import resource_root
 from .models import Drawing, PdfPage, RasterImage, Segment, TextSpan
 from .process import run_process
+from .text_quality import fix_mixed_scripts, fix_mojibake, is_garbled
 
 
 class PdfExtractionError(ValueError):
@@ -229,12 +230,26 @@ def _tesseract_options(executable: Path) -> list[str]:
     return []
 
 
+def tesseract_environment() -> dict[str, str]:
+    """Process environment for Tesseract with OpenMP limited to one thread.
+
+    Tesseract's OpenMP parallelism (vcomp on Windows, libgomp on Linux) can
+    busy-wait for minutes when other work competes for the CPU: in testing a
+    10-line strip took 306 s with default threads and 1.3 s with one thread.
+    PDF Master runs independent Tesseract processes in parallel instead.
+    """
+    environment = dict(os.environ)
+    environment["OMP_THREAD_LIMIT"] = "1"
+    return environment
+
+
 def _run_tesseract(command: list[str], timeout: int | None = None, *,
                    input_data: bytes | None = None, cwd: Path | None = None,
                    check_cancel=None, heartbeat=None) -> subprocess.CompletedProcess:
     try:
         result = run_process(command, input_data=input_data, cwd=cwd,
-                             timeout=timeout, check_cancel=check_cancel, heartbeat=heartbeat)
+                             timeout=timeout, check_cancel=check_cancel, heartbeat=heartbeat,
+                             env=tesseract_environment())
         return subprocess.CompletedProcess(result.args, result.returncode,
                                            result.stdout.decode("utf-8", errors="replace"),
                                            result.stderr.decode("utf-8", errors="replace"))
@@ -242,6 +257,37 @@ def _run_tesseract(command: list[str], timeout: int | None = None, *,
         raise PdfExtractionError(f"Tesseract не ответил на служебный запрос за {timeout} секунд.") from error
     except OSError as error:
         raise PdfExtractionError(f"Не удалось запустить Tesseract OCR: {error}") from error
+
+
+def _overlaps_native(rect: fitz.Rect, native: list[TextSpan]) -> bool:
+    return any((rect & fitz.Rect(span.bbox)).get_area() > rect.get_area() * 0.2 for span in native)
+
+
+def _neural_page_ocr(page: fitz.Page, native: list[TextSpan], executable: Path | None, language: str,
+                     warnings: list[str], engine, *, check_cancel=None, progress=None) -> tuple[list[TextSpan], Image.Image]:
+    """Neural OCR of a rendered PDF page, cross-checked by Tesseract if present."""
+    import numpy as np
+    from .recognition import recognise
+
+    dpi = min(300, max(72, int(72 * math.sqrt(40_000_000 / max(page.rect.width * page.rect.height, 1)))))
+    if dpi < 300:
+        warnings.append(f"Большая страница: OCR выполнен при {dpi} dpi для ограничения памяти.")
+    pixmap = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB, alpha=False)
+    image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
+    scale = np.array((page.rect.width / image.width, page.rect.height / image.height))
+    environment = None
+    if executable is not None:
+        from .scans import _ocr_environment
+        # Missing language data is a configuration error and is reported.
+        environment = _ocr_environment(executable, language, check_cancel)
+    else:
+        warnings.append("Tesseract не найден: текст распознан только нейросетью, без проверки по словарю.")
+    gray = np.asarray(image.convert("L"))
+    spans = recognise(gray, dpi, lambda points: points * scale, engine=engine, environment=environment,
+                      language=language, messages=warnings, check_cancel=check_cancel, progress=progress)
+    result = [span for span in spans if not _overlaps_native(fitz.Rect(span.bbox), native)]
+    warnings.append("Распознанный текст требует проверки: шрифт и начертание скана определяются приблизительно.")
+    return result, image
 
 
 def _ocr(page: fitz.Page, native: list[TextSpan], executable: Path, language: str, warnings: list[str], *, check_cancel=None, progress=None) -> tuple[list[TextSpan], Image.Image]:
@@ -309,12 +355,13 @@ def _ocr(page: fitz.Page, native: list[TextSpan], executable: Path, language: st
         bbox = _bbox((x, y, x + width, y + height), mapping)
         rect = fitz.Rect(bbox)
         # OCR is supplemental on mixed pages; overlapping native text always wins.
-        if any((rect & fitz.Rect(span.bbox)).get_area() > rect.get_area() * 0.2 for span in native):
+        if _overlaps_native(rect, native):
             continue
-        result.append(TextSpan(text, bbox, "Liberation Sans", max(3.0, height * math.hypot(mapping.c, mapping.d)), (0, 0, 0),
+        result.append(TextSpan(fix_mixed_scripts(text), bbox, "Liberation Sans", max(3.0, height * math.hypot(mapping.c, mapping.d)), (0, 0, 0),
                                origin=_point((x, y + height), mapping),
                                angle=math.degrees(math.atan2(mapping.b, mapping.a)), from_ocr=True,
-                               advance=width * math.hypot(mapping.a, mapping.b)))
+                               advance=width * math.hypot(mapping.a, mapping.b),
+                               confidence=confidence / 100, engine="tesseract"))
     warnings.append("Распознанный текст требует проверки: шрифт и начертание скана определяются приблизительно.")
     return result, image
 
@@ -461,7 +508,15 @@ def _trace_scan(image: Image.Image, page: PdfPage,
             first = np.rint(center_point + projections.min() * direction).astype(int)
             last = np.rint(center_point + projections.max() * direction).astype(int)
             cv2.line(preserve, tuple(first), tuple(last), 1, 3)
-        mask[y0:y1, x0:x1] = region[by0:by1, bx0:bx1] & preserve[by0:by1, bx0:bx1]
+        erased = region[by0:by1, bx0:bx1] & preserve[by0:by1, bx0:bx1]
+        if span.quad is not None and span.angle not in (0.0, 90.0, -90.0, 180.0):
+            # An inclined label erases only its own quadrilateral, not the
+            # whole axis-aligned box that also covers nearby drawing lines.
+            polygon = np.zeros(erased.shape, np.uint8)
+            corners = np.array([(px / sx - x0, py / sy - y0) for px, py in span.quad], np.float32)
+            cv2.fillPoly(polygon, [np.round(corners).astype(np.int32)], 1)
+            erased = np.where(polygon != 0, erased, region[by0:by1, bx0:bx1])
+        mask[y0:y1, x0:x1] = erased
 
     checkpoint("Векторизация: удаление отдельных точек и выделение осей линий")
     # Measure the scanned pen, not the denoising filter: smoothing can fill
@@ -714,7 +769,7 @@ def _trace_scan(image: Image.Image, page: PdfPage,
 def extract_pdf(path: Path, pages: str = "", password: str = "", ocr_mode: str = "auto",
                 ocr_language: str = "rus+eng", tesseract_path: Path | None = None,
                 vectorize_scans: bool = False, progress: Callable[[str], None] | None = None,
-                check_cancel: Callable[[], None] | None = None) -> list[PdfPage]:
+                check_cancel: Callable[[], None] | None = None, *, neural: bool = True) -> list[PdfPage]:
     """Extract editable primitives and optionally recognize the rendered page.
 
     ``ocr_mode``: auto supplements native text without duplicates; always uses
@@ -722,6 +777,10 @@ def extract_pdf(path: Path, pages: str = "", password: str = "", ocr_mode: str =
     and images remain intact in all modes. Each result uses the displayed PDF
     orientation. This is visual reconstruction, not recovery of CAD constraints,
     dimensions or original Word paragraph structures.
+
+    Native text stored in the wrong code page is re-decoded; text without any
+    usable Unicode mapping is re-read from the page image in ``auto`` mode.
+    ``neural`` uses the bundled neural OCR (with a Tesseract cross-check).
     """
     if ocr_mode not in {"auto", "always", "off"}:
         raise PdfExtractionError("Режим OCR должен быть auto, always или off.")
@@ -749,19 +808,51 @@ def extract_pdf(path: Path, pages: str = "", password: str = "", ocr_mode: str =
             blocks = source.get_text("dict", flags=fitz.TEXTFLAGS_DICT)["blocks"]
             warnings: list[str] = []
             texts = _native_text(source, blocks)
+            repaired = 0
+            garbled = []
+            for span in texts:
+                fixed = fix_mojibake(span.text)
+                if fixed is not None:
+                    span.text = fixed
+                    repaired += 1
+                elif is_garbled(span.text):
+                    garbled.append(span)
+            if repaired:
+                warnings.append(f"Перекодирован текст в неверной кодировке (cp1251 / UTF-8 / KOI8-R / CP866): фрагментов {repaired}. Проверьте исправленные надписи.")
+            if garbled and ocr_mode == "auto":
+                texts = [span for span in texts if all(span is not item for item in garbled)]
+                warnings.append(f"Фрагменты без корректной Unicode-кодировки ({len(garbled)}) заменены распознаванием изображения страницы.")
             drawings = _native_drawings(source, warnings)
             images = _native_images(source, blocks, warnings)
             page = PdfPage(index + 1, float(source.rect.width), float(source.rect.height), texts, drawings, images, warnings=warnings)
             # Even small images can contain text on otherwise searchable pages.
-            needs_ocr = ocr_mode == "always" or (ocr_mode == "auto" and (bool(images) or not texts))
+            needs_ocr = ocr_mode == "always" or (ocr_mode == "auto" and (bool(images) or not texts or bool(garbled)))
             rendered = None
-            if needs_ocr and (images or drawings or texts):
+            if needs_ocr and (images or drawings or texts or garbled):
                 if progress:
                     progress(f"Распознавание текста: страница {index + 1}")
-                executable = executable or _find_tesseract(tesseract_path)
-                recognized, rendered = _ocr(source, [] if ocr_mode == "always" else texts,
-                                           executable, ocr_language, warnings,
-                                           check_cancel=check_cancel, progress=progress)
+                engine = None
+                if neural:
+                    from .neural import shared_engine, unavailable_reason
+                    engine = shared_engine()
+                    if engine is None:
+                        message = f"Нейросетевой OCR недоступен ({unavailable_reason()}); используется только Tesseract."
+                        if message not in warnings:
+                            warnings.append(message)
+                if engine is not None:
+                    if executable is None:
+                        try:
+                            executable = _find_tesseract(tesseract_path)
+                        except PdfExtractionError:
+                            executable = False
+                    recognized, rendered = _neural_page_ocr(source, [] if ocr_mode == "always" else texts,
+                                                            executable or None, ocr_language, warnings, engine,
+                                                            check_cancel=check_cancel, progress=progress)
+                else:
+                    executable = executable or _find_tesseract(tesseract_path)
+                    recognized, rendered = _ocr(source, [] if ocr_mode == "always" else texts,
+                                               executable, ocr_language, warnings,
+                                               check_cancel=check_cancel, progress=progress)
                 if ocr_mode == "always":
                     page.texts = recognized
                     if texts:

@@ -44,6 +44,7 @@ def run_process(
     check_cancel: Callable[[], None] | None = None,
     heartbeat: Callable[[float], None] | None = None,
     timeout: float | None = None,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
     """Return a completed command with byte stdout/stderr, without a shell.
 
@@ -69,6 +70,7 @@ def run_process(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         creationflags=creationflags,
+        env=env,
     ) as process:
 
         def communicate() -> None:

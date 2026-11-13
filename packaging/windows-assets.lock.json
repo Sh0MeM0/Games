@@ -670,5 +670,23 @@
     "version": "e12c65a915945e4c28e237a9b52bc4a8f39a0cec",
     "license": "Apache-2.0",
     "source": "https://github.com/tesseract-ocr/tessdata_best/tree/e12c65a915945e4c28e237a9b52bc4a8f39a0cec"
+  },
+  {
+    "filename": "onnxruntime-1.31.1-cp312-cp312-win_amd64.whl",
+    "url": "https://files.pythonhosted.org/packages/45/b2/793b4051d8dc6acb379ead9b72050f0ffa283ca49a6904add2e218b83e2e/onnxruntime-1.31.1-cp312-cp312-win_amd64.whl",
+    "sha256": "ae8a9a351efda685cc59a66226cdefaa37a126c1d66872ca23a2de9425326130",
+    "kind": "wheel",
+    "name": "onnxruntime",
+    "version": "1.31.1",
+    "source": null
+  },
+  {
+    "filename": "sentencepiece-0.2.2-cp312-cp312-win_amd64.whl",
+    "url": "https://files.pythonhosted.org/packages/8d/11/753fca2e6b109be3ab7867abf357dfe48677fe726ae5a5363d0b54ca9450/sentencepiece-0.2.2-cp312-cp312-win_amd64.whl",
+    "sha256": "7c6e7bf684dc12145bfa685d3060beaea55139134ba848289bee514ed42e7383",
+    "kind": "wheel",
+    "name": "sentencepiece",
+    "version": "0.2.2",
+    "source": "https://files.pythonhosted.org/packages/cc/33/ea3cb3839607eb175da835244a798f797f478c5ddf0e8ecdf57ea85a4c70/sentencepiece-0.2.2.tar.gz"
   }
 ]

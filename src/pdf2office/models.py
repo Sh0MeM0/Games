@@ -24,6 +24,12 @@ class TextSpan:
     # Baseline advance in PDF points, independent of the axis-aligned bounding
     # box, so rotated text keeps its original length.
     advance: float | None = None
+    # OCR only: ink quadrilateral (top-left, top-right, bottom-right,
+    # bottom-left in reading order) and recognition confidence 0..1.
+    quad: tuple[Point, Point, Point, Point] | None = None
+    confidence: float | None = None
+    # Engine that produced OCR text: "neural", "tesseract" or "" for native PDF.
+    engine: str = ""
 
 
 @dataclass

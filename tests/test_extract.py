@@ -285,7 +285,7 @@ def test_unicode_ocr_data_and_temp_paths_use_ascii_native_arguments(tmp_path, mo
         return original_run(command, timeout, input_data=input_data, cwd=cwd, **kwargs)
 
     monkeypatch.setattr(extraction, "_run_tesseract", record_run)
-    page, = extract_pdf(make_pdf(tmp_path), ocr_mode="always", ocr_language="eng")
+    page, = extract_pdf(make_pdf(tmp_path), ocr_mode="always", ocr_language="eng", neural=False)
     assert "Editable text" in " ".join(span.text for span in page.texts)
     assert len(invocations) >= 2
     for command, input_data, cwd in invocations:

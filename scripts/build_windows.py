@@ -237,6 +237,21 @@ def main() -> int:
             destination.mkdir(parents=True, exist_ok=True)
             shutil.copy2(archive, destination / "LICENSE.txt")
 
+    # ONNX Runtime/SentencePiece need a newer C++ runtime than PySide6 14.39
+    # copy. Ship the conda vc14_runtime DLLs in the Python application
+    # directory; pdf2office.runtime preloads them before Qt is imported.
+    vc_runtime = args.cache / "extracted" / "vc14_runtime"
+    for name in ("msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll"):
+        found = next(vc_runtime.rglob(name), None)
+        if found is None:
+            raise ValueError(f"vc14_runtime does not contain {name}")
+        shutil.copy2(found, runtime / name)
+
+    # Offline AI models (neural OCR and translation), pinned by SHA-256.
+    subprocess.run([sys.executable, str(ROOT / "scripts/fetch_models.py"),
+                    "--target", str(stage / "models"), "--cache", str(args.cache / "models")], check=True)
+    shutil.copy2(ROOT / "packaging/models.lock.json", stage / "DEPENDENCIES-MODELS.json")
+
     (runtime / "python312._pth").write_text(".\nLib\nDLLs\nLib/site-packages\n../app\nimport site\n", encoding="utf-8")
     copy_tree(ROOT / "src/pdf2office", stage / "app/pdf2office")
     copy_tree(ROOT / "assets", stage / "assets")

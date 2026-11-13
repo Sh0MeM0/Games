@@ -1,0 +1,53 @@
+[
+  {
+    "kind": "wheel_member",
+    "name": "rapidocr",
+    "version": "3.10.0",
+    "license": "Apache-2.0",
+    "url": "https://files.pythonhosted.org/packages/59/07/203065283bba0c5e9c10af3602dc25ab3e59ee54dc2d1d22c8faeabf5ed8/rapidocr-3.10.0-py3-none-any.whl",
+    "sha256": "2fc34e26cd0f48514804a94f8832283039c7334076bff60768b1fed9ad068050",
+    "members": {
+      "rapidocr/models/PP-OCRv6_det_small.onnx": {
+        "target": "ocr/PP-OCRv6_det_small.onnx",
+        "sha256": "090f04abcd9d9a7498bc4ebf677e4cb9bdce1fe4197ddb7e529f1ef44e1ff94f"
+      },
+      "rapidocr/models/ch_ppocr_mobile_v2.0_cls_mobile.onnx": {
+        "target": "ocr/ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+        "sha256": "e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c"
+      },
+      "rapidocr-3.10.0.dist-info/licenses/LICENSE": {
+        "target": "licenses/RapidOCR-LICENSE.txt"
+      },
+      "rapidocr-3.10.0.dist-info/licenses/MODEL_LICENSES.md": {
+        "target": "licenses/RapidOCR-MODEL_LICENSES.md"
+      }
+    }
+  },
+  {
+    "kind": "file",
+    "name": "eslav_PP-OCRv5_rec_mobile",
+    "version": "RapidOCR 3.10.0 model hub",
+    "license": "Apache-2.0 (PaddleOCR)",
+    "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv5/rec/eslav_PP-OCRv5_rec_mobile.onnx",
+    "sha256": "08705d6721849b1347d26187f15a5e362c431963a2a62bfff4feac578c489aab",
+    "target": "ocr/eslav_PP-OCRv5_rec_mobile.onnx"
+  },
+  {
+    "kind": "argos",
+    "name": "translate-ru_en",
+    "version": "1.9",
+    "license": "Argos Translate: MIT or CC0 (project); training data per package README",
+    "url": "https://argos-net.com/v1/translate-ru_en-1_9.argosmodel",
+    "sha256": "e9ba8bf722d10a4a4c39f74289d5938fd47eac08dbe4ed0afd22d89445a5c3ac",
+    "target": "translate/ru_en"
+  },
+  {
+    "kind": "argos",
+    "name": "translate-en_ru",
+    "version": "1.9",
+    "license": "Argos Translate: MIT or CC0 (project); training data per package README",
+    "url": "https://argos-net.com/v1/translate-en_ru-1_9.argosmodel",
+    "sha256": "591d743ae103752b88ffc38785c50421320f4eff93c8967e0d3d2e14d4e27811",
+    "target": "translate/en_ru"
+  }
+]
