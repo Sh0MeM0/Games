@@ -56,7 +56,7 @@ namespace Kzm.AutoCAD.Services
             grid = computation.Grid;
             result = computation.Result;
             space = (BlockTableRecord)transaction.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(database), OpenMode.ForWrite);
-            style = database.Textstyle;
+            style = computation.TextStyle.IsNull ? database.Textstyle : computation.TextStyle;
             k = c.UnitsPerMm;
         }
 
@@ -172,7 +172,18 @@ namespace Kzm.AutoCAD.Services
             double spacing = c.HatchSpacingMm * k;
             var weight = (LineWeight)c.HatchLineWeight;
             bool inexact = false;
-            foreach (var square in result.Squares.Where(s => s.Computed && s.CutPolygons.Count > 0))
+            // Small cut is not hatched (замечание 26): pieces that touch form a region; a region smaller than a square with
+            // the side of the hatch spacing gets no hatch. Pieces of a large region at the edges of squares keep it.
+            var pieces = result.Squares.Where(s => s.Computed).SelectMany(s => s.CutPolygons.Select(polygon => (Square: s, Polygon: polygon))).ToList();
+            var kept = HatchRegions.Kept(pieces.Select(piece => (IReadOnlyList<XY>)piece.Polygon).ToList(), spacing * spacing);
+            if (kept.Count < pieces.Count)
+            {
+                double area = pieces.Where((piece, index) => !kept.Contains(index)).Sum(piece => Geometry.Area(piece.Polygon));
+                computation.Notes.Add("Мелкая выемка без штриховки: кусков " + (pieces.Count - kept.Count) + ", всего " + ElevationFormat.Format(area, 1) +
+                                      " м² (участки меньше " + ElevationFormat.Format(spacing * spacing, 2) + " м² — квадрата со стороной в шаг штриховки).");
+            }
+            var loops = pieces.Where((piece, index) => kept.Contains(index)).GroupBy(piece => piece.Square, piece => piece.Polygon);
+            foreach (var square in loops)
             {
                 meter.Step();
                 var hatch = Add(new Hatch(), Layers.CutHatch);
@@ -183,7 +194,7 @@ namespace Kzm.AutoCAD.Services
                     hatch.Associative = false;
                     hatch.Color = Blue;
                     hatch.LineWeight = weight;
-                    foreach (var polygon in square.CutPolygons)
+                    foreach (var polygon in square)
                     {
                         var points = new Point2dCollection();
                         var bulges = new DoubleCollection();
@@ -198,7 +209,7 @@ namespace Kzm.AutoCAD.Services
                 {
                     Created.Remove(hatch.ObjectId);
                     hatch.Erase();
-                    computation.Problems.Add("штриховка выемки в квадрате у " + CartogramExport.Center(result, square.I, square.J) +
+                    computation.Problems.Add("штриховка выемки в квадрате у " + CartogramExport.Center(result, square.Key.I, square.Key.J) +
                                              " не построена (" + exception.ErrorStatus + ")");
                 }
             }
@@ -332,6 +343,8 @@ namespace Kzm.AutoCAD.Services
             internal BlockReference Block;
             internal string Key;
             internal XY Anchor;
+            /// <summary>The labels were dragged away from the node: a leader with a shelf is drawn (замечание 25).</summary>
+            internal bool Shifted;
         }
 
         /// <summary>
@@ -363,16 +376,23 @@ namespace Kzm.AutoCAD.Services
                 }
                 labels.Add(NodeLabelAt(point.Key, point.Position, point.Fact.Value, point.Project.Value, h));
             }
-            foreach (var label in labels) Stamp(label);
+            foreach (var label in labels)
+            {
+                Stamp(label);
+                if (label.Shifted) DrawLeader(label);
+            }
         }
 
         private NodeLabel NodeLabelAt(string key, XY at, double fact, double project, double h)
         {
-            double working = project - fact;
-            var reference = Add(new BlockReference(P(at), nodeDefinition), Layers.Nodes);
+            double working = WorkingMark.Of(project, fact);
+            // Labels the user dragged away by the grip of the block stay there, with a leader (замечание 25).
+            bool dragged = moved.NodeShifts.TryGetValue(key, out var drag);
+            var place = dragged ? new XY(at.X + drag.X, at.Y + drag.Y) : at;
+            var reference = Add(new BlockReference(P(place), nodeDefinition), Layers.Nodes);
             reference.LineWeight = TextWeight;
             var definition = (BlockTableRecord)transaction.GetObject(nodeDefinition, OpenMode.ForRead);
-            var label = new NodeLabel { Block = reference, Key = key, Anchor = at };
+            var label = new NodeLabel { Block = reference, Key = key, Anchor = at, Shifted = dragged };
             moved.Nodes.TryGetValue(key, out var offsets);
             bool shifted = false;
             foreach (ObjectId id in definition)
@@ -402,7 +422,7 @@ namespace Kzm.AutoCAD.Services
                     default:
                         continue;
                 }
-                PlaceAttribute(attribute, labelStyle, at, value, color, h);
+                PlaceAttribute(attribute, labelStyle, place, value, color, h);
                 if (offsets != null && offsets[index].Length > 1e-6)
                 {
                     attribute.TransformBy(Matrix3d.Displacement(offsets[index]));
@@ -410,6 +430,7 @@ namespace Kzm.AutoCAD.Services
                 }
             }
             if (shifted) Moved++;
+            if (label.Shifted) Moved++;
             reference.XData = Tag(Text(CartogramService.NodeMark), Text(key),
                 new TypedValue((int)DxfCode.ExtendedDataReal, fact),
                 new TypedValue((int)DxfCode.ExtendedDataReal, project),
@@ -458,7 +479,19 @@ namespace Kzm.AutoCAD.Services
             // The texts as written: a later change shows which value the user typed (NodeSync).
             foreach (var tag in tags)
                 values.Add(new TypedValue((int)DxfCode.ExtendedDataAsciiString, attributes.TryGetValue(tag, out var attribute) ? attribute.TextString ?? string.Empty : string.Empty));
+            // [14] where the block was put (a later drag of the whole block is told from moves of single labels),
+            // [15] the handle of its leader (empty — none).
+            values.Add(new TypedValue((int)DxfCode.ExtendedDataXCoordinate, label.Block.Position));
+            values.Add(new TypedValue((int)DxfCode.ExtendedDataAsciiString, string.Empty));
             label.Block.XData = new ResultBuffer(values.ToArray());
+        }
+
+        /// <summary>Leader of dragged labels: node → corner of the labels → shelf under the right-hand labels (замечание 25).</summary>
+        private void DrawLeader(NodeLabel label)
+        {
+            var leader = NodeLeader.Create(transaction, label.Block, P(label.Anchor), c.Id, label.Key, space);
+            Created.Add(leader.ObjectId);
+            NodeLeader.Remember(label.Block, leader);
         }
 
         // ---------- table under the grid (рис. 8 СТБ 2073-2010) ----------
@@ -505,7 +538,8 @@ namespace Kzm.AutoCAD.Services
             Write("Выемка (–)", (labelLeft + u0) / 2, top - 1.5 * rh, 20 * k - 2 * margin, Blue, th);
             for (int i = result.IMin; i <= result.IMax; i++)
             {
-                result.ColumnTotals.TryGetValue(i, out var total);
+                // A column without squares (between parts of the boundary, замечание 31) stays empty.
+                if (!result.ColumnTotals.TryGetValue(i, out var total)) continue;
                 Write(CartogramService.Volume(total.Fill, c.VolumeDecimals, true), (i + 0.5) * s, top - rh / 2, s - 2 * margin, Red, th);
                 Write(CartogramService.Volume(total.Cut, c.VolumeDecimals, false), (i + 0.5) * s, top - 1.5 * rh, s - 2 * margin, Blue, th);
             }

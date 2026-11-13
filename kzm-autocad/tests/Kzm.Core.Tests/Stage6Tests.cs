@@ -162,13 +162,14 @@ namespace Kzm.Core.Tests
             var r = CartogramCalculator.Compute(Corners, Fact().ZAt, project.ZAt, new GridDefinition(20, new XY(1000, 2100), 0));
             var node = r.Nodes.Values.Single(n => Math.Abs(n.Position.X - 1020) < 1e-9 && Math.Abs(n.Position.Y - 2120) < 1e-9);
             Assert.Equal(1.0, node.Working.Value, 9);
-            // VALIDATION.md, step 7: the method of squares gives 515,83 m³ (columns 200,00 / 263,33 / 52,50),
-            // 17,5 m³ (3,28 %) less than the exact control volume.
-            Assert.Equal(515.8333333333, r.TotalFill, 6);
-            Assert.Equal(new[] { 200.0, 263.3333333333, 52.5 }, r.ColumnTotals.OrderBy(t => t.Key).Select(t => Math.Round(t.Value.Fill, 6)).ToArray(), new ToleranceComparer(1e-6));
+            // VALIDATION.md, step 6: the method of squares gives 516,33 m³ (columns 200,21 / 263,63 / 52,50), 17,0 m³
+            // (3,19 %) less than the exact control volume. Version 0.9 counts with the marks as written (rounded to 0,01 m):
+            // where a square centre takes its mark from the surface, 100,6667 is counted as 100,67 (0.8: 515,83 m³).
+            Assert.Equal(516.3333333333, r.TotalFill, 6);
+            Assert.Equal(new[] { 200.2083333333, 263.625, 52.5 }, r.ColumnTotals.OrderBy(t => t.Key).Select(t => Math.Round(t.Value.Fill, 6)).ToArray(), new ToleranceComparer(1e-6));
             var (cubic, percent) = ControlVolumeResult.Difference(r.TotalFill, control.Fill);
-            Assert.Equal(-17.5, cubic, 6);
-            Assert.Equal(-3.28125, percent.Value, 6);
+            Assert.Equal(-17.0, cubic, 6);
+            Assert.Equal(-3.1875, percent.Value, 6);
         }
     }
 }

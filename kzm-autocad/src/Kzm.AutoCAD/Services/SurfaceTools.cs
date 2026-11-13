@@ -320,6 +320,39 @@ namespace Kzm.AutoCAD.Services
         /// поверхности, а сама граница — её замкнутой структурной линией. Весь сеанс — одна отмена.
         /// Returns the handle of the boundary polyline, or null when cancelled.
         /// </summary>
+        /// <summary>
+        /// A part removed from the list of boundaries (замечание 31): when the module drew it by points for this cartogram,
+        /// its polyline and its structure line go too (the points stay in the surface). A user's polyline is not touched.
+        /// Returns true when something was erased.
+        /// </summary>
+        internal static bool RemoveBoundary(Database database, string cartogramId, string projectSurfaceId, string handle, KzmSettings settings)
+        {
+            using (var transaction = database.TransactionManager.StartTransaction())
+            {
+                var id = CartogramService.ModuleBoundary(database, transaction, cartogramId, handle);
+                if (id.IsNull) return false;
+                var polyline = (Entity)transaction.GetObject(id, OpenMode.ForRead);
+                if (!Layers.IsUsable(database, transaction, polyline.Layer, out string problem)) throw new KzmException("граница: " + problem + ".");
+                polyline.UpgradeOpen();
+                polyline.Erase();
+                if (!string.IsNullOrEmpty(projectSurfaceId))
+                {
+                    var lines = KzmStore.ReadLines(database, transaction, projectSurfaceId)
+                        .Where(l => string.Equals(l.SourceHandle, handle, StringComparison.OrdinalIgnoreCase)).ToList();
+                    foreach (var line in lines) KzmStore.DeleteLine(database, transaction, projectSurfaceId, line.Id);
+                    if (lines.Count > 0)
+                    {
+                        var surface = EditServices.ReadSurface(database, transaction, projectSurfaceId);
+                        surface.Revision++;
+                        KzmStore.WriteSurface(database, transaction, surface);
+                        EditServices.RefreshTriangles(database, transaction, surface, settings);
+                    }
+                }
+                transaction.Commit();
+                return true;
+            }
+        }
+
         internal static string DrawBoundary(Document document, string cartogramId, string cartogramName, string projectSurfaceId, string sourceSurfaceId,
             string oldBoundaryHandle, KzmSettings settings)
         {

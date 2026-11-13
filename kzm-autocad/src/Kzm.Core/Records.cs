@@ -108,7 +108,14 @@ namespace Kzm.Core
         public string Name { get; set; }
         public string FactSurfaceId { get; set; }
         public string ProjectSurfaceId { get; set; }
+        /// <summary>Граница работ: одна или несколько замкнутых полилиний, ручки через «;» (одна ручка — как в прежних версиях).</summary>
         public string BoundaryHandle { get; set; }
+        /// <summary>Части границы работ (замечание 31): одна общая картограмма по всем частям.</summary>
+        public IReadOnlyList<string> BoundaryHandles
+        {
+            get => BoundaryList.Split(BoundaryHandle);
+            set => BoundaryHandle = BoundaryList.Join(value);
+        }
         /// <summary>Сторона квадрата, м (задание п. 4: 20 м; СТБ 2073-2010, п. 7.2).</summary>
         public double Step { get; set; } = 20;
         /// <summary>Базовая точка (узел 0,0); пусто — угол границы, округлённый до шага.</summary>
@@ -120,9 +127,18 @@ namespace Kzm.Core
         public LabelScheme Rows { get; set; } = LabelScheme.Letters;
         public int Scale { get; set; } = KzmSettings.DefaultScale;
         /// <summary>Высоты текста, мм на листе (ряд размеров шрифта ГОСТ 2.304: 1,8; 2,5; 3,5 …).</summary>
-        public double NodeTextMm { get; set; } = 1.8;
-        public double VolumeTextMm { get; set; } = 2.5;
-        public double TotalsTextMm { get; set; } = 2.5;
+        public double NodeTextMm { get; set; } = DefaultTextMm(KzmSettings.DefaultScale);
+        public double VolumeTextMm { get; set; } = DefaultTextMm(KzmSettings.DefaultScale);
+        public double TotalsTextMm { get; set; } = DefaultTextMm(KzmSettings.DefaultScale);
+
+        /// <summary>Высота текста в чертеже по умолчанию, м (замечание 29): 0,9 при любом масштабе.</summary>
+        public const double DefaultTextHeight = 0.9;
+
+        /// <summary>
+        /// Та же высота в миллиметрах на листе: 0,9 мм при 1:1000, 1,8 мм при 1:500, 0,45 мм при 1:2000 —
+        /// надписи в чертеже одного размера при любом масштабе.
+        /// </summary>
+        public static double DefaultTextMm(int scale) => Math.Round(DefaultTextHeight * 1000.0 / scale, 3);
         /// <summary>Округление объёмов: знаков после запятой (задание п. 5: до 1 м³).</summary>
         public int VolumeDecimals { get; set; }
         /// <summary>Подписи в узле (задание п. 4): угол, слой, цвет. По умолчанию — как в примере Б.4 СТБ 2073-2010.</summary>
@@ -142,7 +158,7 @@ namespace Kzm.Core
         /// <summary>Version of the drawing rules the cartogram was built with (0 — before 0.6).</summary>
         public int DrawVersion { get; set; }
         /// <summary>Drawing rules of this version: labels at the corners, hatch by spacing on the sheet (0.7).</summary>
-        public const int CurrentDrawVersion = 4;
+        public const int CurrentDrawVersion = 5;
         /// <summary>
         /// Построение в два шага (замечание 17): false — нанесены только сетка и отметки, объёмы ещё не рассчитаны.
         /// Картограммы прежних версий построены целиком.
@@ -187,7 +203,7 @@ namespace Kzm.Core
             if (string.IsNullOrWhiteSpace(Name)) problems.Add("не задано имя картограммы");
             if (string.IsNullOrEmpty(FactSurfaceId)) problems.Add("не выбрана фактическая поверхность");
             if (string.IsNullOrEmpty(ProjectSurfaceId)) problems.Add("не выбрана проектная поверхность");
-            if (string.IsNullOrEmpty(BoundaryHandle)) problems.Add("не указана граница работ (замкнутая полилиния)");
+            if (BoundaryHandles.Count == 0) problems.Add("не указана граница работ (замкнутая полилиния)");
             if (!(Step > 0)) problems.Add("шаг сетки должен быть больше нуля");
             if (!KzmSettings.Scales.Contains(Scale)) problems.Add("масштаб должен быть 1:500, 1:1000 или 1:2000");
             if (!(NodeTextMm > 0) || !(VolumeTextMm > 0) || !(TotalsTextMm > 0)) problems.Add("высоты текста должны быть больше нуля");
@@ -524,7 +540,7 @@ namespace Kzm.Core
         public static string Encode(KzmSettings settings, CartogramInfo template)
         {
             var lines = new List<string> { "# КЗМ: шаблон по умолчанию", "version=1" };
-            foreach (var pair in SettingsCodec.Encode(settings).Where(p => p.Key == "decimals" || p.Key == "scale"))
+            foreach (var pair in SettingsCodec.Encode(settings).Where(p => p.Key == "decimals" || p.Key == "scale" || p.Key == "font" || p.Key == "font_italic"))
                 lines.Add("settings." + pair.Key + "=" + pair.Value);
             foreach (var pair in CartogramInfo.Encode(template).Where(p => TemplateKeys.Contains(p.Key)))
                 lines.Add("cartogram." + pair.Key + "=" + pair.Value);

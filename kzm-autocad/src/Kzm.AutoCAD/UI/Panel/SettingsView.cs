@@ -16,10 +16,15 @@ namespace Kzm.AutoCAD.UI.Panel
     /// </summary>
     internal sealed class SettingsView : UserControl, IPanelView
     {
-        private readonly NumericUpDown decimals = new NumericUpDown { Minimum = 0, Maximum = 4, Width = 60 };
-        private readonly ComboBox scale = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 100 };
+        private readonly NumericUpDown decimals = new NoWheelNumericUpDown { Minimum = 0, Maximum = 4, Width = 60 };
+        private readonly ComboBox scale = new NoWheelComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 100 };
         private readonly Label problems = new Label { AutoSize = true, MaximumSize = new Size(330, 0), ForeColor = Color.Firebrick };
         private readonly Label templateNote = new Label { AutoSize = true, MaximumSize = new Size(330, 0) };
+        /// <summary>Шрифт текстов картограммы (замечание 27); первая строка — текущий стиль чертежа.</summary>
+        private readonly ComboBox font = new NoWheelComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 190, MaxDropDownItems = 20 };
+        private readonly CheckBox italic = new CheckBox { Text = "наклонный", AutoSize = true };
+        private readonly Label fontNote = new Label { AutoSize = true, MaximumSize = new Size(330, 0), ForeColor = SystemColors.GrayText };
+        private const string CurrentStyle = "(текущий стиль чертежа)";
         private KzmPanel panel;
         private KzmSettings loaded;
 
@@ -35,6 +40,12 @@ namespace Kzm.AutoCAD.UI.Panel
             foreach (int denominator in KzmSettings.Scales) scale.Items.Add("1:" + denominator.ToString(CultureInfo.InvariantCulture));
             Row(table, "Знаков после запятой в отметках", decimals);
             Row(table, "Масштаб новых картограмм", scale);
+            var fontRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
+            fontRow.Controls.Add(font);
+            fontRow.Controls.Add(italic);
+            Row(table, "Шрифт текстов картограммы", fontRow);
+            table.Controls.Add(fontNote);
+            table.SetColumnSpan(fontNote, 2);
             table.Controls.Add(problems);
             table.SetColumnSpan(problems, 2);
             var save = new Button { Text = "Сохранить в чертеже", AutoSize = true };
@@ -46,7 +57,8 @@ namespace Kzm.AutoCAD.UI.Panel
                 AutoSize = true,
                 MaximumSize = new Size(330, 0),
                 Text = "Стиль, высота и цвет подписей точек — в свойствах поверхности (берутся с текста-образца). " +
-                       "Шаг, масштаб и высоты текста картограммы — в свойствах картограммы.",
+                       "Шаг, масштаб и высоты текста картограммы — в свойствах картограммы (по умолчанию 0,9 в чертеже: " +
+                       "0,9 мм на листе при 1:1000, 1,8 мм при 1:500).",
             };
             table.Controls.Add(note);
             table.SetColumnSpan(note, 2);
@@ -80,9 +92,39 @@ namespace Kzm.AutoCAD.UI.Panel
             loaded = panel.Snapshot.Settings.Clone();
             decimals.Value = Math.Max(0, Math.Min(4, loaded.Decimals));
             scale.SelectedIndex = Math.Max(0, Array.IndexOf(KzmSettings.Scales, loaded.Scale));
+            ShowFont(loaded.Font, loaded.FontItalic);
             problems.Text = string.Empty;
             ShowTemplate();
         }
+
+        /// <summary>The list of fonts is filled once; a chosen font that is not installed stays in the list, marked.</summary>
+        private void ShowFont(string chosen, bool isItalic)
+        {
+            if (font.Items.Count == 0)
+            {
+                font.BeginUpdate();
+                font.Items.Add(CurrentStyle);
+                foreach (var name in Drawing.CartogramText.InstalledFonts()) font.Items.Add(name);
+                font.EndUpdate();
+            }
+            chosen = chosen?.Trim();
+            if (string.IsNullOrEmpty(chosen)) font.SelectedIndex = 0;
+            else
+            {
+                int index = font.FindStringExact(chosen);
+                if (index < 0) index = font.Items.Add(chosen);
+                font.SelectedIndex = index;
+            }
+            italic.Checked = isItalic;
+            bool missing = !string.IsNullOrEmpty(chosen) && !Drawing.CartogramText.IsInstalled(chosen);
+            fontNote.ForeColor = missing ? Color.Firebrick : SystemColors.GrayText;
+            fontNote.Text = missing
+                ? "Шрифт «" + chosen + "» не установлен в Windows: пока его нет, тексты картограммы пишутся текущим стилем чертежа."
+                : "Отметки, объёмы, таблицы, площади и ведомость пишутся стилем «" + Drawing.CartogramText.StyleName + "» с этим шрифтом. " +
+                  "Подписи точек поверхностей — своим стилем (в свойствах поверхности).";
+        }
+
+        private string ChosenFont() => font.SelectedIndex <= 0 ? string.Empty : font.SelectedItem as string;
 
         private void ShowTemplate()
         {
@@ -106,6 +148,8 @@ namespace Kzm.AutoCAD.UI.Panel
             var settings = loaded.Clone();
             settings.Decimals = (int)decimals.Value;
             settings.Scale = KzmSettings.Scales[Math.Max(0, scale.SelectedIndex)];
+            settings.Font = ChosenFont();
+            settings.FontItalic = italic.Checked;
             try
             {
                 var template = Drawing.KzmDefaults.Load()?.Template ?? new CartogramInfo();
@@ -150,6 +194,8 @@ namespace Kzm.AutoCAD.UI.Panel
             var settings = loaded.Clone();
             settings.Decimals = (int)decimals.Value;
             settings.Scale = KzmSettings.Scales[Math.Max(0, scale.SelectedIndex)];
+            settings.Font = ChosenFont();
+            settings.FontItalic = italic.Checked;
             var errors = settings.Validate();
             if (errors.Count > 0)
             {
@@ -160,6 +206,13 @@ namespace Kzm.AutoCAD.UI.Panel
             PanelActions.Run("настройки", document =>
             {
                 int changed = EditServices.SaveSettings(document.Database, previous, settings);
+                // The texts of built cartograms follow their style: a new font shows at once.
+                using (var transaction = document.Database.TransactionManager.StartTransaction())
+                {
+                    Drawing.CartogramText.Update(document.Database, transaction, settings);
+                    transaction.Commit();
+                }
+                document.Editor.Regen();
                 PanelMessages.Info("Настройки сохранены." + (changed > 0 ? " Подписи точек переписаны: " + changed + "." : string.Empty));
             }, () =>
             {

@@ -18,6 +18,8 @@ namespace Kzm.Core
         public static readonly int[] Scales = { 500, 1000, 2000 };
         /// <summary>СТБ 2073-2010, п. 3.13: plans at 1:500 or 1:1000; 1:500 is offered first.</summary>
         public const int DefaultScale = 500;
+        /// <summary>Шрифт текстов картограммы по умолчанию (замечание 27).</summary>
+        public const string DefaultFont = "GOST Common";
 
         public int Decimals { get; set; } = DefaultDecimals;
         /// <summary>Scale proposed for new cartograms.</summary>
@@ -25,6 +27,12 @@ namespace Kzm.Core
         /// <summary>Last choices in the import form, offered as defaults next time.</summary>
         public XyMode LastXyMode { get; set; } = XyMode.Marker;
         public string LastSelectionMode { get; set; } = "WINDOW";
+        /// <summary>
+        /// Шрифт всех текстов картограммы — отметки, объёмы, таблицы, площади, ведомость (замечание 27). Пусто — текущий
+        /// текстовый стиль чертежа, как в версиях до 0.9.
+        /// </summary>
+        public string Font { get; set; } = DefaultFont;
+        public bool FontItalic { get; set; }
 
         public KzmSettings Clone() => (KzmSettings)MemberwiseClone();
 
@@ -52,6 +60,8 @@ namespace Kzm.Core
                 Pair("scale", settings.Scale.ToString(CultureInfo.InvariantCulture)),
                 Pair("last_xy_mode", XyModes.Code(settings.LastXyMode)),
                 Pair("last_selection", settings.LastSelectionMode ?? string.Empty),
+                Pair("font", settings.Font ?? string.Empty),
+                Pair("font_italic", settings.FontItalic ? "1" : "0"),
             };
         }
 
@@ -71,6 +81,9 @@ namespace Kzm.Core
                 settings.Scale = s;
             if (map.TryGetValue("last_xy_mode", out string mode) && mode.Length > 0) settings.LastXyMode = XyModes.Parse(mode);
             if (map.TryGetValue("last_selection", out string selection) && selection.Length > 0) settings.LastSelectionMode = selection;
+            // Drawings of versions before 0.9 have no key: they get the default font.
+            if (map.TryGetValue("font", out string font)) settings.Font = font.Trim();
+            if (map.TryGetValue("font_italic", out string italic)) settings.FontItalic = italic == "1";
             return settings;
         }
 

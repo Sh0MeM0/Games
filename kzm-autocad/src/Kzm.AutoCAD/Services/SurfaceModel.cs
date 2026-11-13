@@ -80,6 +80,24 @@ namespace Kzm.AutoCAD.Services
             return Sources.Outline((Entity)transaction.GetObject(id, OpenMode.ForRead), transaction);
         }
 
+        /// <summary>All parts of a boundary (handles through «;», замечание 31).</summary>
+        internal static List<List<XY>> ReadOutlines(Database database, Transaction transaction, string handles, string what)
+        {
+            var list = BoundaryList.Split(handles);
+            var parts = new List<List<XY>>();
+            for (int k = 0; k < list.Count; k++)
+                parts.Add(ReadOutline(database, transaction, list[k], list.Count == 1 ? what : what + ", часть " + (k + 1)));
+            return parts;
+        }
+
+        /// <summary>Fingerprint of all parts; for one part the same as in earlier versions.</summary>
+        internal static string OutlinesFingerprint(Database database, Transaction transaction, string handles)
+        {
+            var list = BoundaryList.Split(handles);
+            if (list.Count <= 1) return OutlineFingerprint(database, transaction, list.FirstOrDefault());
+            return string.Join("|", list.Select(h => OutlineFingerprint(database, transaction, h)));
+        }
+
         internal static string OutlineFingerprint(Database database, Transaction transaction, string handle)
         {
             var id = FromHandle(database, handle);
@@ -100,9 +118,9 @@ namespace Kzm.AutoCAD.Services
             IEnumerable<SurfacePoint> points, IEnumerable<StructureLine> lines) => new SurfaceSignature
         {
             Points = PointBlocks.FingerprintOf(points),
-            Outline = OutlineFingerprint(database, transaction, surface.BoundaryHandle),
+            Outline = OutlinesFingerprint(database, transaction, surface.BoundaryHandle),
             Lines = StructureLine.FingerprintOf(lines),
-            HasBoundary = !string.IsNullOrEmpty(surface.BoundaryHandle),
+            HasBoundary = surface.BoundaryHandles.Count > 0,
         };
 
         internal static SurfaceModel Build(Database database, Transaction transaction, SurfaceInfo surface, KzmSettings settings)
@@ -118,9 +136,11 @@ namespace Kzm.AutoCAD.Services
             int excluded = model.Points.Count(p => p.Data.Excluded);
             if (excluded > 0) model.Problems.Add("исключено из триангуляции точек: " + excluded);
             model.Used = model.Points.Where(p => p.Elevation.IsValid && !p.Data.Excluded).ToList();
-            List<XY> boundary = null;
-            if (!string.IsNullOrEmpty(surface.BoundaryHandle))
-                boundary = ReadOutline(database, transaction, surface.BoundaryHandle, "Граница поверхности «" + surface.Name + "»");
+            var boundaries = ReadOutlines(database, transaction, surface.BoundaryHandle, "Граница поверхности «" + surface.Name + "»");
+            for (int a = 0; a < boundaries.Count; a++)
+            for (int b = a + 1; b < boundaries.Count; b++)
+                if (Geometry.OverlapArea(boundaries[a], boundaries[b]) > 1e-6 * Math.Min(Geometry.Area(boundaries[a]), Geometry.Area(boundaries[b])))
+                    model.Problems.Add("части границы поверхности " + (a + 1) + " и " + (b + 1) + " перекрываются — контрольный расчёт там посчитает площадь дважды");
 
             var index = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             for (int i = 0; i < model.Used.Count; i++) index[model.Used[i].Handle] = i;
@@ -135,7 +155,7 @@ namespace Kzm.AutoCAD.Services
             }
             string Describe(int i) => "т." + (string.IsNullOrEmpty(model.Used[i].Number) ? model.Used[i].Handle : model.Used[i].Number);
             model.Tin = Tin.Build(model.Used.Select(p => p.Position).ToList(), model.Used.Select(p => p.Elevation.Value.Value).ToList(),
-                model.Used.Select(p => p.Handle).ToList(), boundary, constraints, Describe);
+                model.Used.Select(p => p.Handle).ToList(), boundaries, constraints, Describe);
             if (model.Tin.Duplicates.Count > 0)
                 model.Problems.Add("точек в одном месте с другой или на одной прямой с соседними (пропущены): " + model.Tin.Duplicates.Count);
             if (model.Tin.TriangleCount == 0)

@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -62,6 +64,13 @@ namespace Kzm.AutoCAD.UI.Panel
         private ContextMenuStrip contextMenu;
         /// <summary>Last snapshot of each drawing: switching drawing tabs does not re-read an unchanged drawing.</summary>
         private readonly Dictionary<Document, DrawingSnapshot> snapshots = new Dictionary<Document, DrawingSnapshot>();
+        /// <summary>
+        /// What each page was last filled with (замечание 28): a page is filled again only when the data of the drawing or the
+        /// object changed; switching between nodes of the tree otherwise just shows the ready page.
+        /// </summary>
+        private readonly Dictionary<Control, (DrawingSnapshot Snapshot, string Id)> bound = new Dictionary<Control, (DrawingSnapshot, string)>();
+        /// <summary>The data the tree and the project menu were built from.</summary>
+        private DrawingSnapshot treeSnapshot;
         private string selectedKey;
         private bool rebuilding;
 
@@ -210,6 +219,7 @@ namespace Kzm.AutoCAD.UI.Panel
         /// <param name="reread">false — the drawing did not change since it was read (another drawing tab was active): use the last snapshot.</param>
         internal void RefreshAll(bool reread)
         {
+            var watch = Stopwatch.StartNew();
             Document = AcadApplication.DocumentManager.MdiActiveDocument;
             if (reread || Document == null || !snapshots.TryGetValue(Document, out var cached)) Snapshot = DrawingData.Read(Document);
             else Snapshot = cached;
@@ -218,13 +228,20 @@ namespace Kzm.AutoCAD.UI.Panel
             int outdated = Snapshot.Cartograms.Count(c => c.Outdated);
             updateButton.Enabled = outdated > 0;
             updateButton.Text = outdated > 0 ? "Пересчитать (" + outdated + ")" : "Пересчитать";
-            RebuildProjectMenu();
+            // The tree and the menu are rebuilt only for new data: rebuilding them each time made the panel flicker and lag.
+            bool fresh = !ReferenceEquals(Snapshot, treeSnapshot);
+            if (fresh) RebuildProjectMenu();
             // Without an open project only the project page makes sense.
             if (Snapshot.Project == null && !(shown is ProjectsView)) shown = null;
-            RebuildTree();
-            if (shown is IPanelView view) view.Bind(this, shownSurfaceId);
+            if (fresh)
+            {
+                RebuildTree();
+                treeSnapshot = Snapshot;
+            }
+            if (shown is IPanelView) BindView(shown, shownSurfaceId, false);
             else if (shown == null) Display(null, null);
             if (Document == null) PanelMessages.Info("Нет открытого чертежа.");
+            Slow(watch, reread ? "чтение данных чертежа и обновление панели" : "обновление панели");
         }
 
         internal void Forget(Document document)
@@ -371,11 +388,11 @@ namespace Kzm.AutoCAD.UI.Panel
             selectedKey = tag.Key;
             switch (tag.Kind)
             {
-                case NodeKind.Surface: Display(surfaceView, tag.SurfaceId); break;
-                case NodeKind.Points: Display(pointsView, tag.SurfaceId); break;
-                case NodeKind.Pairs: Display(pairsView, tag.SurfaceId); break;
-                case NodeKind.Cartogram: Display(cartogramView, tag.SurfaceId); break;
-                default: Display(null, null); break;
+                case NodeKind.Surface: Display(surfaceView, tag.SurfaceId, false); break;
+                case NodeKind.Points: Display(pointsView, tag.SurfaceId, false); break;
+                case NodeKind.Pairs: Display(pairsView, tag.SurfaceId, false); break;
+                case NodeKind.Cartogram: Display(cartogramView, tag.SurfaceId, false); break;
+                default: Display(null, null, false); break;
             }
         }
 
@@ -566,21 +583,80 @@ namespace Kzm.AutoCAD.UI.Panel
             else Display(null, null);
         }
 
-        private void Display(Control view, string surfaceId)
+        /// <param name="force">true — an action of the user (a new form, «Импорт»…): the page is filled anew even for the same data.</param>
+        private void Display(Control view, string surfaceId, bool force = true)
         {
+            var watch = Stopwatch.StartNew();
             if (shown is PairsView pairs && !ReferenceEquals(view, pairs)) pairs.ClearLabels();
             if (shown is CartogramView cartogram && !ReferenceEquals(view, cartogram)) cartogram.ClearPreview();
             if (shown is ImportView import && !ReferenceEquals(view, import)) import.ClearHighlight();
             view = view ?? (Snapshot.Project == null ? (Control)projectsView : startView);
-            detail.SuspendLayout();
-            detail.Controls.Clear();
-            shown = view;
-            shownSurfaceId = surfaceId;
-            view.Dock = DockStyle.Fill;
-            detail.Controls.Add(view);
-            ((IPanelView)view).Bind(this, surfaceId);
-            detail.ResumeLayout();
+            if (ReferenceEquals(view, shown) && detail.Controls.Contains(view))
+            {
+                // The same page (e.g. «Фактические» → «Проектные»): nothing is removed or added.
+                shownSurfaceId = surfaceId;
+                BindView(view, surfaceId, force);
+            }
+            else
+            {
+                // Painting is off while the page is changed: it appears at once, not half drawn.
+                Redraw(detail, false);
+                try
+                {
+                    detail.SuspendLayout();
+                    detail.Controls.Clear();
+                    shown = view;
+                    shownSurfaceId = surfaceId;
+                    view.Dock = DockStyle.Fill;
+                    detail.Controls.Add(view);
+                    BindView(view, surfaceId, force);
+                    detail.ResumeLayout();
+                }
+                finally
+                {
+                    Redraw(detail, true);
+                    detail.Refresh();
+                }
+            }
+            Slow(watch, "показ страницы «" + PageName(view) + "»");
         }
+
+        private void BindView(Control view, string id, bool force)
+        {
+            if (!force && bound.TryGetValue(view, out var last) && ReferenceEquals(last.Snapshot, Snapshot) && last.Id == id) return;
+            ((IPanelView)view).Bind(this, id);
+            bound[view] = (Snapshot, id);
+        }
+
+        private const int WmSetRedraw = 0x000B;
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+
+        private static void Redraw(Control control, bool on)
+        {
+            if (control.IsHandleCreated) SendMessage(control.Handle, WmSetRedraw, (IntPtr)(on ? 1 : 0), IntPtr.Zero);
+        }
+
+        /// <summary>An action of the panel that took longer than half a second is named in the command line (замечание 28).</summary>
+        private void Slow(Stopwatch watch, string what)
+        {
+            if (watch.ElapsedMilliseconds < 500) return;
+            try
+            {
+                Document?.Editor.WriteMessage("\nКЗМ: " + what + " — " + ElevationFormat.Format(watch.ElapsedMilliseconds / 1000.0, 1) +
+                                              " с. Если панель часто так медлит, пришлите это сообщение.");
+            }
+            catch (System.Exception)
+            {
+                // The command line is not available (no drawing): nothing to report to.
+            }
+        }
+
+        private static string PageName(Control view) =>
+            view is StartView ? "Порядок работы" : view is SurfaceView ? "Поверхность" : view is PointsView ? "Точки" : view is CartogramView ? "Картограмма" :
+            view is ImportView ? "Импорт" : view is SettingsView ? "Настройки" : view is ProjectsView ? "Проекты" : view is PairsView ? "Пары" :
+            view is LineView ? "Структурная линия" : view is PlaneView ? "Плоскость" : view.GetType().Name;
 
         internal void SetCurrent(string surfaceId)
         {

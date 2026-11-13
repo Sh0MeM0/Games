@@ -63,6 +63,26 @@ namespace Kzm.Core
         }
     }
 
+    /// <summary>
+    /// Рабочая отметка так, как её пишут на картограмме (замечание 24 к версии 0.8): проектная и фактическая
+    /// округляются до 0,01 м (СТБ 2073-2010, п. 3.15), h = Hпр − Hф. Узел, подписанный «0,00», — настоящий ноль,
+    /// а объёмы, линия нулевых работ, штриховка и площади считаются по тем же числам, что подписаны на чертеже
+    /// (как при ручном подсчёте методом квадратов). Округление — половина от нуля, как в подписях.
+    /// </summary>
+    public static class WorkingMark
+    {
+        public static double Of(double project, double fact) => (double)(Round(project) - Round(fact));
+
+        public static double? Of(double? project, double? fact) =>
+            project.HasValue && fact.HasValue ? Of(project.Value, fact.Value) : (double?)null;
+
+        private static decimal Round(double value)
+        {
+            if (!Guard.Finite(value) || Math.Abs(value) >= 7.9e27) throw new KzmException("отметка не определена");
+            return Math.Round((decimal)value, 2, MidpointRounding.AwayFromZero);
+        }
+    }
+
     public sealed class CartogramNode
     {
         public int I { get; internal set; }
@@ -70,7 +90,8 @@ namespace Kzm.Core
         public XY Position { get; internal set; }
         public double? Fact { get; internal set; }
         public double? Project { get; internal set; }
-        public double? Working => Fact.HasValue && Project.HasValue ? Project - Fact : null;
+        /// <summary>Hпр − Hф по отметкам, округлённым до 0,01 м (<see cref="WorkingMark"/>).</summary>
+        public double? Working => WorkingMark.Of(Project, Fact);
         /// <summary>The node is a corner of at least one square that has area inside the boundary.</summary>
         public bool Used { get; internal set; }
         /// <summary>Inside the boundary or on it: labelled on the drawing (nodes outside are not drawn).</summary>
@@ -86,7 +107,7 @@ namespace Kzm.Core
         public XY Position { get; internal set; }
         public double? Fact { get; internal set; }
         public double? Project { get; internal set; }
-        public double? Working => Fact.HasValue && Project.HasValue ? Project - Fact : null;
+        public double? Working => WorkingMark.Of(Project, Fact);
         /// <summary>Stable key (grid axes, mm): the same point keeps its key after a rebuild.</summary>
         public string Key { get; internal set; }
     }
@@ -165,21 +186,25 @@ namespace Kzm.Core
     {
         private const double Tiny = 1e-9;
 
-        public static CartogramResult Compute(IReadOnlyList<XY> boundary, Func<XY, double?> fact, Func<XY, double?> project, GridDefinition grid)
-        {
-            if (boundary == null || boundary.Count < 3) throw new KzmException("Граница картограммы не задана (нужна замкнутая полилиния).");
-            if (fact == null || project == null) throw new ArgumentNullException(fact == null ? nameof(fact) : nameof(project));
-            var outline = Geometry.Normalize(boundary);
-            if (outline.Count < 3) throw new KzmException("Граница картограммы вырождена (нулевая площадь).");
-            if (Geometry.IsSelfIntersecting(outline)) throw new KzmException("Граница картограммы самопересекается.");
-            var result = new CartogramResult(grid);
+        public static CartogramResult Compute(IReadOnlyList<XY> boundary, Func<XY, double?> fact, Func<XY, double?> project, GridDefinition grid) =>
+            Compute(new[] { boundary }, fact, project, grid);
 
+        /// <summary>
+        /// Картограмма по нескольким частям границы работ (замечание 31): одна сетка (общие шаг и базовая точка),
+        /// одна таблица; объёмы, площади, отметки — по всем частям. Части не должны перекрываться (иначе общий участок
+        /// посчитается дважды); касаться друг друга по линии или в точке они могут.
+        /// </summary>
+        public static CartogramResult Compute(IReadOnlyList<IReadOnlyList<XY>> boundaries, Func<XY, double?> fact, Func<XY, double?> project, GridDefinition grid)
+        {
+            if (boundaries == null || boundaries.Count == 0) throw new KzmException("Граница картограммы не задана (нужна замкнутая полилиния).");
+            if (fact == null || project == null) throw new ArgumentNullException(fact == null ? nameof(fact) : nameof(project));
             // The calculation runs in the axes of the grid (node 0,0 at the origin): squares are exact
             // there and areas keep their precision with survey coordinates (~5 000 000 m).
-            var local = Geometry.Normalize(outline.Select(p => ToLocal(grid, p)).ToList());
-            result.BoundaryArea = Geometry.Area(local);
+            var parts = LocalParts(boundaries, grid);
+            var result = new CartogramResult(grid);
+            result.BoundaryArea = parts.Sum(Geometry.Area);
             double step = grid.Step;
-            (result.IMin, result.IMax, result.JMin, result.JMax) = Range(local, step);
+            (result.IMin, result.IMax, result.JMin, result.JMax) = Range(parts, step);
             if ((long)(result.IMax - result.IMin + 1) * (result.JMax - result.JMin + 1) > 1_000_000)
                 throw new KzmException("Слишком много квадратов (больше 1 000 000): проверьте шаг сетки.");
 
@@ -197,10 +222,11 @@ namespace Kzm.Core
             for (int j = result.JMin; j <= result.JMax; j++)
             {
                 var corners = new[] { new XY(i * step, j * step), new XY((i + 1) * step, j * step), new XY((i + 1) * step, (j + 1) * step), new XY(i * step, (j + 1) * step) };
-                var inside = Geometry.ClipByConvex(local, corners);
-                double area = inside.Count >= 3 ? Geometry.Area(inside) : 0;
+                var inside = parts.Select(part => Geometry.ClipByConvex(part, corners)).Where(piece => piece.Count >= 3).ToList();
+                double area = inside.Sum(Geometry.Area);
                 if (area <= Tiny * step * step) continue;
-                var center = Geometry.Centroid(inside);
+                // The volume is written in the largest piece when two parts of the boundary share a square.
+                var center = Geometry.Centroid(inside.OrderByDescending(Geometry.Area).First());
                 var square = new CartogramSquare
                 {
                     I = i, J = j, Area = area,
@@ -210,7 +236,7 @@ namespace Kzm.Core
                 result.Squares.Add(square);
                 var nodes = new[] { Node(i, j), Node(i + 1, j), Node(i + 1, j + 1), Node(i, j + 1) };
                 foreach (var node in nodes) node.Used = true;
-                ComputeSquare(square, corners, nodes, local, fact, project, grid, result);
+                ComputeSquare(square, corners, nodes, parts, fact, project, grid, result);
                 // Results back to the drawing (world) coordinates.
                 for (int k = 0; k < square.CutPolygons.Count; k++)
                     square.CutPolygons[k] = square.CutPolygons[k].Select(p => grid.ToWorld(p.X, p.Y)).ToArray();
@@ -243,9 +269,12 @@ namespace Kzm.Core
             if (missing > 0)
                 result.Problems.Add("не рассчитано квадратов: " + missing + " — нет данных поверхности в нужных точках (см. пометки)");
             foreach (var node in result.Nodes.Values)
-                node.Inside = Geometry.Contains(local, ToLocal(grid, node.Position), 1e-6 * step);
-            AddGridSegments(result, local, grid);
-            AddBoundaryPoints(result, local, grid, fact, project);
+            {
+                var at = ToLocal(grid, node.Position);
+                node.Inside = parts.Any(part => Geometry.Contains(part, at, 1e-6 * step));
+            }
+            AddGridSegments(result, parts, grid);
+            AddBoundaryPoints(result, parts, grid, fact, project);
             int empty = result.Nodes.Values.Count(n => n.Used && n.Inside && !n.Working.HasValue) +
                         result.BoundaryPoints.Count(b => !b.Working.HasValue);
             if (empty > 0)
@@ -254,16 +283,52 @@ namespace Kzm.Core
         }
 
         /// <summary>Lines of the grid inside the boundary (задание: сетка не выходит за границу работ).</summary>
-        private static void AddGridSegments(CartogramResult result, List<XY> local, GridDefinition grid) =>
-            result.GridSegments.AddRange(Segments(local, grid, result.IMin, result.IMax, result.JMin, result.JMax));
+        private static void AddGridSegments(CartogramResult result, IReadOnlyList<List<XY>> parts, GridDefinition grid)
+        {
+            foreach (var part in parts) result.GridSegments.AddRange(Segments(part, grid, result.IMin, result.IMax, result.JMin, result.JMax));
+        }
+
+        /// <summary>
+        /// Parts of the boundary in grid axes, checked: each closed, not degenerate, not crossing itself; no two overlapping.
+        /// </summary>
+        private static List<List<XY>> LocalParts(IReadOnlyList<IReadOnlyList<XY>> boundaries, GridDefinition grid)
+        {
+            var parts = new List<List<XY>>();
+            for (int k = 0; k < boundaries.Count; k++)
+            {
+                string name = boundaries.Count == 1 ? "Граница картограммы" : "Граница " + (k + 1);
+                var boundary = boundaries[k];
+                if (boundary == null || boundary.Count < 3) throw new KzmException(name + " не задана (нужна замкнутая полилиния).");
+                var outline = Geometry.Normalize(boundary);
+                if (outline.Count < 3) throw new KzmException(name + " вырождена (нулевая площадь).");
+                if (Geometry.IsSelfIntersecting(outline)) throw new KzmException(name + " самопересекается.");
+                parts.Add(Geometry.Normalize(outline.Select(p => ToLocal(grid, p)).ToList()));
+            }
+            for (int a = 0; a < parts.Count; a++)
+            for (int b = a + 1; b < parts.Count; b++)
+            {
+                double overlap = Geometry.OverlapArea(parts[a], parts[b]);
+                if (overlap > 1e-6 * Math.Min(Geometry.Area(parts[a]), Geometry.Area(parts[b])))
+                    throw new KzmException("Границы " + (a + 1) + " и " + (b + 1) + " перекрываются (общая площадь " + ElevationFormat.Format(overlap, 1) +
+                                           " м²) или одна лежит внутри другой: общий участок посчитался бы дважды. Исправьте границы; вырезы пока не поддерживаются.");
+            }
+            return parts;
+        }
 
         /// <summary>The grid as it will be drawn (only inside the boundary): for a preview before building.</summary>
-        public static List<(XY A, XY B)> GridSegments(IReadOnlyList<XY> boundary, GridDefinition grid)
+        public static List<(XY A, XY B)> GridSegments(IReadOnlyList<XY> boundary, GridDefinition grid) =>
+            GridSegments(new[] { boundary }, grid);
+
+        /// <summary>The grid as it will be drawn inside several parts of the boundary: for a preview before building.</summary>
+        public static List<(XY A, XY B)> GridSegments(IReadOnlyList<IReadOnlyList<XY>> boundaries, GridDefinition grid)
         {
-            var local = Geometry.Normalize(boundary.Select(p => ToLocal(grid, p)).ToList());
-            if (local.Count < 3) return new List<(XY, XY)>();
-            var (iMin, iMax, jMin, jMax) = Range(local, grid.Step);
-            return Segments(local, grid, iMin, iMax, jMin, jMax);
+            var parts = boundaries.Where(b => b != null && b.Count >= 3)
+                .Select(b => Geometry.Normalize(b.Select(p => ToLocal(grid, p)).ToList())).Where(p => p.Count >= 3).ToList();
+            var segments = new List<(XY, XY)>();
+            if (parts.Count == 0) return segments;
+            var (iMin, iMax, jMin, jMax) = Range(parts, grid.Step);
+            foreach (var part in parts) segments.AddRange(Segments(part, grid, iMin, iMax, jMin, jMax));
+            return segments;
         }
 
         private static List<(XY A, XY B)> Segments(List<XY> local, GridDefinition grid, int iMin, int iMax, int jMin, int jMax)
@@ -282,11 +347,17 @@ namespace Kzm.Core
         }
 
         /// <summary>Crossings of the grid lines with the boundary; crossings at nodes are nodes (not repeated).</summary>
-        private static void AddBoundaryPoints(CartogramResult result, List<XY> local, GridDefinition grid, Func<XY, double?> fact, Func<XY, double?> project)
+        private static void AddBoundaryPoints(CartogramResult result, IReadOnlyList<List<XY>> parts, GridDefinition grid, Func<XY, double?> fact, Func<XY, double?> project)
+        {
+            var seen = new HashSet<(long, long)>();
+            foreach (var part in parts) AddBoundaryPoints(result, part, grid, fact, project, seen);
+        }
+
+        private static void AddBoundaryPoints(CartogramResult result, List<XY> local, GridDefinition grid, Func<XY, double?> fact, Func<XY, double?> project,
+            HashSet<(long, long)> seen)
         {
             double s = grid.Step;
             double tolerance = 1e-6 * s;
-            var seen = new HashSet<(long, long)>();
             void Add(XY p)
             {
                 // A crossing that falls on a node is that node.
@@ -348,6 +419,13 @@ namespace Kzm.Core
         public static (int IMin, int IMax, int JMin, int JMax) Range(IReadOnlyList<XY> boundary, GridDefinition grid) =>
             Range(boundary.Select(p => ToLocal(grid, p)).ToList(), grid.Step);
 
+        /// <summary>Squares covering all parts (grid axes).</summary>
+        private static (int IMin, int IMax, int JMin, int JMax) Range(IReadOnlyList<List<XY>> parts, double step)
+        {
+            var ranges = parts.Select(part => Range(part, step)).ToList();
+            return (ranges.Min(r => r.IMin), ranges.Max(r => r.IMax), ranges.Min(r => r.JMin), ranges.Max(r => r.JMax));
+        }
+
         private static XY ToLocal(GridDefinition grid, XY p)
         {
             var (u, v) = grid.ToLocal(p);
@@ -361,7 +439,7 @@ namespace Kzm.Core
         }
 
         /// <summary>One square in grid axes: <paramref name="corners"/> and <paramref name="outline"/> are local; heights are read in the drawing.</summary>
-        private static void ComputeSquare(CartogramSquare square, XY[] corners, CartogramNode[] nodes, List<XY> outline,
+        private static void ComputeSquare(CartogramSquare square, XY[] corners, CartogramNode[] nodes, IReadOnlyList<List<XY>> parts,
             Func<XY, double?> fact, Func<XY, double?> project, GridDefinition grid, CartogramResult result)
         {
             var center = Geometry.Lerp(corners[0], corners[2], 0.5);
@@ -382,6 +460,7 @@ namespace Kzm.Core
             }
 
             for (int k = 0; k < 4; k++)
+            foreach (var outline in parts)
             {
                 var triangle = new[] { corners[k], corners[(k + 1) % 4], center };
                 var clipped = Geometry.ClipByConvex(outline, triangle);
@@ -425,7 +504,7 @@ namespace Kzm.Core
         {
             var f = fact(p);
             var pr = project(p);
-            return f.HasValue && pr.HasValue ? pr - f : null;
+            return WorkingMark.Of(pr, f);
         }
 
         private static void Fail(CartogramSquare square, XY point)

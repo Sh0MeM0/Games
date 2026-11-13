@@ -16,7 +16,10 @@ namespace Kzm.AutoCAD.Services
         internal CartogramInfo Info { get; set; }
         internal SurfaceModel Fact { get; set; }
         internal SurfaceModel Project { get; set; }
-        internal List<XY> Boundary { get; set; }
+        /// <summary>Parts of the boundary of works (one or several, замечание 31).</summary>
+        internal List<List<XY>> Boundaries { get; set; }
+        /// <summary>Text style of the cartogram texts («КЗМ» with the font of the settings, замечание 27).</summary>
+        internal ObjectId TextStyle { get; set; }
         internal GridDefinition Grid { get; set; }
         internal CartogramResult Result { get; set; }
         /// <summary>Контрольный расчёт по наложению триангуляций (null — выключен или не выполнен).</summary>
@@ -29,6 +32,8 @@ namespace Kzm.AutoCAD.Services
         internal int MovedLabels { get; set; }
         /// <summary>Elevations typed on the cartogram and written into the surfaces before this rebuild.</summary>
         internal List<string> Applied { get; } = new List<string>();
+        /// <summary>What the module decided by itself (e.g. small cut left without hatch) — for the summary.</summary>
+        internal List<string> Notes { get; } = new List<string>();
     }
 
     /// <summary>Where the user moved the labels and the table of the cartogram (kept on rebuild, задание п. 7).</summary>
@@ -41,6 +46,8 @@ namespace Kzm.AutoCAD.Services
         internal Vector3d? Table { get; set; }
         /// <summary>The block with the areas, when the user moved it by itself (otherwise it follows the table).</summary>
         internal Vector3d? Areas { get; set; }
+        /// <summary>Node key → where the user dragged the whole block of labels from its node (drawn with a leader, замечание 25).</summary>
+        internal Dictionary<string, Vector3d> NodeShifts { get; } = new Dictionary<string, Vector3d>(StringComparer.Ordinal);
     }
 
     /// <summary>An elevation typed into a label of the cartogram (задание: правка отметок прямо на картограмме).</summary>
@@ -103,7 +110,7 @@ namespace Kzm.AutoCAD.Services
                 if (surface == null) continue;
                 signatureOf(id).AddTo(fingerprint);
             }
-            fingerprint.Add(SurfaceModels.OutlineFingerprint(database, transaction, c.BoundaryHandle));
+            fingerprint.Add(SurfaceModels.OutlinesFingerprint(database, transaction, c.BoundaryHandle));
             foreach (var pair in CartogramInfo.FingerprintPairs(c)) fingerprint.Add(pair.Key).Add(pair.Value);
             return fingerprint.ToString();
         }
@@ -121,21 +128,21 @@ namespace Kzm.AutoCAD.Services
                 Info = c,
                 Fact = SurfaceModels.Build(database, transaction, fact, settings),
                 Project = SurfaceModels.Build(database, transaction, project, settings),
-                Boundary = SurfaceModels.ReadOutline(database, transaction, c.BoundaryHandle, "Граница картограммы"),
+                Boundaries = SurfaceModels.ReadOutlines(database, transaction, c.BoundaryHandle, "Граница картограммы"),
             };
             if (computation.Fact.Tin.TriangleCount == 0) throw new KzmException("Фактическая поверхность «" + fact.Name + "» не триангулируется: мало точек.");
             if (computation.Project.Tin.TriangleCount == 0) throw new KzmException("Проектная поверхность «" + project.Name + "» не триангулируется: мало точек.");
             computation.Problems.AddRange(computation.Fact.Problems.Select(p => "«" + fact.Name + "»: " + p));
             computation.Problems.AddRange(computation.Project.Problems.Select(p => "«" + project.Name + "»: " + p));
-            computation.Grid = GridFor(c, computation.Boundary);
-            var result = CartogramCalculator.Compute(computation.Boundary, computation.Fact.Tin.ZAt, computation.Project.Tin.ZAt, computation.Grid);
+            computation.Grid = GridFor(c, computation.Boundaries.SelectMany(p => p).ToList());
+            var result = CartogramCalculator.Compute(computation.Boundaries, computation.Fact.Tin.ZAt, computation.Project.Tin.ZAt, computation.Grid);
             computation.Result = result;
             computation.Problems.AddRange(result.Problems);
             if (c.ControlCheck)
             {
                 try
                 {
-                    computation.Control = ControlVolume.Compute(computation.Boundary, computation.Fact.Tin, computation.Project.Tin);
+                    computation.Control = ControlVolume.Compute(computation.Boundaries, computation.Fact.Tin, computation.Project.Tin);
                     if (computation.Control.MissingArea > 0)
                         computation.Problems.Add("контрольный расчёт: на площади " + ElevationFormat.Format(computation.Control.MissingArea, 1) +
                                                  " м² внутри границы нет данных хотя бы одной поверхности");
@@ -182,6 +189,7 @@ namespace Kzm.AutoCAD.Services
             lines.Add(r.Balanced ? "Проверка: Σ по столбцам = Σ по рядам = итог — сходится." : "ВНИМАНИЕ: суммы по столбцам и рядам не сходятся.");
             if (computation.MovedLabels > 0) lines.Add("Подписей, поставленных на место, сдвинутое вручную: " + computation.MovedLabels + ".");
             lines.AddRange(computation.Applied);
+            lines.AddRange(computation.Notes);
             return lines;
         }
 
@@ -262,6 +270,22 @@ namespace Kzm.AutoCAD.Services
         private static bool Straight(double rotation) => Math.Abs(Math.IEEERemainder(rotation, 2 * Math.PI)) < 1e-6;
 
         /// <summary>
+        /// How far the user moved the grid of the cartogram (the block is inserted at the origin): everything moved together
+        /// with it is not a move of single labels. A turned grid counts as not moved.
+        /// </summary>
+        internal static Vector3d GridShift(Database database, Transaction transaction, string cartogramId, IEnumerable<ObjectId> tracked = null)
+        {
+            foreach (var id in tracked ?? KzmStore.ReadCartogramObjects(database, transaction, cartogramId) ?? new List<ObjectId>())
+            {
+                if (!id.IsValid || id.IsErased || id.ObjectClass.DxfName != "INSERT") continue;
+                if (!(transaction.GetObject(id, OpenMode.ForRead) is BlockReference block) || !IsTagged(block, cartogramId, out _, out var values)) continue;
+                if (values.Length > 2 && Equals(values[2].Value, GridMark))
+                    return Straight(block.Rotation) ? block.Position - Point3d.Origin : new Vector3d();
+            }
+            return new Vector3d();
+        }
+
+        /// <summary>
         /// Labels and the table the user moved: displacement from where the module put them. Labels that were
         /// rotated (the whole cartogram turned by the user) do not count as moved.
         /// </summary>
@@ -270,6 +294,8 @@ namespace Kzm.AutoCAD.Services
             var result = new MovedLabels();
             var tracked = KzmStore.ReadCartogramObjects(database, transaction, cartogramId);
             if (tracked == null) return result;
+            // The whole cartogram moved by the user (with its grid) is not a move of single labels.
+            var gridShift = GridShift(database, transaction, cartogramId, tracked);
             foreach (var id in tracked)
             {
                 if (!id.IsValid || id.IsErased || !(transaction.GetObject(id, OpenMode.ForRead) is Entity entity)) continue;
@@ -278,11 +304,17 @@ namespace Kzm.AutoCAD.Services
                 if (entity is DBText text && mark == LabelMark && values.Length >= 5 && values[3].Value is string key && values[4].Value is Point3d placed)
                 {
                     if (!Straight(text.Rotation)) continue;
-                    var offset = Sources.TextAnchor(text) - placed;
+                    var offset = Sources.TextAnchor(text) - placed - gridShift;
                     if (offset.Length > 1e-6) result.Texts[key] = offset;
                 }
                 else if (entity is BlockReference block && mark == NodeMark && values.Length >= 11 && values[3].Value is string nodeKey)
                 {
+                    if (!Straight(block.Rotation) || !(values[7].Value is Point3d anchor)) continue;
+                    // [14]: where the block was put; a drag of the whole block since then moved all three labels.
+                    var putAt = values.Length > NodeLeader.PlacedIndex && values[NodeLeader.PlacedIndex].Value is Point3d p ? p : anchor;
+                    var blockMove = block.Position - putAt;
+                    var drag = block.Position - anchor - gridShift;
+                    if (drag.Length > 1e-6) result.NodeShifts[nodeKey] = drag;
                     var attributes = Sources.Attributes(block, transaction);
                     var offsets = new Vector3d[3];
                     bool any = false;
@@ -291,21 +323,22 @@ namespace Kzm.AutoCAD.Services
                     {
                         if (!attributes.TryGetValue(tags[k], out var attribute) || !(values[8 + k].Value is Point3d put)) continue;
                         if (!Straight(attribute.Rotation)) { any = false; break; }
-                        offsets[k] = Sources.TextAnchor(attribute) - put;
+                        offsets[k] = Sources.TextAnchor(attribute) - put - blockMove;
                         if (offsets[k].Length > 1e-6) any = true;
                     }
                     if (any) result.Nodes[nodeKey] = offsets;
                 }
                 else if (entity is BlockReference table && mark == TableMark)
                 {
-                    var offset = table.Position - Point3d.Origin;
+                    var offset = table.Position - Point3d.Origin - gridShift;
                     if (offset.Length > 1e-6 && Straight(table.Rotation)) result.Table = offset;
                 }
                 else if (entity is BlockReference areas && mark == AreasMark)
                 {
                     // Where the module put the block is kept in its XData: a block that is not there was moved by the user.
                     var drawnAt = values.Length >= 4 && values[3].Value is Point3d at ? at : Point3d.Origin;
-                    if (areas.Position.DistanceTo(drawnAt) > 1e-6 && Straight(areas.Rotation)) result.Areas = areas.Position - Point3d.Origin;
+                    if ((areas.Position - drawnAt - gridShift).Length > 1e-6 && Straight(areas.Rotation))
+                        result.Areas = areas.Position - Point3d.Origin - gridShift;
                 }
             }
             return result;
@@ -437,9 +470,14 @@ namespace Kzm.AutoCAD.Services
                 computation.Applied.AddRange(applied);
                 computation.Problems.AddRange(notes);
                 var moved = c.KeepMovedLabels ? ReadMoved(database, transaction, c.Id) : new MovedLabels();
-                Erase(database, transaction, c.Id);
+                computation.TextStyle = CartogramText.Ensure(database, transaction, settings, computation.Problems);
                 var painter = new CartogramPainter(database, transaction, computation, moved);
-                painter.Draw(volumes);
+                // The blocks erased and drawn now are not edits of the user: the watcher of the labels stays quiet meanwhile.
+                using (NodeSync.Quiet())
+                {
+                    Erase(database, transaction, c.Id);
+                    painter.Draw(volumes);
+                }
                 computation.MovedLabels = painter.Moved;
                 KzmStore.WriteCartogramObjects(database, transaction, c.Id, painter.Created);
                 OutlineBoundary(database, transaction, c);
@@ -465,11 +503,11 @@ namespace Kzm.AutoCAD.Services
         }
 
         /// <summary>What «Удалить картограмму» removes besides the drawing (for the question to the user).</summary>
-        internal static (int Statements, bool Boundary) Extras(Database database, Transaction transaction, CartogramInfo c)
+        internal static (int Statements, int Boundaries) Extras(Database database, Transaction transaction, CartogramInfo c)
         {
             int statements = (KzmStore.ReadCartogramObjects(database, transaction, c.Id + StatementsSuffix) ?? new List<ObjectId>())
                 .Count(id => id.IsValid && !id.IsErased);
-            return (statements, ModuleBoundary(database, transaction, c) != ObjectId.Null);
+            return (statements, ModuleBoundaries(database, transaction, c).Count);
         }
 
         /// <summary>
@@ -478,19 +516,38 @@ namespace Kzm.AutoCAD.Services
         /// </summary>
         private static void OutlineBoundary(Database database, Transaction transaction, CartogramInfo c)
         {
-            var id = ModuleBoundary(database, transaction, c);
-            if (id.IsNull || !(transaction.GetObject(id, OpenMode.ForRead) is Entity boundary) || boundary.LineWeight == CartogramPainter.OutlineWeight) return;
-            if (!Layers.IsUsable(database, transaction, boundary.Layer, out _)) return;
-            boundary.UpgradeOpen();
-            boundary.LineWeight = CartogramPainter.OutlineWeight;
+            foreach (var id in ModuleBoundaries(database, transaction, c))
+            {
+                var boundary = (Entity)transaction.GetObject(id, OpenMode.ForRead);
+                if (boundary.LineWeight == CartogramPainter.OutlineWeight || !Layers.IsUsable(database, transaction, boundary.Layer, out _)) continue;
+                boundary.UpgradeOpen();
+                boundary.LineWeight = CartogramPainter.OutlineWeight;
+            }
         }
 
-        /// <summary>The boundary polyline drawn by points for this cartogram (never a polyline the user drew).</summary>
-        internal static ObjectId ModuleBoundary(Database database, Transaction transaction, CartogramInfo c)
+        /// <summary>Saves the list of the parts of the boundary of a saved cartogram (замечание 31).</summary>
+        internal static void SetBoundaries(Database database, string cartogramId, IReadOnlyList<string> handles)
         {
-            var id = SurfaceModels.FromHandle(database, c.BoundaryHandle);
-            if (id.IsNull || !(transaction.GetObject(id, OpenMode.ForRead) is Entity entity)) return ObjectId.Null;
-            return IsTagged(entity, c.Id, out _, out var values) && values.Length > 2 && Equals(values[2].Value, BoundaryMark) ? id : ObjectId.Null;
+            using (var transaction = database.TransactionManager.StartTransaction())
+            {
+                var c = KzmStore.ReadCartograms(database, transaction).FirstOrDefault(x => x.Id == cartogramId);
+                if (c == null) return;
+                c.BoundaryHandles = handles;
+                KzmStore.WriteCartogram(database, transaction, c);
+                transaction.Commit();
+            }
+        }
+
+        /// <summary>Parts of the boundary drawn by points for this cartogram (never polylines the user drew).</summary>
+        internal static List<ObjectId> ModuleBoundaries(Database database, Transaction transaction, CartogramInfo c) =>
+            c.BoundaryHandles.Select(h => ModuleBoundary(database, transaction, c.Id, h)).Where(id => !id.IsNull).ToList();
+
+        /// <summary>The polyline with this handle when it was drawn by points for this cartogram, otherwise null.</summary>
+        internal static ObjectId ModuleBoundary(Database database, Transaction transaction, string cartogramId, string handle)
+        {
+            var id = SurfaceModels.FromHandle(database, handle);
+            if (id.IsNull || id.IsErased || !(transaction.GetObject(id, OpenMode.ForRead) is Entity entity)) return ObjectId.Null;
+            return IsTagged(entity, cartogramId, out _, out var values) && values.Length > 2 && Equals(values[2].Value, BoundaryMark) ? id : ObjectId.Null;
         }
 
         /// <summary>
@@ -506,10 +563,8 @@ namespace Kzm.AutoCAD.Services
                 foreach (var id in KzmStore.ReadCartogramObjects(database, transaction, cartogramId + StatementsSuffix) ?? new List<ObjectId>())
                     if (id.IsValid && !id.IsErased && transaction.GetObject(id, OpenMode.ForRead) is Table table) EraseEntity(database, transaction, table);
                 if (c != null)
-                {
-                    var boundary = ModuleBoundary(database, transaction, c);
-                    if (!boundary.IsNull) EraseEntity(database, transaction, (Entity)transaction.GetObject(boundary, OpenMode.ForRead));
-                }
+                    foreach (var boundary in ModuleBoundaries(database, transaction, c))
+                        EraseEntity(database, transaction, (Entity)transaction.GetObject(boundary, OpenMode.ForRead));
                 KzmStore.DeleteCartogramObjects(database, transaction, cartogramId);
                 KzmStore.DeleteCartogramObjects(database, transaction, cartogramId + StatementsSuffix);
                 KzmStore.DeleteCartogram(database, transaction, cartogramId);
@@ -630,7 +685,7 @@ namespace Kzm.AutoCAD.Services
         /// - заполняется первая территория: её название — имя картограммы, в строке «Грунт планировки территории» —
         ///   объёмы (числа как в примере А.6: «150 000», ноль — «—»). Остальное — проектировщик (п. 7.5, примечания к рис. 9).
         /// </summary>
-        internal static void InsertStatement(Document document, string cartogramId)
+        internal static void InsertStatement(Document document, string cartogramId, KzmSettings settings)
         {
             var database = document.Database;
             CartogramInfo c;
@@ -648,6 +703,7 @@ namespace Kzm.AutoCAD.Services
                 Layers.Ensure(database, transaction, Layers.Totals);
                 PointBlocks.EnsureRegApp(database, transaction, App);
                 var space = (BlockTableRecord)transaction.GetObject(database.CurrentSpaceId, OpenMode.ForWrite);
+                var textStyle = CartogramText.Ensure(database, transaction, settings, null);
                 double k = c.UnitsPerMm;
                 const string indent = "     "; // подпункты «а)», «б)» … с отступом, как на рис. 9
                 string[] names =
@@ -695,7 +751,7 @@ namespace Kzm.AutoCAD.Services
                 for (int col = 0; col < columns; col++)
                 {
                     var cell = table.Cells[row, col];
-                    cell.TextStyleId = database.Textstyle;
+                    cell.TextStyleId = textStyle;
                     cell.TextHeight = (row == 0 ? 3.5 : 2.5) * k;
                     cell.Alignment = row < body || col > 0 ? CellAlignment.MiddleCenter : CellAlignment.MiddleLeft;
                     var borders = cell.Borders;

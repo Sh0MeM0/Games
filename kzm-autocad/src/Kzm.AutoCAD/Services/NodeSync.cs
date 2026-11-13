@@ -4,6 +4,7 @@ using System.Linq;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.Colors;
 using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.Geometry;
 using Kzm.AutoCAD.Drawing;
 using Kzm.Core;
 using AcadApplication = Autodesk.AutoCAD.ApplicationServices.Application;
@@ -13,7 +14,8 @@ namespace Kzm.AutoCAD.Services
     /// <summary>
     /// Отметки узла картограммы связаны (замечание 18): исправили в «Свойствах» проектную или
     /// фактическую — рабочая сразу пересчитывается (Hпр − Hф); исправили рабочую — сразу меняется
-    /// проектная (Hф + h). Цвет рабочей — по знаку. Следит постоянно, а не только при открытой панели.
+    /// проектная (Hф + h). Цвет рабочей — по знаку. Блок отметок утащили за ручку — рисуется выноска
+    /// (замечание 25). Следит постоянно, а не только при открытой панели.
     /// Изменения от UNDO/REDO не трогает, чтобы не мешать отмене.
     /// </summary>
     internal static class NodeSync
@@ -23,6 +25,26 @@ namespace Kzm.AutoCAD.Services
         private static bool busy;
         private static bool undoing;
         private static bool started;
+        private static int quiet;
+
+        /// <summary>While the module itself draws a cartogram, its node blocks are not edits of the user.</summary>
+        internal static IDisposable Quiet()
+        {
+            quiet++;
+            return new Release();
+        }
+
+        private sealed class Release : IDisposable
+        {
+            private bool done;
+
+            public void Dispose()
+            {
+                if (done) return;
+                done = true;
+                quiet--;
+            }
+        }
 
         internal static void Start()
         {
@@ -83,10 +105,13 @@ namespace Kzm.AutoCAD.Services
 
         private static void OnModified(object sender, ObjectEventArgs e)
         {
-            if (busy || undoing) return;
+            if (busy || undoing || quiet > 0) return;
             try
             {
                 if (e.DBObject is AttributeReference attribute && IsNodeTag(attribute.Tag)) Pending.Add(attribute.OwnerId);
+                // The whole block dragged by its grip (or moved): its leader follows.
+                else if (e.DBObject is BlockReference block && !(block is Table) &&
+                         string.Equals(block.Name, CartogramPainter.NodeBlock, StringComparison.OrdinalIgnoreCase)) Pending.Add(block.ObjectId);
             }
             catch (System.Exception) { /* an object being undone or erased */ }
         }
@@ -105,8 +130,17 @@ namespace Kzm.AutoCAD.Services
                 using (document.LockDocument())
                 using (var transaction = document.TransactionManager.StartTransaction())
                 {
+                    var grids = new Dictionary<string, Vector3d>(StringComparer.Ordinal);
                     foreach (var id in ids)
-                        if (transaction.GetObject(id, OpenMode.ForRead) is BlockReference block) Normalize(transaction, block);
+                    {
+                        if (!(transaction.GetObject(id, OpenMode.ForRead) is BlockReference block)) continue;
+                        Normalize(transaction, block);
+                        string cartogramId = CartogramOf(block);
+                        if (cartogramId == null) continue;
+                        if (!grids.TryGetValue(cartogramId, out var gridShift))
+                            grids[cartogramId] = gridShift = CartogramService.GridShift(document.Database, transaction, cartogramId);
+                        NodeLeader.Follow(transaction, block, gridShift);
+                    }
                     transaction.Commit();
                 }
             }
@@ -117,6 +151,15 @@ namespace Kzm.AutoCAD.Services
             finally
             {
                 busy = false;
+            }
+        }
+
+        private static string CartogramOf(BlockReference block)
+        {
+            using (var xdata = block.GetXDataForApplication(CartogramService.App))
+            {
+                var values = xdata?.AsArray();
+                return values != null && values.Length > 2 && Equals(values[2].Value, CartogramService.NodeMark) ? values[1].Value as string : null;
             }
         }
 
@@ -194,12 +237,17 @@ namespace Kzm.AutoCAD.Services
                 if (!working.IsWriteEnabled) working.UpgradeOpen();
                 working.Color = color;
             }
-            // Remember what is shown now (positions of version 0.6 blocks are kept, missing ones filled).
-            var list = values.Take(11).ToList();
+            // Remember what is shown now (positions of version 0.6 blocks are kept, missing ones filled; [14], [15] — the place
+            // of the block and its leader — stay).
+            var list = values.ToList();
             while (list.Count < 11) list.Add(new TypedValue((int)DxfCode.ExtendedDataXCoordinate, block.Position));
-            list.Add(new TypedValue((int)DxfCode.ExtendedDataAsciiString, newW));
-            list.Add(new TypedValue((int)DxfCode.ExtendedDataAsciiString, newP));
-            list.Add(new TypedValue((int)DxfCode.ExtendedDataAsciiString, newF));
+            var texts = new[] { newW, newP, newF };
+            for (int k = 0; k < 3; k++)
+            {
+                var text = new TypedValue((int)DxfCode.ExtendedDataAsciiString, texts[k]);
+                if (list.Count > 11 + k) list[11 + k] = text;
+                else list.Add(text);
+            }
             if (!block.IsWriteEnabled) block.UpgradeOpen();
             block.XData = new ResultBuffer(list.ToArray());
             return true;

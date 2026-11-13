@@ -19,7 +19,7 @@ namespace Kzm.Core
         private readonly TriangleIndex index;
         private readonly HashSet<long> constrained;
 
-        private Tin(XY[] points, double[] z, string[] ids, int[] triangles, List<int> duplicates, IReadOnlyList<XY> boundary,
+        private Tin(XY[] points, double[] z, string[] ids, int[] triangles, List<int> duplicates, IReadOnlyList<IReadOnlyList<XY>> boundaries,
             HashSet<long> constrained, List<string> constraintProblems)
         {
             this.points = points;
@@ -28,7 +28,7 @@ namespace Kzm.Core
             this.triangles = triangles;
             this.constrained = constrained;
             Duplicates = duplicates;
-            Boundary = boundary;
+            Boundaries = boundaries;
             ConstraintProblems = constraintProblems;
             index = new TriangleIndex(points, triangles);
         }
@@ -37,8 +37,11 @@ namespace Kzm.Core
         public int TriangleCount => triangles.Length / 3;
         /// <summary>Indices of input points skipped because another point has exactly the same XY.</summary>
         public IReadOnlyList<int> Duplicates { get; }
-        /// <summary>Normalised outline of the surface (counter-clockwise) or null.</summary>
-        public IReadOnlyList<XY> Boundary { get; }
+        /// <summary>Normalised parts of the outline of the surface (counter-clockwise); empty when it has no outline.</summary>
+        public IReadOnlyList<IReadOnlyList<XY>> Boundaries { get; }
+
+        /// <summary>Inside one of the parts of the outline (or anywhere when there is none).</summary>
+        public bool InsideBoundary(XY p) => Boundaries.Count == 0 || Boundaries.Any(part => Geometry.Contains(part, p));
         /// <summary>Structure-line segments that could not be honoured (crossing lines, points left out).</summary>
         public IReadOnlyList<string> ConstraintProblems { get; }
         public int ConstrainedEdgeCount => constrained.Count;
@@ -72,19 +75,20 @@ namespace Kzm.Core
             foreach (var (a, b) in Edges())
             {
                 bool isConstrained = constrained.Contains(UndirectedKey(a, b));
-                if (Boundary == null)
+                if (Boundaries.Count == 0)
                 {
                     yield return (points[a], points[b], isConstrained);
                     continue;
                 }
-                foreach (var (p, q) in Geometry.ClipSegment(points[a], points[b], Boundary)) yield return (p, q, isConstrained);
+                foreach (var part in Boundaries)
+                foreach (var (p, q) in Geometry.ClipSegment(points[a], points[b], part)) yield return (p, q, isConstrained);
             }
         }
 
         /// <summary>Z by linear interpolation in the triangle containing the point; null outside the surface.</summary>
         public double? ZAt(XY p)
         {
-            if (Boundary != null && !Geometry.Contains(Boundary, p)) return null;
+            if (!InsideBoundary(p)) return null;
             int t = Locate(p);
             return t < 0 ? (double?)null : ZInTriangle(t, p);
         }
@@ -127,7 +131,7 @@ namespace Kzm.Core
             index.InBox(minX, minY, maxX, maxY, TriangleCount);
 
         public static Tin Build(IReadOnlyList<XY> xy, IReadOnlyList<double> elevations, IReadOnlyList<string> pointIds = null,
-            IReadOnlyList<XY> boundary = null, IReadOnlyList<(int A, int B)> constraints = null, Func<int, string> describe = null)
+            IReadOnlyList<IReadOnlyList<XY>> boundaries = null, IReadOnlyList<(int A, int B)> constraints = null, Func<int, string> describe = null)
         {
             if (xy == null) throw new ArgumentNullException(nameof(xy));
             if (elevations == null || elevations.Count != xy.Count) throw new ArgumentException("Число отметок не совпадает с числом точек.");
@@ -159,9 +163,9 @@ namespace Kzm.Core
                 constrained = inserter.Constrained;
                 problems.AddRange(inserter.Problems);
             }
-            List<XY> outline = boundary != null && boundary.Count >= 3 ? Geometry.Normalize(boundary) : null;
-            if (outline != null && outline.Count < 3) outline = null;
-            return new Tin(p, z, ids, triangles.ToArray(), builder.Duplicates, outline, constrained, problems);
+            var parts = (boundaries ?? Array.Empty<IReadOnlyList<XY>>()).Where(b => b != null && b.Count >= 3)
+                .Select(b => (IReadOnlyList<XY>)Geometry.Normalize(b)).Where(b => b.Count >= 3).ToList();
+            return new Tin(p, z, ids, triangles.ToArray(), builder.Duplicates, parts, constrained, problems);
         }
 
         /// <summary>Uniform grid over triangle bounding boxes for point location.</summary>

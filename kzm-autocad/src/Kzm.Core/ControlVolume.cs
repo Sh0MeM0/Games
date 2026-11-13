@@ -34,6 +34,22 @@ namespace Kzm.Core
     {
         private const double TinyArea = 1e-10;
 
+        /// <summary>Several parts of the boundary of works (замечание 31): the sum over the parts (they do not overlap).</summary>
+        public static ControlVolumeResult Compute(IReadOnlyList<IReadOnlyList<XY>> boundaries, Tin fact, Tin project)
+        {
+            if (boundaries == null || boundaries.Count == 0) throw new KzmException("Граница не задана.");
+            var total = new ControlVolumeResult();
+            foreach (var boundary in boundaries)
+            {
+                var part = Compute(boundary, fact, project);
+                total.Fill += part.Fill;
+                total.Cut += part.Cut;
+                total.Area += part.Area;
+                total.MissingArea += part.MissingArea;
+            }
+            return total;
+        }
+
         public static ControlVolumeResult Compute(IReadOnlyList<XY> boundary, Tin fact, Tin project)
         {
             if (boundary == null || boundary.Count < 3) throw new KzmException("Граница не задана.");
@@ -45,8 +61,10 @@ namespace Kzm.Core
             XY L(XY p) => new XY(p.X - origin.X, p.Y - origin.Y);
             XY W(XY p) => new XY(p.X + origin.X, p.Y + origin.Y);
             var region = Windows(outline.Select(L).ToList(), "границы работ");
-            var factMask = fact.Boundary != null ? Windows(fact.Boundary.Select(L).ToList(), "границы фактической поверхности") : null;
-            var projectMask = project.Boundary != null ? Windows(project.Boundary.Select(L).ToList(), "границы проектной поверхности") : null;
+            var factMask = fact.Boundaries.Count > 0
+                ? fact.Boundaries.SelectMany(part => Windows(part.Select(L).ToList(), "границы фактической поверхности")).ToList() : null;
+            var projectMask = project.Boundaries.Count > 0
+                ? project.Boundaries.SelectMany(part => Windows(part.Select(L).ToList(), "границы проектной поверхности")).ToList() : null;
             var result = new ControlVolumeResult();
             double regionArea = Geometry.Area(outline.Select(L).ToList());
             var box = Box(outline);

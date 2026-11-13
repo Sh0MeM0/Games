@@ -52,8 +52,14 @@ namespace Kzm.Core
         public string Created { get; set; }
         /// <summary>Increases on every change of the surface data made by the module.</summary>
         public int Revision { get; set; }
-        /// <summary>Внешняя граница триангуляции (замкнутая полилиния), если задана.</summary>
+        /// <summary>Внешняя граница триангуляции: одна или несколько замкнутых полилиний (ручки через «;»), если задана.</summary>
         public string BoundaryHandle { get; set; }
+        /// <summary>Части границы поверхности (замечание 31): треугольники и отметки — только внутри них.</summary>
+        public IReadOnlyList<string> BoundaryHandles
+        {
+            get => BoundaryList.Split(BoundaryHandle);
+            set => BoundaryHandle = BoundaryList.Join(value);
+        }
         public bool ShowTriangles { get; set; }
         /// <summary>Fingerprint of the points when the triangles were drawn (to tell that they are outdated).</summary>
         public string TrianglesFingerprint { get; set; }

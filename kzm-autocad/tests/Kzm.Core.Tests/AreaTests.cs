@@ -122,3 +122,31 @@ namespace Kzm.Core.Tests
         }
     }
 }
+
+namespace Kzm.Core.Tests
+{
+    /// <summary>Замечание 24: рабочая отметка — по отметкам, округлённым до 0,01 м, как они подписаны.</summary>
+    public class WorkingMarkTests
+    {
+        private static readonly List<XY> Square = new List<XY> { new XY(0, 0), new XY(20, 0), new XY(20, 20), new XY(0, 20) };
+
+        [Theory]
+        [InlineData(176.374, 176.366, 0.0)]   // подписано 176,37 и 176,37 — рабочая 0,00, а не +0,01
+        [InlineData(176.825, 176.70, 0.13)]   // 176,83 − 176,70
+        [InlineData(100.004, 100.0, 0.0)]
+        [InlineData(100.0, 100.005, -0.01)]   // 100,00 − 100,01
+        public void RoundedLikeTheLabels(double project, double fact, double expected) =>
+            Assert.Equal(expected, WorkingMark.Of(project, fact), 9);
+
+        // Разность поверхностей в несколько миллиметров подписывается «0,00» — это 0-область, а не насыпь (замечание 24).
+        [Fact]
+        public void MillimetresAreZeroArea()
+        {
+            var r = CartogramCalculator.Compute(Square, p => 176.13, p => 176.13 + 0.003 * p.X / 20, new GridDefinition(20, new XY(0, 0), 0));
+            Assert.Equal(400, r.ZeroArea, 9);
+            Assert.Equal(0, r.FillArea, 9);
+            Assert.Equal(0, r.TotalFill, 9);
+            Assert.All(r.Nodes.Values, n => Assert.Equal(0, n.Working.Value, 9));
+        }
+    }
+}

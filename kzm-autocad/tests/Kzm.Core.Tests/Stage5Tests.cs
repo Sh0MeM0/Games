@@ -131,7 +131,7 @@ namespace Kzm.Core.Tests
             for (int y = 0; y <= 60; y += 10)
                 points.Add(new XY(x, y));
             var fact = Tin.Build(points, points.Select(_ => 10.0).ToList(), null,
-                new List<XY> { new XY(0, 0), new XY(30, 0), new XY(30, 60), new XY(0, 60) });
+                new[] { new List<XY> { new XY(0, 0), new XY(30, 0), new XY(30, 60), new XY(0, 60) } });
             var project = Tin.Build(points, points.Select(_ => 11.0).ToList());
             var boundary = new List<XY> { new XY(10, 10), new XY(50, 10), new XY(50, 50), new XY(10, 50) };
             var result = ControlVolume.Compute(boundary, fact, project);

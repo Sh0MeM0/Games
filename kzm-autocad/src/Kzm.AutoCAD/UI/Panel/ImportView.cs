@@ -49,12 +49,12 @@ namespace Kzm.AutoCAD.UI.Panel
         }
 
         private readonly ConditionalWeakTable<Document, State> states = new ConditionalWeakTable<Document, State>();
-        private readonly ComboBox surface = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList };
+        private readonly ComboBox surface = new NoWheelComboBox { DropDownStyle = ComboBoxStyle.DropDownList };
         private readonly RadioButton srcTexts = new RadioButton { Text = "Тексты", AutoSize = true, Checked = true };
         private readonly RadioButton srcPoints = new RadioButton { Text = "POINT (отметка в Z)", AutoSize = true };
         private readonly RadioButton srcBlocks = new RadioButton { Text = "Блоки с атрибутом", AutoSize = true };
-        private readonly ComboBox elevationTag = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 200 };
-        private readonly ComboBox numberTag = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 200 };
+        private readonly ComboBox elevationTag = new NoWheelComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 200 };
+        private readonly ComboBox numberTag = new NoWheelComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 200 };
         private readonly FlowLayoutPanel tagsPanel = new FlowLayoutPanel { AutoSize = true, FlowDirection = System.Windows.Forms.FlowDirection.TopDown, WrapContents = false };
         private readonly Label tagsNote = new Label { AutoSize = true, MaximumSize = new Size(330, 0), ForeColor = SystemColors.GrayText };
         private readonly RadioButton byWindow = new RadioButton { Text = "Рамкой", AutoSize = true };
@@ -348,10 +348,18 @@ namespace Kzm.AutoCAD.UI.Panel
         private void LoadLayers(State state)
         {
             layersFor = LayersKey(state);
-            layers.Items.Clear();
-            if (state.Selection != Selection.Layers) return;
-            foreach (var pair in DrawingData.EntityLayers(panel.Document, Types(state)))
-                layers.Items.Add(new LayerItem(pair.Key, pair.Value), state.Layers.Contains(pair.Key));
+            layers.BeginUpdate();
+            try
+            {
+                layers.Items.Clear();
+                if (state.Selection != Selection.Layers) return;
+                foreach (var pair in DrawingData.EntityLayers(panel.Document, Types(state)))
+                    layers.Items.Add(new LayerItem(pair.Key, pair.Value), state.Layers.Contains(pair.Key));
+            }
+            finally
+            {
+                layers.EndUpdate();
+            }
         }
 
         private sealed class LayerItem

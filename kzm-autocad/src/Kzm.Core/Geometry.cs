@@ -207,6 +207,25 @@ namespace Kzm.Core
 
         public static XY Lerp(XY a, XY b, double t) => new XY(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t);
 
+        /// <summary>
+        /// Area common to two simple polygons: <paramref name="b"/> clipped by each triangle of <paramref name="a"/>.
+        /// Polygons that only touch along an edge or at a point give zero.
+        /// </summary>
+        public static double OverlapArea(IReadOnlyList<XY> a, IReadOnlyList<XY> b)
+        {
+            var triangles = Triangulate(Normalize(a));
+            if (triangles == null) return 0;
+            double sum = 0;
+            foreach (var corners in triangles)
+            {
+                // The clipping window must run counter-clockwise.
+                var triangle = SignedArea(corners) < 0 ? corners.Reverse().ToArray() : corners;
+                var piece = ClipByConvex(b, triangle);
+                if (piece.Count >= 3) sum += Area(piece);
+            }
+            return sum;
+        }
+
         /// <summary>Whether the polygon edges cross themselves (a simple check, O(n²)).</summary>
         public static bool IsSelfIntersecting(IReadOnlyList<XY> polygon)
         {

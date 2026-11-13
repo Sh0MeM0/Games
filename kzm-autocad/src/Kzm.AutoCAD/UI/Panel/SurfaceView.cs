@@ -21,7 +21,7 @@ namespace Kzm.AutoCAD.UI.Panel
         private readonly TextBox name = new TextBox();
         private readonly RadioButton fact = new RadioButton { Text = "Фактическая", AutoSize = true, Checked = true };
         private readonly RadioButton project = new RadioButton { Text = "Проектная", AutoSize = true };
-        private readonly ComboBox layer = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown };
+        private readonly ComboBox layer = new NoWheelComboBox { DropDownStyle = ComboBoxStyle.DropDown };
         private readonly CheckBox movePoints = new CheckBox { Text = "Перенести существующие точки на этот слой", AutoSize = true, Checked = true };
         private readonly Label info = new Label { AutoSize = true, MaximumSize = new Size(330, 0) };
         private readonly Button save = new Button { AutoSize = true };
@@ -34,7 +34,7 @@ namespace Kzm.AutoCAD.UI.Panel
 
         // Точки, оформление, триангуляция (только для существующей поверхности).
         private readonly TableLayoutPanel details = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Padding = new Padding(6) };
-        private readonly ComboBox textStyle = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160 };
+        private readonly ComboBox textStyle = new NoWheelComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160 };
         private readonly TextBox textHeight = new TextBox { Width = 70 };
         private readonly TextBox numberHeight = new TextBox { Width = 70 };
         private readonly TextBox signSize = new TextBox { Width = 70 };
@@ -180,7 +180,7 @@ namespace Kzm.AutoCAD.UI.Panel
 
             Span(Section("Поверхность (триангуляция)"));
             Span(boundaryNote);
-            var pickBoundary = new Button { Text = "Указать границу…", AutoSize = true };
+            var pickBoundary = new Button { Text = "Указать границы…", AutoSize = true };
             pickBoundary.Click += (s, e) => PickBoundary();
             var clearBoundary = new Button { Text = "Без границы", AutoSize = true };
             clearBoundary.Click += (s, e) => SetBoundary(null);
@@ -210,9 +210,10 @@ namespace Kzm.AutoCAD.UI.Panel
             try
             {
                 var appearance = surface.Info.Appearance;
+                textStyle.BeginUpdate();
                 textStyle.Items.Clear();
-                if (panel.Document != null)
-                    foreach (var style in panel.Snapshot.TextStyles.Value) textStyle.Items.Add(style);
+                if (panel.Document != null) textStyle.Items.AddRange(panel.Snapshot.TextStyles.Value.Cast<object>().ToArray());
+                textStyle.EndUpdate();
                 textStyle.SelectedItem = appearance.TextStyle != null && textStyle.Items.Contains(appearance.TextStyle) ? appearance.TextStyle : null;
                 textHeight.Text = SettingsView.FormatValue(appearance.TextHeight);
                 numberHeight.Text = SettingsView.FormatValue(appearance.NumberHeight);
@@ -225,9 +226,13 @@ namespace Kzm.AutoCAD.UI.Panel
                 appearanceNote.Text = appearance.IsSet
                     ? "Пустые поля: высота номера = высоте отметки, знак = половине высоты отметки."
                     : "Оформление ещё не задано: оно возьмётся с текстов при импорте или с образца («Взять с образца»).";
-                boundaryNote.Text = string.IsNullOrEmpty(surface.Info.BoundaryHandle)
+                var parts = surface.Info.BoundaryHandles;
+                boundaryNote.Text = parts.Count == 0
                     ? "Граница поверхности не задана: треугольники строятся по всем точкам (выпуклая оболочка)."
-                    : "Граница поверхности: полилиния " + surface.Info.BoundaryHandle + " — снаружи отметок нет, треугольники обрезаются по ней.";
+                    : parts.Count == 1
+                        ? "Граница поверхности: полилиния " + parts[0] + " — снаружи отметок нет, треугольники обрезаются по ней."
+                        : "Граница поверхности из " + parts.Count + " частей (полилинии " + string.Join(", ", parts) +
+                          ") — треугольники и отметки только внутри них, между частями отметок нет.";
                 lines.Items.Clear();
                 foreach (var line in surface.Lines) lines.Items.Add(new LineItem(line));
                 linesNote.Text = surface.Lines.Count == 0
@@ -341,18 +346,15 @@ namespace Kzm.AutoCAD.UI.Panel
             PanelActions.RunInteractive("точки вручную", document => EditServices.CreatePointsByHand(document, id, settings), owner.RefreshAll);
         }
 
+        /// <summary>One or several closed polylines (замечание 31): the surface is triangulated only inside them.</summary>
         private void PickBoundary()
         {
             if (surface == null) return;
-            string handle = null;
+            string handles = null;
             PanelActions.Pick("граница поверхности", document =>
             {
-                var options = new PromptEntityOptions("\nУкажите замкнутую полилинию — внешнюю границу поверхности: ");
-                options.SetRejectMessage("\nНужна замкнутая полилиния.");
-                options.AddAllowedClass(typeof(Curve), false);
-                var pick = document.Editor.GetEntity(options);
-                if (pick.Status == PromptStatus.OK) handle = pick.ObjectId.Handle.ToString();
-            }, () => { if (handle != null) SetBoundary(handle); });
+                handles = BoundaryPicker.Pick(document, "\nВыберите одну или несколько замкнутых полилиний — границы поверхности (Enter — готово): ");
+            }, () => { if (handles != null) SetBoundary(handles); });
         }
 
         private void SetBoundary(string handle)
@@ -363,7 +365,8 @@ namespace Kzm.AutoCAD.UI.Panel
             PanelActions.Run("граница поверхности", document =>
             {
                 EditServices.SetBoundary(document.Database, id, handle, settings);
-                PanelMessages.Info(handle == null ? "Граница поверхности снята." : "Граница поверхности задана.");
+                int count = BoundaryList.Split(handle).Count;
+                PanelMessages.Info(count == 0 ? "Граница поверхности снята." : count == 1 ? "Граница поверхности задана." : "Граница поверхности задана: частей " + count + ".");
             }, panel.RefreshAll);
         }
 
@@ -452,9 +455,10 @@ namespace Kzm.AutoCAD.UI.Panel
         {
             panel = owner;
             string typedLayer = layer.Text;
+            layer.BeginUpdate();
             layer.Items.Clear();
-            if (panel.Document != null)
-                foreach (var item in panel.Snapshot.Layers.Value) layer.Items.Add(item);
+            if (panel.Document != null) layer.Items.AddRange(panel.Snapshot.Layers.Value.Cast<object>().ToArray());
+            layer.EndUpdate();
             layer.Text = typedLayer;
             if (surfaceId == null || isNew)
             {

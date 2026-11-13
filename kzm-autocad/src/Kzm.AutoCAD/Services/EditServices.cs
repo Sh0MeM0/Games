@@ -122,8 +122,9 @@ namespace Kzm.AutoCAD.Services
             using (var transaction = database.TransactionManager.StartTransaction())
             {
                 var surface = ReadSurface(database, transaction, surfaceId);
-                if (handle != null) SurfaceModels.ReadOutline(database, transaction, handle, "Граница поверхности");
-                surface.BoundaryHandle = handle;
+                // One or several parts (handles through «;», замечание 31); each must be a closed outline.
+                if (handle != null) SurfaceModels.ReadOutlines(database, transaction, handle, "Граница поверхности");
+                surface.BoundaryHandle = BoundaryList.Join(BoundaryList.Split(handle));
                 surface.Revision++;
                 KzmStore.WriteSurface(database, transaction, surface);
                 RefreshTriangles(database, transaction, surface, settings);

@@ -159,7 +159,7 @@ namespace Kzm.Core.Tests
                 points.Add(new XY(i * 10.0, j * 10.0));
             // The outline cuts triangles: inside it the surface is interpolated, outside — no data.
             var boundary = new List<XY> { new XY(0, 0), new XY(55, 0), new XY(55, 45), new XY(0, 45) };
-            var tin = Tin.Build(points, points.Select(p => p.X * 0.01).ToList(), null, boundary);
+            var tin = Tin.Build(points, points.Select(p => p.X * 0.01).ToList(), null, new[] { boundary });
             Assert.Equal(200, tin.TriangleCount);
             Assert.Equal(0.25, tin.ZAt(new XY(25, 25)).Value, 9);
             Assert.Equal(0.54, tin.ZAt(new XY(54, 44)).Value, 9);
