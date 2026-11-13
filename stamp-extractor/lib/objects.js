@@ -119,8 +119,22 @@ function mergeBoxes(boxes, gapOf, canMerge) {
 export const TUNING = Object.freeze({
   stampMinMean: 0.62, stampMinCount: 70, stampMerge: 1.45,
   signRx: 7, signRy: 3, signMinMean: 0.58, signMinCount: 40, signHandRatio: 0.55, signPrintRatio: 0.35,
-  signInsideStamp: 0.8, signStampProb: 0.45
+  signInsideStamp: 0.8, signStampProb: 0.45, stampMinGlyphs: 8
 });
+
+/** Letter-like pieces inside a stamp candidate. A seal carries lettering (many
+ * small separate marks); a large loop of a signature consists of a few long
+ * strokes. Counted at working resolution on ink the network calls stamp ink. */
+export function glyphCount(work, maps, ink, box, threshold) {
+  const x0 = box.x * 2, y0 = box.y * 2, w = Math.min(work.width - x0, box.w * 2), h = Math.min(work.height - y0, box.h * 2);
+  const mask = new Uint8Array(w * h), plane = maps.planes[STAMP];
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const wx = x0 + x, wy = y0 + y;
+    if (ink.prepared.mask[wy * work.width + wx] && plane[(wy >> 1) * maps.width + (wx >> 1)] >= threshold) mask[y * w + x] = 1;
+  }
+  const limit = 0.3 * Math.max(w, h);
+  return components(mask, w, h).boxes.filter(c => c.area >= 4 && Math.max(c.w, c.h) >= 3 && Math.max(c.w, c.h) <= limit).length;
+}
 
 /** Mean probability of class `cls` over pixels of `box` where class `seedCls` is confident. */
 function meanOver(maps, ink, box, seedCls, cls, threshold) {
@@ -145,6 +159,12 @@ export function detectObjects(work, maps, options = {}) {
     const m = unionBox(a, b);
     return Math.max(m.w, m.h) <= Math.max(a.w, a.h, b.w, b.h) * t.stampMerge && m.w / m.h < 4.5 && m.h / m.w < 4.5;
   }).filter(b => b.mean >= t.stampMinMean && b.count >= t.stampMinCount * scale * scale);
+  // Stamp-like ink without lettering is treated as a signature (see glyphCount).
+  const loops = [];
+  stamps = stamps.filter(b => {
+    if (glyphCount(work, maps, ink, b, weak) >= t.stampMinGlyphs) return true;
+    loops.push({ ...b, mean: b.mean * 0.8, anyObjectInk: true }); return false;
+  });
 
   let signatures = proposals(maps, ink, SIGN, { threshold: strong, rx: Math.round(t.signRx * scale) + 1, ry: Math.round(t.signRy * scale) + 1,
     minArea: Math.round(28 * scale * scale), minW: Math.round(12 * scale), minH: Math.round(5 * scale) });
@@ -161,6 +181,11 @@ export function detectObjects(work, maps, options = {}) {
     const inside = Math.max(0, ...stamps.map(st => overlapArea(st, box))) / (box.w * box.h);
     return !(inside >= t.signInsideStamp && meanOver(maps, ink, box, SIGN, STAMP, strong) >= t.signStampProb);
   });
+  // A loop group replaces signature boxes it overlaps (they are parts of the same strokes).
+  for (const loop of loops) {
+    signatures = signatures.filter(sig => overlapArea(sig, loop) < 0.5 * sig.w * sig.h);
+    signatures.push(loop);
+  }
 
   let handwriting = [];
   if (options.includeHandwriting) {
@@ -176,10 +201,10 @@ export function detectObjects(work, maps, options = {}) {
     const right = clamp(box.x + box.w + pad, 1, maps.width), bottom = clamp(box.y + box.h + pad, 1, maps.height);
     const mode = dominantInk(work, maps, maps.planes[plane], box, strong);
     regions.push({ x: x * 2, y: y * 2, w: Math.min(work.width, right * 2) - x * 2, h: Math.min(work.height, bottom * 2) - y * 2,
-      kind, mode, confidence: Math.round(box.mean * 100) / 100 });
+      kind, mode, confidence: Math.round(box.mean * 100) / 100, ...(box.anyObjectInk ? { anyObjectInk: true } : {}) });
   };
   for (const box of stamps) push(box, 'stamp', STAMP);
-  for (const box of signatures) push(box, 'signature', SIGN);
+  for (const box of signatures) push(box, 'signature', box.anyObjectInk ? STAMP : SIGN);
   for (const box of handwriting) push(box, 'handwriting', HAND);
 
   const filtered = regions.filter(r => !options.mode || options.mode === 'all' || options.mode === r.mode ||

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as ort from '../vendor/ort/ort.wasm.min.mjs';
-import { paperColor, modelInput, resizeImage, workingScale, segmentImage, sampleMap, CLASSES, WORK_SIDE } from '../lib/segmentation.js';
+import { paperColor, paperField, modelInput, resizeImage, workingScale, segmentImage, sampleMap, CLASSES, WORK_SIDE } from '../lib/segmentation.js';
 
 ort.env.wasm.wasmPaths = new URL('../vendor/ort/', import.meta.url).pathname; ort.env.wasm.numThreads = 1; ort.env.logLevel = 'error';
 function page(width, height, paper = [240, 236, 228]) {
@@ -26,9 +26,26 @@ test('paper colour is the 97th percentile and normalises paper to about +0.5', (
   const image = page(64, 64);
   for (let i = 0; i < 300; i++) image.data.set([20, 30, 160, 255], i * 4 * 7);
   assert.deepEqual(paperColor(image), [240, 236, 228]);
-  const { input, width, height } = modelInput(image);
+  const { input, width, height } = modelInput(image, { flatten: false });
   assert.equal(width % 16, 0); assert.equal(height % 16, 0);
   assert.ok(Math.abs(input[64 * 64 - 1] - 0.5) < 1e-6);
+});
+
+test('local flattening removes a lighting gradient but keeps ink dark', () => {
+  const width = 400, height = 160, data = new Uint8ClampedArray(width * height * 4);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const light = 255 - x * 0.35, ink = x % 40 < 3 && y > 40 && y < 120; // dark strokes on a darkening page
+    data.set(ink ? [30, 30, 30, 255] : [light, light * 0.95, light * 0.9, 255], (y * width + x) * 4);
+  }
+  const { input, width: w } = modelInput({ width, height, data }, { flatten: true });
+  const at = (x, y) => input[y * w + x];
+  // A steep gradient (−140 levels over 400 px) leaves ~10 % within the 32 px window.
+  assert.ok(Math.abs(at(10, 10) - 0.5) < 0.03 && Math.abs(at(390, 10) - 0.5) < 0.12, 'paper is close to +0.5 on both sides');
+  const plain = modelInput({ width, height, data }, { flatten: false }).input;
+  assert.ok(plain[10 * w + 390] < 0.05, 'without flattening the dark side would look like grey ink');
+  assert.ok(at(1, 80) < -0.25 && at(361, 80) < -0.2, 'ink stays dark');
+  const field = paperField({ width, height, data });
+  assert.equal(field.width, 50); assert.equal(field.height, 20);
 });
 
 test('transparent pixels are treated as white paper', () => {

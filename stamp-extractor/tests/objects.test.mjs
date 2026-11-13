@@ -25,9 +25,13 @@ test('ink colour classes', () => {
   assert.equal(inkClass(30, 50, 170), 'blue'); assert.equal(inkClass(200, 40, 50), 'red'); assert.equal(inkClass(30, 30, 30), 'black');
 });
 
-test('a ring classified as stamp and a cursive stroke classified as signature become two objects', () => {
+// Ring with lettering: separate 6×8 marks along an inner circle, as on a seal.
+const lettered = (x, y) => Math.abs(Math.hypot(x - 250, y - 250) - 120) < 4 ||
+  (Math.abs(Math.hypot(x - 250, y - 250) - 95) < 4 && Math.floor((Math.atan2(y - 250, x - 250) + Math.PI) / (2 * Math.PI) * 40) % 2 === 0);
+
+test('a lettered ring classified as stamp and a cursive stroke classified as signature become two objects', () => {
   const s = scene(800, 600);
-  ink(s, 100, 100, 400, 400, [40, 60, 170], CLASS_INDEX.stamp, 240, (x, y) => Math.abs(Math.hypot(x - 250, y - 250) - 120) < 4);
+  ink(s, 100, 100, 400, 400, [40, 60, 170], CLASS_INDEX.stamp, 240, lettered);
   ink(s, 450, 300, 750, 380, [20, 40, 150], CLASS_INDEX.signature, 240, (x, y) => Math.abs(y - 340 - 30 * Math.sin(x / 15)) < 3);
   const { regions } = detectObjects(s.work, s.maps, {});
   assert.deepEqual(regions.map(r => r.kind).sort(), ['signature', 'stamp']);
@@ -43,9 +47,16 @@ test('printed text and handwriting alone produce no stamp or signature', () => {
   assert.equal(regions.length, 0);
 });
 
+test('stamp-like loops without lettering are reported as a signature using all object ink', () => {
+  const s = scene(800, 600);
+  ink(s, 100, 100, 400, 400, [40, 60, 170], CLASS_INDEX.stamp, 240, (x, y) => Math.abs(Math.hypot(x - 250, y - 250) - 120) < 4);
+  const { regions } = detectObjects(s.work, s.maps, {});
+  assert.deepEqual(regions.map(r => [r.kind, !!r.anyObjectInk]), [['signature', true]]);
+});
+
 test('ink filter keeps only objects of the requested colour', () => {
   const s = scene(800, 600);
-  ink(s, 100, 100, 400, 400, [200, 40, 50], CLASS_INDEX.stamp, 240, (x, y) => Math.abs(Math.hypot(x - 250, y - 250) - 120) < 4);
+  ink(s, 100, 100, 400, 400, [200, 40, 50], CLASS_INDEX.stamp, 240, lettered);
   assert.equal(detectObjects(s.work, s.maps, { mode: 'blue' }).regions.length, 0);
   assert.equal(detectObjects(s.work, s.maps, { mode: 'red' }).regions.length, 1);
 });

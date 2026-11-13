@@ -59,10 +59,39 @@ export function paperColor(image) {
   });
 }
 
+/** Local paper colour: per-channel maximum over ~64 px neighbourhoods of an
+ * 8× reduced copy, smoothed, at 1/8 resolution. Mirrored in model/train.py. */
+export function paperField(image) {
+  const f = 8, w = Math.max(1, Math.ceil(image.width / f)), h = Math.max(1, Math.ceil(image.height / f));
+  const small = new Float32Array(w * h * 3), count = new Float32Array(w * h);
+  for (let y = 0; y < image.height; y++) for (let x = 0; x < image.width; x++) {
+    const p = (y * image.width + x) * 4, alpha = image.data[p + 3] / 255, q = ((y / f | 0) * w + (x / f | 0));
+    for (let c = 0; c < 3; c++) small[q * 3 + c] += 255 + (image.data[p + c] - 255) * alpha;
+    count[q]++;
+  }
+  for (let q = 0; q < w * h; q++) for (let c = 0; c < 3; c++) small[q * 3 + c] /= count[q];
+  const filter = (input, radius, reduce) => {
+    const out = new Float32Array(input.length), tmp = new Float32Array(input.length);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) for (let c = 0; c < 3; c++) {
+      let v = reduce === 'max' ? -1 : 0, n = 0;
+      for (let k = Math.max(0, x - radius); k <= Math.min(w - 1, x + radius); k++) { const s = input[(y * w + k) * 3 + c]; if (reduce === 'max') v = Math.max(v, s); else { v += s; n++; } }
+      tmp[(y * w + x) * 3 + c] = reduce === 'max' ? v : v / n;
+    }
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) for (let c = 0; c < 3; c++) {
+      let v = reduce === 'max' ? -1 : 0, n = 0;
+      for (let k = Math.max(0, y - radius); k <= Math.min(h - 1, y + radius); k++) { const s = tmp[(k * w + x) * 3 + c]; if (reduce === 'max') v = Math.max(v, s); else { v += s; n++; } }
+      out[(y * w + x) * 3 + c] = reduce === 'max' ? v : v / n;
+    }
+    return out;
+  };
+  return { width: w, height: h, factor: f, data: filter(filter(small, 4, 'max'), 2, 'mean') };
+}
+
 /** Float32 CHW tensor data padded to a multiple of 16 with the paper colour. */
-export function modelInput(image) {
+export function modelInput(image, { flatten = FLATTEN } = {}) {
   const width = Math.max(MIN_SIDE, Math.ceil(image.width / 16) * 16);
   const height = Math.max(MIN_SIDE, Math.ceil(image.height / 16) * 16);
+  if (flatten) return flattenedInput(image, width, height);
   const paper = paperColor(image), plane = width * height, input = new Float32Array(plane * 3);
   for (let c = 0; c < 3; c++) input.fill(0.5, c * plane, (c + 1) * plane);
   for (let y = 0; y < image.height; y++) for (let x = 0; x < image.width; x++) {
@@ -73,6 +102,30 @@ export function modelInput(image) {
     }
   }
   return { input, width, height, paper };
+}
+
+export let FLATTEN = true;
+export function setFlatten(value) { FLATTEN = !!value; }
+
+/** Divides every pixel by the local paper colour (bilinear from paperField). */
+function flattenedInput(image, width, height) {
+  const field = paperField(image), plane = width * height, input = new Float32Array(plane * 3);
+  for (let c = 0; c < 3; c++) input.fill(0.5, c * plane, (c + 1) * plane);
+  const { width: fw, height: fh, factor: f, data: paper } = field;
+  for (let y = 0; y < image.height; y++) {
+    const fy = Math.min(fh - 1, Math.max(0, (y + 0.5) / f - 0.5)), y0 = Math.floor(fy), y1 = Math.min(fh - 1, y0 + 1), ay = fy - y0;
+    for (let x = 0; x < image.width; x++) {
+      const fx = Math.min(fw - 1, Math.max(0, (x + 0.5) / f - 0.5)), x0 = Math.floor(fx), x1 = Math.min(fw - 1, x0 + 1), ax = fx - x0;
+      const p = (y * image.width + x) * 4, alpha = image.data[p + 3] / 255, i = y * width + x;
+      for (let c = 0; c < 3; c++) {
+        const bg = (paper[(y0 * fw + x0) * 3 + c] * (1 - ax) + paper[(y0 * fw + x1) * 3 + c] * ax) * (1 - ay) +
+          (paper[(y1 * fw + x0) * 3 + c] * (1 - ax) + paper[(y1 * fw + x1) * 3 + c] * ax) * ay;
+        const value = 255 + (image.data[p + c] - 255) * alpha;
+        input[c * plane + i] = Math.min(1.25, Math.max(0, value / Math.max(40, bg))) - 0.5;
+      }
+    }
+  }
+  return { input, width, height, paper: null };
 }
 
 /** Run the network and return Uint8 probability planes (0..255) at half resolution. */

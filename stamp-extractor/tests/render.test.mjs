@@ -24,6 +24,7 @@ test('target classes follow the object type and stamp layer', () => {
   assert.deepEqual(targetClasses({ kind: 'stamp' }), [CLASS_INDEX.stamp]);
   assert.deepEqual(targetClasses({ kind: 'stamp', stampLayer: 'whole' }).sort(), [CLASS_INDEX.hand, CLASS_INDEX.signature, CLASS_INDEX.stamp].sort());
   assert.equal(targetClasses({ kind: 'candidate' }), null);
+  assert.deepEqual(targetClasses({ kind: 'signature', anyObjectInk: true }).sort(), [CLASS_INDEX.hand, CLASS_INDEX.signature, CLASS_INDEX.stamp].sort());
 });
 
 test('stamp output keeps stamp ink and drops the signature and the foreign black text', () => {

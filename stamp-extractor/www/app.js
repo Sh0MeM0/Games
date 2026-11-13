@@ -110,7 +110,7 @@ function newRegion(rect, options = {}) {
   const width = page.width ?? state.source.width, height = page.height ?? state.source.height;
   const region = { id: page.next++, rect: { x, y, w: Math.min(width - x, Math.ceil(rect.w)), h: Math.min(height - y, Math.ceil(rect.h)) },
     name: `${KIND_NAMES[kind] || 'область'}_${number}`, scale: 1, confidence: rect.confidence || 0,
-    options: { objectKey: rect.key, kind, mode: 'all', stampLayer: 'printed', isolate: true, repair: false, repairGap: 12,
+    options: { objectKey: rect.key, kind, anyObjectInk: !!rect.anyObjectInk, mode: 'all', stampLayer: 'printed', isolate: true, repair: false, repairGap: 12,
       removeText: true, removeLines: true, threshold: 16, speckle: 3, contrast: 1.1, sensitivity: Number($('sensitivityMode').value), ...options },
     strokes: [], redo: [] };
   page.regions.push(region); return region;

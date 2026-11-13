@@ -414,7 +414,25 @@ def signature(canvas: Canvas, rng, xh, cx, cy):
     pen = max(1.0, xh * rng.uniform(.14, .32))
     style = rng.random()
     x0, base = pad, pad + height
-    if style < .45:
+    if style < .22:
+        # Large oval loops (a very common real signature style), then a tail.
+        pts = []
+        cx0 = x0 + width * rng.uniform(.1, .35)
+        for k in range(rng.randint(1, 3)):
+            rx = height * rng.uniform(.25, .7); ry = height * rng.uniform(.5, 1.1)
+            tilt = rng.uniform(-.9, .3); start = rng.uniform(0, 6.28); turns = rng.uniform(.8, 1.4)
+            ccx = cx0 + k * rx * rng.uniform(.2, .9); ccy = base - height * rng.uniform(.0, .5)
+            for t in np.linspace(start, start + turns * 6.28, 40):
+                ex, ey = rx * math.cos(t), ry * math.sin(t)
+                pts.append((ccx + ex * math.cos(tilt) - ey * math.sin(tilt), ccy + ex * math.sin(tilt) + ey * math.cos(tilt)))
+        tail_x = pts[-1][0]
+        for k in range(rng.randint(2, 6)):
+            tail_x += height * rng.uniform(.15, .45)
+            pts.append((tail_x, base - height * rng.uniform(-.2, .8)))
+        pts = [(px + rng.gauss(0, pen * .5), py + rng.gauss(0, pen * .5)) for px, py in pts]
+        alpha = np.maximum(alpha, draw_polyline(alpha.shape, smooth_path(pts, 6), pen, rng))
+        end_x = tail_x
+    elif style < .55:
         # Script font word with an exaggerated first capital.
         fonts = hand_fonts(cyrillic_only=False)
         name = rng.choice(SURNAMES)
@@ -693,6 +711,28 @@ def composite(canvas: Canvas, rng):
     return np.clip(img, 0, 255), labels
 
 
+def foreign_objects(img, rng):
+    """A pen, a finger-like shape or a soft shadow in a photo: not ink, no label."""
+    h, w = img.shape[:2]
+    nr = np.random.default_rng(rng.randint(0, 2**31))
+    for _ in range(rng.randint(1, 2)):
+        if rng.random() < .6:  # elongated pen body with a metallic highlight
+            mask = np.zeros((h, w), np.float32)
+            x0, y0 = rng.uniform(0, w), rng.uniform(0, h); ang = rng.uniform(0, 6.28); length = rng.uniform(.4, 1.2) * max(h, w)
+            x1, y1 = x0 + length * math.cos(ang), y0 + length * math.sin(ang)
+            cv2.line(mask, (int(x0), int(y0)), (int(x1), int(y1)), 1.0, int(rng.uniform(.04, .12) * min(h, w)), cv2.LINE_AA)
+            mask = cv2.GaussianBlur(mask, (0, 0), rng.uniform(.8, 3))
+            tone = np.array([rng.uniform(15, 90)] * 3, np.float32) + nr.normal(0, 25, (h, w, 1)).astype(np.float32).clip(-40, 60)
+            img = img * (1 - mask[..., None]) + tone * mask[..., None]
+        else:  # soft shadow
+            mask = np.zeros((h, w), np.float32)
+            cv2.ellipse(mask, (int(rng.uniform(0, w)), int(rng.uniform(0, h))), (int(rng.uniform(.1, .5) * w), int(rng.uniform(.05, .3) * h)),
+                        rng.uniform(0, 180), 0, 360, 1.0, -1)
+            mask = cv2.GaussianBlur(mask, (0, 0), rng.uniform(10, 40)) * rng.uniform(.2, .55)
+            img = img * (1 - mask[..., None])
+    return img
+
+
 def degrade(img, labels, rng, info=None):
     h, w = labels.shape
     mode = rng.random()
@@ -710,9 +750,11 @@ def degrade(img, labels, rng, info=None):
         ang = rng.uniform(0, 6.28)
         light = 1 - rng.uniform(.0, .45) * ((gx * math.cos(ang) + gy * math.sin(ang)) * .5 + .5)
         light *= 1 - rng.uniform(0, .25) * (gx ** 2 + gy ** 2) / 2
-        img = img * light[..., None] * np.array([rng.uniform(.85, 1.05), rng.uniform(.9, 1.05), rng.uniform(.85, 1.1)], np.float32)
-        if rng.random() < .5:
-            img = cv2.GaussianBlur(img, (0, 0), rng.uniform(.4, 1.3))
+        img = img * light[..., None] * np.array([rng.uniform(.65, 1.05), rng.uniform(.75, 1.05), rng.uniform(.8, 1.15)], np.float32)
+        if rng.random() < .4:  # washed-out ink and low contrast
+            k = rng.uniform(.55, .9); img = 255 - (255 - img) * k
+        if rng.random() < .65:
+            img = cv2.GaussianBlur(img, (0, 0), rng.uniform(.4, 2.5))
         img += nr.normal(0, rng.uniform(1, 7), img.shape).astype(np.float32)
     elif mode < .75:  # scanner
         if rng.random() < .5:
@@ -745,7 +787,7 @@ def document(seed: int, size=(640, 640), objects=None):
     rng = random.Random(seed)
     h, w = size
     c = Canvas(w, h, rng)
-    xh = rng.choice([rng.uniform(4.5, 7), rng.uniform(6, 10), rng.uniform(8, 14)])
+    xh = rng.choice([rng.uniform(4.5, 7), rng.uniform(6, 10), rng.uniform(8, 14), rng.uniform(12, 24)])
     # Printed body: stacked, non-overlapping horizontal bands like a real page.
     y = rng.randint(-40, h // 3)
     while y < h - 20 and rng.random() < .9:
@@ -789,6 +831,8 @@ def document(seed: int, size=(640, 640), objects=None):
         if box:
             found.append(('stamp', box))
     img, labels = composite(c, rng)
+    if rng.random() < .25:
+        img = foreign_objects(img, rng)
     info = {}
     out = degrade(img, labels, rng, info)
     if objects is not None:

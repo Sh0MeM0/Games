@@ -13,6 +13,8 @@ const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 const OBJECT_CLASSES = [HAND, SIGN, STAMP];
 
 export function targetClasses(options) {
+  // Objects re-labelled by geometry keep every object-ink class the network assigned.
+  if (options.anyObjectInk && options.kind !== 'candidate') return [STAMP, SIGN, HAND];
   if (options.kind === 'stamp') return options.stampLayer === 'whole' ? [STAMP, SIGN, HAND] : [STAMP];
   if (options.kind === 'signature') return [SIGN];
   if (options.kind === 'handwriting') return [HAND];

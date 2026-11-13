@@ -94,13 +94,47 @@ def build_model():
     return InkSeg()
 
 
+def paper_field(image):
+    """Local paper colour, identical to paperField() in lib/segmentation.js."""
+    H, W = image.shape[:2]; f = 8; h = -(-H // f); w = -(-W // f)
+    if H % f == 0 and W % f == 0:
+        small = image.reshape(h, f, w, f, 3).mean(axis=(1, 3), dtype=np.float32)
+    else:
+        padded = np.full((h * f, w * f, 3), np.nan, np.float32); padded[:H, :W] = image
+        small = np.nanmean(padded.reshape(h, f, w, f, 3), axis=(1, 3))
+
+    def max_filter(a, r, axis):
+        n = a.shape[axis]; out = a.copy()
+        for d in range(1, r + 1):
+            idx_lo = np.clip(np.arange(n) - d, 0, n - 1); idx_hi = np.clip(np.arange(n) + d, 0, n - 1)
+            out = np.maximum(out, np.maximum(np.take(a, idx_lo, axis), np.take(a, idx_hi, axis)))
+        return out
+
+    def mean_filter(a, r, axis):
+        n = a.shape[axis]; c = np.cumsum(a, axis=axis, dtype=np.float64)
+        c = np.concatenate([np.zeros_like(np.take(c, [0], axis)), c], axis=axis)
+        lo = np.clip(np.arange(n) - r, 0, n); hi = np.clip(np.arange(n) + r + 1, 0, n)
+        shape = [1] * a.ndim; shape[axis] = n
+        return ((np.take(c, hi, axis) - np.take(c, lo, axis)) / (hi - lo).reshape(shape)).astype(np.float32)
+
+    field = max_filter(max_filter(small, 4, 1), 4, 0)
+    field = mean_filter(mean_filter(field, 2, 1), 2, 0)
+    fy = np.clip((np.arange(H) + .5) / f - .5, 0, h - 1); fx = np.clip((np.arange(W) + .5) / f - .5, 0, w - 1)
+    y0 = np.floor(fy).astype(int); x0 = np.floor(fx).astype(int); y1 = np.minimum(h - 1, y0 + 1); x1 = np.minimum(w - 1, x0 + 1)
+    ay = (fy - y0)[:, None, None]; ax = (fx - x0)[None, :, None]
+    top = field[y0][:, x0] * (1 - ax) + field[y0][:, x1] * ax
+    bottom = field[y1][:, x0] * (1 - ax) + field[y1][:, x1] * ax
+    return top * (1 - ay) + bottom * ay
+
+
+def normalize_one(image):
+    x = image.astype(np.float32)
+    return (np.clip(x / np.maximum(paper_field(x), 40), 0, 1.25) - .5).astype(np.float32)
+
+
 def normalize(images):
-    """Per-image paper white balance, identical to lib/segmentation.js."""
-    x = images.astype(np.float32)
-    flat = x.reshape(x.shape[0], -1, 3)
-    paper = np.percentile(flat[:, ::7], 97, axis=1)[:, None, None, :]
-    paper = np.maximum(paper, 40)
-    return np.clip(x / paper, 0, 1.25) - .5
+    """Local paper flattening, identical to modelInput() in lib/segmentation.js."""
+    return np.stack([normalize_one(im) for im in images])
 
 
 def label_planes(labels):
@@ -121,9 +155,15 @@ def batches(images, labels, batch, crop, rng):
                 window = lab[y0:y0 + crop, x0:x0 + crop]
                 if (window & 28).any() or rng.random() < .3:
                     break
-            xs.append(img[y0:y0 + crop, x0:x0 + crop]); ys.append(window)
+            # The paper field only depends on ~56 px around a pixel, so a block-aligned
+            # window with a 64 px margin gives the same values as the full page.
+            wy0 = max(0, (y0 - 64) // 8 * 8); wx0 = max(0, (x0 - 64) // 8 * 8)
+            wy1 = min(SIZE, y0 + crop + 64); wx1 = min(SIZE, x0 + crop + 64)
+            wy1 = wy1 if wy1 == SIZE else wy0 + (wy1 - wy0) // 8 * 8 + 8; wx1 = wx1 if wx1 == SIZE else wx0 + (wx1 - wx0) // 8 * 8 + 8
+            part = normalize_one(np.asarray(img[wy0:min(SIZE, wy1), wx0:min(SIZE, wx1)]))
+            xs.append(part[y0 - wy0:y0 - wy0 + crop, x0 - wx0:x0 - wx0 + crop]); ys.append(window)
         xs = np.stack(xs); ys = np.stack(ys)
-        x = normalize(xs).transpose(0, 3, 1, 2)
+        x = xs.transpose(0, 3, 1, 2)
         planes = label_planes(ys)
         # Target at half resolution: a class is present if any of the 2×2 pixels carries it.
         t = planes.reshape(batch, crop // 2, 2, crop // 2, 2, len(CLASSES)).max(axis=(2, 4)).transpose(0, 3, 1, 2)
