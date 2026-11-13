@@ -116,8 +116,13 @@ namespace Kzm.Core
             get => BoundaryList.Split(BoundaryHandle);
             set => BoundaryHandle = BoundaryList.Join(value);
         }
-        /// <summary>Сторона квадрата, м (задание п. 4: 20 м; СТБ 2073-2010, п. 7.2).</summary>
-        public double Step { get; set; } = 20;
+        /// <summary>
+        /// Сторона квадрата, м. По умолчанию 10 м (замечание 34): СТБ 2073-2010, п. 7.2 — «как правило» 20 м,
+        /// «допускается» 10, 25, 40 или 50 м.
+        /// </summary>
+        public double Step { get; set; } = DefaultStep;
+
+        public const double DefaultStep = 10;
         /// <summary>Базовая точка (узел 0,0); пусто — угол границы, округлённый до шага.</summary>
         public double? OriginX { get; set; }
         public double? OriginY { get; set; }
@@ -158,7 +163,7 @@ namespace Kzm.Core
         /// <summary>Version of the drawing rules the cartogram was built with (0 — before 0.6).</summary>
         public int DrawVersion { get; set; }
         /// <summary>Drawing rules of this version: labels at the corners, hatch by spacing on the sheet (0.7).</summary>
-        public const int CurrentDrawVersion = 5;
+        public const int CurrentDrawVersion = 6;
         /// <summary>
         /// Построение в два шага (замечание 17): false — нанесены только сетка и отметки, объёмы ещё не рассчитаны.
         /// Картограммы прежних версий построены целиком.

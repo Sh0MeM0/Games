@@ -77,6 +77,8 @@ namespace Kzm.AutoCAD.Services
         internal const string GridMark = "G";
         /// <summary>Text with the areas of fill, cut, zero and the whole cartogram (version 0.8).</summary>
         internal const string AreasMark = "AREA";
+        /// <summary>Block of the hatch lines of the cut (version 0.9.1).</summary>
+        internal const string HatchMark = "H";
         /// <summary>Boundary polyline drawn by points for this cartogram (not part of the drawing that is rebuilt).</summary>
         internal const string BoundaryMark = "BOUNDARY";
         private const string StatementsSuffix = ".statements";

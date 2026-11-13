@@ -46,12 +46,15 @@ namespace Kzm.Core.Tests
             Assert.Equal(0.9, millimetres * scale / 1000.0, 9);
         }
 
+        // Замечание 34: новые картограммы — 1:1000 и шаг 10 м; высота текста 0,9 мм на листе (0,9 в чертеже).
         [Fact]
-        public void NewCartogramDefaultsAreForOneToFiveHundred()
+        public void NewCartogramDefaults()
         {
             var c = new CartogramInfo();
-            Assert.Equal(500, c.Scale);
-            Assert.Equal(new[] { 1.8, 1.8, 1.8 }, new[] { c.NodeTextMm, c.VolumeTextMm, c.TotalsTextMm });
+            Assert.Equal(1000, c.Scale);
+            Assert.Equal(10, c.Step);
+            Assert.Equal(1000, new KzmSettings().Scale);
+            Assert.Equal(new[] { 0.9, 0.9, 0.9 }, new[] { c.NodeTextMm, c.VolumeTextMm, c.TotalsTextMm });
         }
     }
 }

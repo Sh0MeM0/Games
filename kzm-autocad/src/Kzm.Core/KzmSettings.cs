@@ -16,8 +16,8 @@ namespace Kzm.Core
         /// <summary>Two decimals (task, п. 4; СТБ 2073-2010, п. 3.15).</summary>
         public const int DefaultDecimals = 2;
         public static readonly int[] Scales = { 500, 1000, 2000 };
-        /// <summary>СТБ 2073-2010, п. 3.13: plans at 1:500 or 1:1000; 1:500 is offered first.</summary>
-        public const int DefaultScale = 500;
+        /// <summary>СТБ 2073-2010, п. 3.13: plans at 1:500 or 1:1000; new cartograms get 1:1000 (замечание 34).</summary>
+        public const int DefaultScale = 1000;
         /// <summary>Шрифт текстов картограммы по умолчанию (замечание 27).</summary>
         public const string DefaultFont = "GOST Common";
 

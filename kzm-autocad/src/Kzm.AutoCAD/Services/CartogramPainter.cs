@@ -162,81 +162,34 @@ namespace Kzm.AutoCAD.Services
         // ---------- cut hatch, zero lines ----------
 
         /// <summary>
-        /// Площадь выемок — штриховкой ANSI31 (линии под 45°, СТБ 2073-2010, п. 7.1 б), синим, тонкой линией, как
-        /// в 0.6 (замечание 19: штриховка «_USER» версии 0.7 не появлялась). Шаг линий задан в мм на листе: масштаб
-        /// образца подбирается по шагу линий, прочитанному из самой штриховки, поэтому шаг на листе не зависит от того,
-        /// какой файл образцов (acad.pat или acadiso.pat) использует чертёж (в 0.6 масштаб не применялся и линии сливались).
+        /// Площадь выемок — штриховкой под 45° (СТБ 2073-2010, п. 7.1 б), синей, тонкой линией, с шагом в мм на листе.
+        /// С версии 0.9.1 линии строит сам модуль (<see cref="HatchLines"/>) — один блок на картограмму, — а не образец
+        /// ANSI31: в AutoCAD мелкие штриховки ANSI31 выходили сплошными (замечание 33), а шаг своих линий точен всегда.
+        /// Мелкая выемка не штрихуется (замечания 26, 33).
         /// </summary>
         private void DrawHatches(Progress meter)
         {
             double spacing = c.HatchSpacingMm * k;
             var weight = (LineWeight)c.HatchLineWeight;
-            bool inexact = false;
-            // Small cut is not hatched (замечание 26): pieces that touch form a region; a region smaller than a square with
-            // the side of the hatch spacing gets no hatch. Pieces of a large region at the edges of squares keep it.
-            var pieces = result.Squares.Where(s => s.Computed).SelectMany(s => s.CutPolygons.Select(polygon => (Square: s, Polygon: polygon))).ToList();
-            var kept = HatchRegions.Kept(pieces.Select(piece => (IReadOnlyList<XY>)piece.Polygon).ToList(), spacing * spacing);
+            var pieces = result.Squares.Where(s => s.Computed).SelectMany(s => s.CutPolygons).ToList();
+            meter.Step();
+            // Pieces that touch form a region; a region smaller than a square with the side of two hatch steps gets no hatch.
+            double minimum = HatchRegions.MinimumArea(spacing);
+            var kept = HatchRegions.Kept(pieces.Select(piece => (IReadOnlyList<XY>)piece).ToList(), minimum);
             if (kept.Count < pieces.Count)
             {
-                double area = pieces.Where((piece, index) => !kept.Contains(index)).Sum(piece => Geometry.Area(piece.Polygon));
+                double area = pieces.Where((piece, index) => !kept.Contains(index)).Sum(piece => Geometry.Area(piece));
                 computation.Notes.Add("Мелкая выемка без штриховки: кусков " + (pieces.Count - kept.Count) + ", всего " + ElevationFormat.Format(area, 1) +
-                                      " м² (участки меньше " + ElevationFormat.Format(spacing * spacing, 2) + " м² — квадрата со стороной в шаг штриховки).");
+                                      " м² (участки меньше " + ElevationFormat.Format(minimum, 1) + " м² — квадрата со стороной в два шага штриховки).");
             }
-            var loops = pieces.Where((piece, index) => kept.Contains(index)).GroupBy(piece => piece.Square, piece => piece.Polygon);
-            foreach (var square in loops)
-            {
-                meter.Step();
-                var hatch = Add(new Hatch(), Layers.CutHatch);
-                try
-                {
-                    hatch.SetHatchPattern(HatchPatternType.PreDefined, "ANSI31");
-                    if (!ScalePattern(hatch, spacing)) inexact = true;
-                    hatch.Associative = false;
-                    hatch.Color = Blue;
-                    hatch.LineWeight = weight;
-                    foreach (var polygon in square)
-                    {
-                        var points = new Point2dCollection();
-                        var bulges = new DoubleCollection();
-                        foreach (var p in polygon) { points.Add(new Point2d(p.X, p.Y)); bulges.Add(0); }
-                        points.Add(new Point2d(polygon[0].X, polygon[0].Y));
-                        bulges.Add(0);
-                        hatch.AppendLoop(HatchLoopTypes.Default, points, bulges);
-                    }
-                    hatch.EvaluateHatch(true);
-                }
-                catch (Autodesk.AutoCAD.Runtime.Exception exception)
-                {
-                    Created.Remove(hatch.ObjectId);
-                    hatch.Erase();
-                    computation.Problems.Add("штриховка выемки в квадрате у " + CartogramExport.Center(result, square.Key.I, square.Key.J) +
-                                             " не построена (" + exception.ErrorStatus + ")");
-                }
-            }
-            if (inexact)
-                computation.Problems.Add("шаг штриховки не удалось проверить по образцу ANSI31 — проверьте его на чертеже (Свойства → Масштаб штриховки)");
-        }
-
-        /// <summary>Distance between the lines of the hatch as it is now (ANSI31: one family, so |offset| is the spacing).</summary>
-        private static double LineSpacing(Hatch hatch)
-        {
-            if (hatch.NumberOfPatternDefinitions < 1) return 0;
-            var line = hatch.GetPatternDefinitionAt(0);
-            return Math.Sqrt(line.OffsetX * line.OffsetX + line.OffsetY * line.OffsetY);
-        }
-
-        /// <summary>
-        /// Sets the scale of the pattern so that its lines are <paramref name="spacing"/> apart; the scale takes effect when
-        /// the pattern is set again. Returns false when the spacing could not be read back.
-        /// </summary>
-        private static bool ScalePattern(Hatch hatch, double spacing)
-        {
-            double now = LineSpacing(hatch);
-            if (!(now > 0) || !(hatch.PatternScale > 0)) return false;
-            double basic = now / hatch.PatternScale;
-            hatch.PatternScale = spacing / basic;
-            hatch.SetHatchPattern(HatchPatternType.PreDefined, "ANSI31");
-            return Math.Abs(LineSpacing(hatch) - spacing) <= 0.01 * spacing;
+            var segments = HatchLines.Build(pieces.Where((piece, index) => kept.Contains(index)).Select(piece => (IReadOnlyList<XY>)piece), spacing, grid.Origin);
+            if (segments.Count == 0) return;
+            var definition = NewBlock("Штриховка выемки картограммы «" + c.Name + "» (модуль КЗМ)");
+            foreach (var (a, b) in segments)
+                AddTo(definition, new Line(P(a), P(b)) { Layer = Layers.CutHatch, Color = Blue, LineWeight = weight });
+            var reference = Add(new BlockReference(Point3d.Origin, definition.ObjectId) { Color = Blue, LineWeight = weight }, Layers.CutHatch,
+                Tag(Text(CartogramService.HatchMark)));
+            MoveToBottom(reference.ObjectId);
         }
 
         /// <summary>Линия нулевых работ — штриховая (СТБ 2073-2010, п. 3.12), толщиной 0,30 мм (замечание 22).</summary>
@@ -322,7 +275,16 @@ namespace Kzm.AutoCAD.Services
             }
             var present = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (ObjectId id in definition)
-                if (transaction.GetObject(id, OpenMode.ForRead) is AttributeDefinition attribute) present.Add(attribute.Tag);
+            {
+                if (!(transaction.GetObject(id, OpenMode.ForRead) is AttributeDefinition attribute)) continue;
+                present.Add(attribute.Tag);
+                // One grip per node (замечание 32): the values move only together with the block.
+                if (!attribute.LockPositionInBlock)
+                {
+                    attribute.UpgradeOpen();
+                    attribute.LockPositionInBlock = true;
+                }
+            }
             foreach (var (tag, prompt) in new[]
                      {
                          (CartogramService.WorkingTag, "Рабочая отметка (Hпр − Hф)"),
@@ -331,7 +293,7 @@ namespace Kzm.AutoCAD.Services
                      })
             {
                 if (present.Contains(tag)) continue;
-                var attribute = new AttributeDefinition(Point3d.Origin, string.Empty, tag, prompt, database.Textstyle) { Height = 1, Layer = "0" };
+                var attribute = new AttributeDefinition(Point3d.Origin, string.Empty, tag, prompt, database.Textstyle) { Height = 1, Layer = "0", LockPositionInBlock = true };
                 definition.AppendEntity(attribute);
                 transaction.AddNewlyCreatedDBObject(attribute, true);
             }
@@ -400,6 +362,8 @@ namespace Kzm.AutoCAD.Services
                 if (!(transaction.GetObject(id, OpenMode.ForRead) is AttributeDefinition attributeDefinition) || attributeDefinition.Constant) continue;
                 var attribute = new AttributeReference();
                 attribute.SetAttributeFromBlock(attributeDefinition, reference.BlockTransform);
+                // No grips on the values themselves: only the grip of the block at the corner of the grid (замечание 32).
+                attribute.LockPositionInBlock = true;
                 reference.AttributeCollection.AppendAttribute(attribute);
                 transaction.AddNewlyCreatedDBObject(attribute, true);
                 int index;
