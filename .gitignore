@@ -10,3 +10,9 @@ __pycache__/
 /server/
 /data/
 /backups/
+# Stamp extractor 4: generated vendor copies, build staging, training caches.
+stamp-extractor/vendor/
+stamp-extractor/build/
+stamp-extractor/dist/
+stamp-extractor/model/fonts/
+stamp-extractor/.tmp/

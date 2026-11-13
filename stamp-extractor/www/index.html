@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob: data:; font-src 'self'; worker-src 'self'; connect-src 'self' ws://127.0.0.1:* ws://localhost:*; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Печати и подписи</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="../vendor/neutralino/neutralino.js"></script>
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="brand-icon" aria-hidden="true">✂</span><div><h1>Печати и подписи <span class="ai-badge">локальная ИИ-модель</span></h1><p>4.0 · PDF и изображения · Печати и подписи отдельно от текста, линий и рукописных записей</p></div></div>
+    <span class="offline">● Всё остаётся на вашем компьютере</span>
+  </header>
+  <nav class="toolbar" aria-label="Основные действия">
+    <button id="open" class="primary">Открыть PDF или изображение</button>
+    <input id="file" type="file" accept=".pdf,.png,.jpg,.jpeg,.jfif,.webp,.bmp,.gif,.avif,application/pdf,image/*" hidden>
+    <span id="pager" class="pager" hidden><button id="prevPage" title="Предыдущая страница (PageUp)">◀</button><output id="pageValue">1 / 1</output><button id="nextPage" title="Следующая страница (PageDown)">▶</button></span>
+    <label id="pdfDpiLabel" class="inline" hidden>PDF<select id="pdfDpi" aria-label="Разрешение страниц PDF"><option value="150">150 dpi</option><option value="200" selected>200 dpi</option><option value="300">300 dpi</option></select></label>
+    <span class="divider"></span>
+    <select id="detectMode" aria-label="Чернила для автопоиска"><option value="all">Все чернила</option><option value="colored">Только цветные</option><option value="blue">Синие</option><option value="red">Красные</option><option value="black">Тёмные</option></select>
+    <label class="inline">Поиск<select id="sensitivityMode" aria-label="Строгость поиска"><option value="0.62">Строже</option><option value="0.5" selected>Обычно</option><option value="0.38">Мягче</option></select></label>
+    <button id="detect" disabled>Повторить поиск</button>
+    <button id="allPages" hidden>Найти на всех страницах</button>
+    <button id="draw" disabled aria-pressed="false">+ Выделить вручную</button>
+    <button id="saveAll" class="primary push-right" disabled>Сохранить все PNG</button>
+  </nav>
+  <main>
+    <section class="source-panel" aria-label="Исходный документ">
+      <div class="panel-heading"><span id="sourceInfo">Исходный документ</span><div class="zoom"><button id="zoomOut" title="Уменьшить" disabled>−</button><output id="zoomValue">100%</output><button id="zoomIn" title="Увеличить" disabled>+</button><button id="fit" disabled>Вписать</button></div></div>
+      <div id="viewport">
+        <div id="empty" class="empty"><div class="empty-symbol">▧</div><h2>Перетащите PDF или изображение сюда</h2><p>Скан, фотографию, скриншот или PDF<br>PDF, PNG, JPG, WEBP, BMP · Ctrl+V — вставить скриншот</p><button id="openEmpty">Выбрать файл</button><small>Оригинал останется без изменений</small></div>
+        <div id="stage" hidden><canvas id="original"></canvas><canvas id="overlay" aria-label="Рамки выделенных объектов"></canvas></div>
+      </div>
+      <div class="source-hint" id="sourceHint">Синие рамки — печати, зелёные — подписи. Выберите объект, проверьте очистку и сохраните PNG.</div>
+    </section>
+    <aside>
+      <section class="objects-panel"><div class="panel-heading"><strong>Объекты <span id="count" class="badge">0</span></strong><button id="duplicate" disabled title="Копия рамки для отдельной обработки">Дублировать</button></div><p id="analysisInfo" class="analysis-info">Поиск локальной моделью: печатный текст, линии, рукопись, подписи, печати</p><div id="objects"><p class="muted">Откройте документ: поиск начнётся автоматически.</p></div></section>
+      <section class="result-panel">
+        <div class="panel-heading"><strong>Результат</strong><button id="compare" disabled aria-pressed="false">Показать оригинал</button></div>
+        <div id="previewWrap"><p id="previewEmpty" class="muted">Выберите объект на документе</p><canvas id="preview" hidden></canvas><span id="previewBusy" hidden>Обработка…</span></div>
+        <div class="repair-view"><button id="highlightRepairs" type="button" disabled aria-pressed="false">Подсветить достроенные участки</button></div>
+        <p id="previewInfo" class="preview-info">Белый непрозрачный фон · PNG</p>
+        <fieldset id="editor" disabled>
+          <label>Имя файла<input id="name" type="text" maxlength="100" placeholder="печать_01"></label>
+          <label>Тип объекта<select id="kind"><option value="stamp">Печать / штамп</option><option value="signature">Подпись</option><option value="handwriting">Рукописный текст</option><option value="candidate">Область — убрать только печатный текст и линии</option></select></label>
+          <label class="slider-label">Порог уверенности модели <output id="sensitivityValue">0.5</output><input id="sensitivity" type="range" min="0.2" max="0.85" step="0.01" value="0.5"></label>
+          <label id="stampLayerLabel">Состав печати<select id="stampLayer"><option value="printed">Только оттиск печати</option><option value="whole">Оттиск вместе с подписью поверх</option></select></label>
+          <label class="check-label"><input id="removeText" type="checkbox" checked> Удалять печатный текст документа</label>
+          <label class="check-label"><input id="removeLines" type="checkbox" checked> Удалять линии бланка и таблиц</label>
+          <label class="check-label"><input id="isolate" type="checkbox" checked> Убирать посторонние штрихи (другие подписи, рукопись, печати)</label>
+          <label class="check-label"><input id="repair" type="checkbox"> Достраивать перекрытые участки и короткие разрывы</label>
+          <label class="slider-label">Максимальный разрыв, пикс. <output id="repairGapValue">12</output><input id="repairGap" type="range" min="4" max="24" value="12"></label>
+          <p class="control-hint">Достроенные пиксели — предположение. Подсветка показывает их; в PNG она не попадает, а к имени файла добавляется «_достроено».</p>
+          <div class="two-columns"><label>Оставить чернила<select id="mode"><option value="all">Все цвета</option><option value="colored">Только цветные</option><option value="blue">Синие</option><option value="red">Красные</option><option value="black">Тёмные</option></select></label><label>Масштаб PNG<select id="scale"><option value="1">Исходный</option><option value="2">В 2 раза</option><option value="3">В 3 раза</option></select></label></div>
+          <label class="slider-label">Удаление фона <output id="thresholdValue">16</output><input id="threshold" type="range" min="3" max="80" value="16"></label>
+          <label class="slider-label">Убрать мелкий шум <output id="speckleValue">3</output><input id="speckle" type="range" min="0" max="30" value="3"></label>
+          <label class="slider-label">Контраст штрихов <output id="contrastValue">1.1</output><input id="contrast" type="range" min="1" max="2.5" step="0.1" value="1.1"></label>
+          <div class="brush-tools"><button id="erase" type="button" aria-pressed="true">Убрать</button><button id="restore" type="button" aria-pressed="false">Вернуть</button><button id="undo" type="button" title="Отменить последнее движение кисти">↶</button><button id="redo" type="button" title="Повторить движение кисти">↷</button></div>
+          <label class="slider-label">Размер кисти <output id="brushValue">12</output><input id="brush" type="range" min="2" max="80" value="12"></label>
+          <p class="control-hint">Кисть уточняет результат. «Вернуть» восстанавливает только реально существующие штрихи исходника.</p>
+          <button id="saveOne" type="button" class="primary wide">Сохранить этот PNG</button>
+        </fieldset>
+      </section>
+    </aside>
+  </main>
+  <footer><span id="status" role="status" aria-live="polite">Загрузка модели…</span><button id="cancelExport" hidden>Остановить</button><button id="openOutput" disabled hidden>Открыть папку результатов</button></footer>
+  <div class="limitation">Модель обучена на синтетических документах и может ошибаться на реальных сканах: проверяйте каждый объект. Если подпись и печать одного цвета пересекаются, разделение может потребовать ручной правки.</div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

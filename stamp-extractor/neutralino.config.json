@@ -1,0 +1,55 @@
+{
+  "$schema": "https://raw.githubusercontent.com/neutralinojs/neutralinojs/main/schemas/neutralino.config.schema.json",
+  "applicationId": "org.stampextractor.desktop",
+  "version": "4.0.0",
+  "applicationName": "Печати и подписи",
+  "author": "Stamp Extractor",
+  "description": "Печати и подписи — выделение из PDF и изображений",
+  "copyright": "MIT License",
+  "defaultMode": "window",
+  "port": 0,
+  "documentRoot": "/app/",
+  "url": "/www/",
+  "enableServer": true,
+  "enableNativeAPI": true,
+  "tokenSecurity": "one-time",
+  "dataLocation": "system",
+  "storageLocation": "system",
+  "logging": {
+    "enabled": false,
+    "writeToLogFile": false
+  },
+  "nativeAllowList": [
+    "app.exit",
+    "os.showFolderDialog",
+    "os.open",
+    "filesystem.getStats",
+    "filesystem.writeBinaryFile"
+  ],
+  "serverHeaders": {
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Embedder-Policy": "require-corp",
+    "X-Content-Type-Options": "nosniff"
+  },
+  "modes": {
+    "window": {
+      "title": "Печати и подписи",
+      "width": 1440,
+      "height": 940,
+      "minWidth": 1080,
+      "minHeight": 720,
+      "center": true,
+      "icon": "/app/www/icon.png",
+      "enableInspector": false,
+      "exitProcessOnClose": true,
+      "useSavedState": false,
+      "useLogicalPixels": true
+    }
+  },
+  "cli": {
+    "binaryName": "StampExtractor",
+    "resourcesPath": "/app/",
+    "binaryVersion": "6.10.0",
+    "clientVersion": "6.10.0"
+  }
+}

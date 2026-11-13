@@ -1,0 +1,26 @@
+﻿Сторонние компоненты, входящие в portable-сборку «Печати и подписи» 4.0
+=======================================================================
+
+Neutralinojs 6.10.0 (StampExtractor.exe — исполняемый файл Neutralinojs,
+переименованный, со значком и описанием программы) и клиентская библиотека
+@neutralinojs/lib 6.10.0 — MIT License. Текст: licenses/Neutralinojs-MIT.txt.
+https://github.com/neutralinojs/neutralinojs
+
+ONNX Runtime Web 1.30.0 (onnxruntime-web: ort.wasm.min.mjs,
+ort-wasm-simd-threaded.mjs/.wasm) — MIT License, Copyright (c) Microsoft
+Corporation. Текст: licenses/ONNX-Runtime-MIT.txt. https://github.com/microsoft/onnxruntime
+
+PDF.js 6.4.299 (pdfjs-dist, legacy build, cmaps, standard_fonts, iccs, wasm) —
+Apache License 2.0. Текст: licenses/pdf.js-Apache-2.0.txt.
+Входящие в PDF.js декодеры (OpenJPEG, JBIG2, QCMS) и стандартные шрифты
+распространяются по своим лицензиям: licenses/pdf.js-wasm-*.txt и
+licenses/pdf.js-fonts-*.txt. https://github.com/mozilla/pdf.js
+
+Модель ink-seg.onnx обучена авторами программы на синтетических документах
+(генератор model/synth.py в исходном коде) и распространяется по MIT вместе
+с программой. При генерации использовались системные шрифты DejaVu, Liberation,
+FreeFont, Carlito и рукописные шрифты Google Fonts под SIL Open Font License;
+сами шрифты в сборку не входят.
+
+Microsoft Edge WebView2 Runtime в сборку не входит: используется установленный
+в Windows компонент.

@@ -1,71 +1,31 @@
 {
   "name": "stamp-extractor",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "private": true,
-  "description": "Печати и подписи — выделение и очистка изображений",
+  "description": "Печати и подписи — выделение печатей и подписей из PDF и изображений локальной моделью",
   "author": "Stamp Extractor",
   "license": "MIT",
   "type": "module",
-  "main": "main.cjs",
   "scripts": {
-    "start": "electron .",
+    "postinstall": "node scripts/vendor.mjs",
+    "vendor": "node scripts/vendor.mjs",
+    "start": "node scripts/serve.mjs 8080",
     "test": "node --test tests/*.test.mjs",
-    "test:ui": "node tests/desktop.cjs",
-    "dist:win": "electron-builder --win portable --x64 --publish never",
-    "models:fetch": "python scripts/fetch-ocr-models.py",
-    "test:documents": "node tests/document-desktop.cjs",
-    "test:failures": "node tests/failure-desktop.cjs"
-  },
-  "devDependencies": {
-    "electron": "44.7.0",
-    "electron-builder": "26.15.3",
-    "playwright": "1.62.1",
-    "pngjs": "7.0.0"
-  },
-  "build": {
-    "appId": "org.stampextractor.desktop",
-    "productName": "Печати и подписи",
-    "directories": {
-      "output": "release"
-    },
-    "files": [
-      "main.cjs",
-      "preload.cjs",
-      "lib/**/*",
-      "renderer/**/*",
-      "LICENSE",
-      "README.md"
-    ],
-    "win": {
-      "target": [
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "artifactName": "StampExtractor-Portable-${version}.${ext}"
-    },
-    "portable": {
-      "requestExecutionLevel": "user",
-      "unicode": true
-    },
-    "asarUnpack": [
-      "node_modules/**/*"
-    ],
-    "extraResources": [
-      {
-        "from": "resources/ocr",
-        "to": "ocr",
-        "filter": [
-          "**/*"
-        ]
-      }
-    ]
+    "test:ui": "node tests/ui.mjs",
+    "evaluate": "node tests/evaluate.mjs",
+    "build": "node scripts/build-portable.mjs",
+    "test:portable": "node tests/portable.mjs"
   },
   "dependencies": {
-    "tesseract.js": "7.0.0"
+    "@neutralinojs/lib": "6.10.0",
+    "onnxruntime-web": "1.30.0",
+    "pdfjs-dist": "6.4.299"
+  },
+  "devDependencies": {
+    "@electron/asar": "4.3.1",
+    "@neutralinojs/neu": "11.8.0",
+    "playwright": "1.63.0",
+    "pngjs": "7.0.0"
   },
   "repository": {
     "type": "git",
