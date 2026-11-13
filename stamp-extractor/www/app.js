@@ -230,7 +230,8 @@ async function openFile(file) {
   busy(true); status('Открываю файл…');
   try {
     const doc = await openDocument(file);
-    state.doc?.close(); state.doc = Object.assign(doc, { name: file.name || 'вставка.png', stem: (file.name || 'вставка').replace(/\.[^.]+$/, '') });
+    try { state.doc?.close(); } catch { /* the previous document is released anyway */ }
+    state.doc = Object.assign(doc, { name: file.name || 'вставка.png', stem: (file.name || 'вставка').replace(/\.[^.]+$/, '') });
     state.docId++; state.pages = []; state.page = 0;
     $('pdfDpiLabel').hidden = doc.kind !== 'pdf';
     document.querySelector('aside').scrollTop = 0;

@@ -25,11 +25,11 @@ const grid = [];
 if (stage === 1) {
   for (const sensitivity of [0.4, 0.5, 0.6]) for (const stampMinMean of [0.55, 0.62, 0.7]) for (const stampMerge of [1.2, 1.45])
     grid.push({ sensitivity, tuning: { stampMinMean, stampMerge } });
-} else {
+} else if (stage === 2) {
   for (const signMinMean of [0.5, 0.58, 0.66]) for (const signHandRatio of [0.4, 0.55]) for (const signRx of [7, 11]) for (const signInsideStamp of [0.5, 0.8])
     grid.push({ sensitivity: fixed.sensitivity ?? 0.5, tuning: { ...fixed.tuning, signMinMean, signHandRatio, signRx, signInsideStamp } });
 }
-const scoredKinds = stage === 1 ? ['stamp'] : ['signature'];
+const scoredKinds = stage === 2 ? ['signature'] : ['stamp'];
 const results = new Map(sets.map(set => [set, grid.map(() => [])]));
 const gts = new Map(sets.map(set => [set, JSON.parse(fs.readFileSync(path.join(set, 'gt.json'), 'utf8'))]));
 for (const set of sets) {

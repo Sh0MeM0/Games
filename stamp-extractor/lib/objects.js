@@ -117,8 +117,8 @@ function mergeBoxes(boxes, gapOf, canMerge) {
 
 /** Post-processing constants. Chosen on validation sets only (see VALIDATION.md). */
 export const TUNING = Object.freeze({
-  stampMinMean: 0.62, stampMinCount: 70, stampMerge: 1.45,
-  signRx: 7, signRy: 3, signMinMean: 0.58, signMinCount: 40, signHandRatio: 0.55, signPrintRatio: 0.35,
+  stampMinMean: 0.7, stampMinCount: 70, stampMerge: 1.45,
+  signRx: 11, signRy: 3, signMinMean: 0.58, signMinCount: 40, signHandRatio: 0.55, signPrintRatio: 0.35,
   signInsideStamp: 0.8, signStampProb: 0.45, stampMinGlyphs: 8
 });
 

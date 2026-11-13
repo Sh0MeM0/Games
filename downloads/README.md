@@ -7,7 +7,8 @@
 `README.txt` и лицензиями. Распакуйте архив целиком и запустите `StampExtractor.exe`.
 Нужен системный Microsoft Edge WebView2 Runtime (в Windows 11 он встроен).
 
-SHA-256 архива и каждого файла внутри приведены в `SHA256SUMS.txt`.
+SHA-256 архива приведена в `SHA256SUMS.txt`, каждого файла внутри — в
+`SHA256SUMS-4.0.0-contents.txt` (проверка в папке распаковки: `sha256sum -c`).
 
 Версии 1.0.0–3.0.0 (`StampExtractor-Portable-*.exe`, Electron, Git LFS) оставлены
 для истории. Их контрольные суммы также записаны в `SHA256SUMS.txt`.

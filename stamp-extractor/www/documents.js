@@ -67,7 +67,7 @@ async function openPdf(file) {
         return { width, height, data: pixels, reduced: scale < dpi / 72 - 1e-6, dpi: Math.round(scale * 72) };
       } finally { page.cleanup(); }
     },
-    close() { pdf.destroy(); }
+    close() { task.destroy().catch(() => {}); }
   };
 }
 
