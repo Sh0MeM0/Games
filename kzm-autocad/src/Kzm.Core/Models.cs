@@ -57,6 +57,8 @@ namespace Kzm.Core
         public bool ShowTriangles { get; set; }
         /// <summary>Fingerprint of the points when the triangles were drawn (to tell that they are outdated).</summary>
         public string TrianglesFingerprint { get; set; }
+        /// <summary>Block reference that shows the triangles (one object instead of thousands of lines).</summary>
+        public string TrianglesBlockHandle { get; set; }
         public PointAppearance Appearance { get; set; } = new PointAppearance();
 
         public string Title => "«" + Name + "» (" + SurfaceKinds.Title(Kind) + ", слой " + Layer + ")";
@@ -70,16 +72,42 @@ namespace Kzm.Core
         Text = 0,
         MText = 1,
         Manual = 2,
+        /// <summary>Vertex of a structure line made from a polyline.</summary>
+        Line = 3,
+        /// <summary>Elevation computed from a design plane.</summary>
+        Plane = 4,
+        /// <summary>POINT entity with an elevation in Z.</summary>
+        Point = 5,
+        /// <summary>Block with an elevation attribute.</summary>
+        Block = 6,
     }
 
     public static class SourceKinds
     {
+        public static string Title(SourceKind kind)
+        {
+            switch (kind)
+            {
+                case SourceKind.Text: return "текст";
+                case SourceKind.MText: return "мн. текст";
+                case SourceKind.Line: return "структурная линия";
+                case SourceKind.Plane: return "плоскость";
+                case SourceKind.Point: return "POINT (Z)";
+                case SourceKind.Block: return "блок (атрибут)";
+                default: return "вручную";
+            }
+        }
+
         public static string Code(SourceKind kind)
         {
             switch (kind)
             {
                 case SourceKind.Text: return "TEXT";
                 case SourceKind.MText: return "MTEXT";
+                case SourceKind.Line: return "LINE";
+                case SourceKind.Plane: return "PLANE";
+                case SourceKind.Point: return "POINT";
+                case SourceKind.Block: return "BLOCK";
                 default: return "MANUAL";
             }
         }
@@ -91,6 +119,10 @@ namespace Kzm.Core
                 case "TEXT": return SourceKind.Text;
                 case "MTEXT": return SourceKind.MText;
                 case "MANUAL": return SourceKind.Manual;
+                case "LINE": return SourceKind.Line;
+                case "PLANE": return SourceKind.Plane;
+                case "POINT": return SourceKind.Point;
+                case "BLOCK": return SourceKind.Block;
                 default: throw new KzmException("неизвестный источник точки: " + code);
             }
         }

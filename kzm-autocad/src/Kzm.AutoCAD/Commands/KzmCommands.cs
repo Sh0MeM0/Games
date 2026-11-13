@@ -65,23 +65,25 @@ namespace Kzm.AutoCAD.Commands
         [CommandMethod("KZM_UPDATE", CommandFlags.Modal | CommandFlags.Redraw)]
         public void Update() => Run("пересчёт картограмм", document =>
         {
+            if (UpdateOutdated(document) == 0) document.Editor.WriteMessage("\nКЗМ: устаревших картограмм нет.");
+            KzmPalette.MarkDirty();
+        });
+
+        /// <summary>Rebuilds every outdated cartogram (in the running command); returns how many.</summary>
+        internal static int UpdateOutdated(Document document)
+        {
             var snapshot = Services.DrawingData.Read(document);
+            if (snapshot.Error != null) throw new KzmException(snapshot.Error);
             var outdated = snapshot.Cartograms.Where(c => c.Info.Built && c.Outdated).ToList();
-            if (outdated.Count == 0)
-            {
-                document.Editor.WriteMessage("\nКЗМ: устаревших картограмм нет.");
-                return;
-            }
             foreach (var c in outdated)
             {
                 var computation = Services.CartogramService.Build(document, c.Info.Id, snapshot.Settings);
-                document.Editor.WriteMessage("\nКЗМ: «" + c.Info.Name + "» пересчитана: насыпь " +
-                    Services.CartogramService.Volume(computation.Result.TotalFill, c.Info.VolumeDecimals, true) + " м³, выемка " +
-                    Services.CartogramService.Volume(computation.Result.TotalCut, c.Info.VolumeDecimals, false) + " м³" +
-                    (computation.Result.Balanced ? "; итоги сходятся." : "; ВНИМАНИЕ: итоги не сходятся."));
+                document.Editor.WriteMessage("\nКЗМ: «" + c.Info.Name + "» пересчитана.");
+                foreach (var line in Services.CartogramService.Summary(computation)) document.Editor.WriteMessage("\n  " + line);
+                foreach (var problem in computation.Problems) document.Editor.WriteMessage("\n  замечание: " + problem);
             }
-            KzmPalette.MarkDirty();
-        });
+            return outdated.Count;
+        }
 
         [CommandMethod("KZM_SETTINGS", CommandFlags.Modal)]
         public void OpenSettings() => Guarded(() => KzmPalette.Open().ShowSettings());

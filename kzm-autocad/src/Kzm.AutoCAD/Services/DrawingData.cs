@@ -17,6 +17,10 @@ namespace Kzm.AutoCAD.Services
         internal bool IsCurrent { get; set; }
         /// <summary>Triangles are shown but the points changed since (MOVE/ERASE/COPY or attribute edit).</summary>
         internal bool TrianglesOutdated { get; set; }
+        internal int ExcludedPoints { get; set; }
+        internal List<StructureLine> Lines { get; set; } = new List<StructureLine>();
+        internal int StructureLines => Lines.Count(line => line.Kind == StructureLineKind.Line);
+        internal int Flips => Lines.Count(line => line.Kind == StructureLineKind.Flip);
     }
 
     internal sealed class CartogramSummary
@@ -67,27 +71,33 @@ namespace Kzm.AutoCAD.Services
                     var pointSurface = points.ToDictionary(point => point.Id, point => point.Data.SurfaceId);
                     var pairs = KzmStore.ReadConflicts(database, transaction).Where(pair => pair.IsAlive).ToList();
                     var surfaces = KzmStore.ReadSurfaces(database, transaction);
+                    var lines = KzmStore.ReadAllLines(database, transaction);
+                    // Each surface is fingerprinted once and reused by all cartograms.
+                    var signatures = new Dictionary<string, SurfaceSignature>(StringComparer.Ordinal);
                     foreach (var surface in surfaces)
                     {
                         bySurface.TryGetValue(surface.Id, out var own);
                         own = own ?? new List<SurfacePoint>();
-                        bool trianglesOutdated = surface.ShowTriangles &&
-                            surface.TrianglesFingerprint != PointBlocks.FingerprintOf(own) + "|" +
-                                SurfaceModels.OutlineFingerprint(database, transaction, surface.BoundaryHandle);
+                        lines.TryGetValue(surface.Id, out var ownLines);
+                        ownLines = ownLines ?? new List<StructureLine>();
+                        var signature = SurfaceModels.SignatureOf(database, transaction, surface, own, ownLines);
+                        signatures[surface.Id] = signature;
                         snapshot.Surfaces.Add(new SurfaceSummary
                         {
                             Info = surface,
                             Points = own.Count,
                             BrokenPoints = own.Count(point => !point.Elevation.IsValid),
+                            ExcludedPoints = own.Count(point => point.Data.Excluded),
                             PendingPairs = pairs.Count(pair => Belongs(pair, surface.Id, pointSurface)),
                             IsCurrent = surface.Id == snapshot.CurrentId,
-                            TrianglesOutdated = trianglesOutdated,
+                            TrianglesOutdated = surface.ShowTriangles && surface.TrianglesFingerprint != signature.ForTriangles(),
+                            Lines = ownLines,
                         });
                     }
                     foreach (var cartogram in KzmStore.ReadCartograms(database, transaction))
                     {
                         bool outdated = cartogram.Built && cartogram.BuiltFingerprint != CartogramService.FingerprintOf(database, transaction,
-                            cartogram, surfaces, id => bySurface.TryGetValue(id, out var list) ? list : new List<SurfacePoint>());
+                            cartogram, surfaces, id => signatures[id]);
                         snapshot.Cartograms.Add(new CartogramSummary { Info = cartogram, Outdated = outdated });
                     }
                     transaction.Commit();
@@ -131,8 +141,12 @@ namespace Kzm.AutoCAD.Services
             }
         }
 
-        /// <summary>Layers of the current space that hold TEXT/MTEXT, with counts.</summary>
-        internal static List<KeyValuePair<string, int>> TextLayers(Document document)
+        internal static readonly string[] TextTypes = { "TEXT", "MTEXT" };
+        internal static readonly string[] PointTypes = { "POINT" };
+        internal static readonly string[] BlockTypes = { "INSERT" };
+
+        /// <summary>Layers of the current space that hold objects of the given types, with counts (module points are not counted).</summary>
+        internal static List<KeyValuePair<string, int>> EntityLayers(Document document, ICollection<string> types)
         {
             var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             using (document.LockDocument(DocumentLockMode.Read, null, null, false))
@@ -141,8 +155,9 @@ namespace Kzm.AutoCAD.Services
                 var space = (BlockTableRecord)transaction.GetObject(document.Database.CurrentSpaceId, OpenMode.ForRead);
                 foreach (ObjectId id in space)
                 {
-                    if (id.ObjectClass.DxfName != "TEXT" && id.ObjectClass.DxfName != "MTEXT") continue;
+                    if (!types.Contains(id.ObjectClass.DxfName)) continue;
                     var entity = (Entity)transaction.GetObject(id, OpenMode.ForRead);
+                    if (entity is BlockReference && PointBlocks.Decode(entity) != null) continue;
                     counts.TryGetValue(entity.Layer, out int count);
                     counts[entity.Layer] = count + 1;
                 }
@@ -151,7 +166,9 @@ namespace Kzm.AutoCAD.Services
             return counts.OrderBy(pair => pair.Key, StringComparer.CurrentCultureIgnoreCase).ToList();
         }
 
-        internal static List<ObjectId> TextsOnLayers(Document document, ICollection<string> layers)
+        internal static List<KeyValuePair<string, int>> TextLayers(Document document) => EntityLayers(document, TextTypes);
+
+        internal static List<ObjectId> EntitiesOnLayers(Document document, ICollection<string> layers, ICollection<string> types)
         {
             var result = new List<ObjectId>();
             if (layers.Count == 0) return result;
@@ -162,14 +179,18 @@ namespace Kzm.AutoCAD.Services
                 var space = (BlockTableRecord)transaction.GetObject(document.Database.CurrentSpaceId, OpenMode.ForRead);
                 foreach (ObjectId id in space)
                 {
-                    if (id.ObjectClass.DxfName != "TEXT" && id.ObjectClass.DxfName != "MTEXT") continue;
+                    if (!types.Contains(id.ObjectClass.DxfName)) continue;
                     var entity = (Entity)transaction.GetObject(id, OpenMode.ForRead);
-                    if (wanted.Contains(entity.Layer)) result.Add(id);
+                    if (!wanted.Contains(entity.Layer)) continue;
+                    if (entity is BlockReference && PointBlocks.Decode(entity) != null) continue;
+                    result.Add(id);
                 }
                 transaction.Commit();
             }
             return result;
         }
+
+        internal static List<ObjectId> TextsOnLayers(Document document, ICollection<string> layers) => EntitiesOnLayers(document, layers, TextTypes);
 
         internal static List<string> TextStyles(Document document)
         {

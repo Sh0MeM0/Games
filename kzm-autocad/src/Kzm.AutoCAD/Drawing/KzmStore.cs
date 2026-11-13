@@ -42,6 +42,8 @@ namespace Kzm.AutoCAD.Drawing
         private const string ConflictsName = "DUPLICATE_PAIRS";
         private const string KeptName = "KEPT_PAIRS";
         private const string CartogramsName = "CARTOGRAMS";
+        private const string LinesName = "LINES";
+        private const string CartogramObjectsName = "CARTOGRAM_OBJECTS";
         private const int MaximumSurfaces = 256;
 
         // ---------- settings ----------
@@ -49,7 +51,8 @@ namespace Kzm.AutoCAD.Drawing
         internal static KzmSettings ReadSettings(Database database, Transaction transaction)
         {
             var root = Root(database, transaction, false);
-            if (root == null || !root.Contains(SettingsName)) return new KzmSettings();
+            // A drawing without settings of its own takes the default template (задание п. 8).
+            if (root == null || !root.Contains(SettingsName)) return KzmDefaults.Load()?.Settings ?? new KzmSettings();
             return SettingsCodec.Decode(ReadPairs(root, SettingsName, transaction));
         }
 
@@ -177,6 +180,101 @@ namespace Kzm.AutoCAD.Drawing
             var root = Root(database, transaction, false);
             if (root == null || !root.Contains(CartogramsName)) return;
             var dictionary = (DBDictionary)transaction.GetObject(root.GetAt(CartogramsName), OpenMode.ForWrite);
+            if (!dictionary.Contains(cartogramId)) return;
+            var record = transaction.GetObject(dictionary.GetAt(cartogramId), OpenMode.ForWrite);
+            dictionary.Remove(cartogramId);
+            record.Erase();
+        }
+
+        // ---------- structure lines (per surface) ----------
+
+        internal static List<StructureLine> ReadLines(Database database, Transaction transaction, string surfaceId)
+        {
+            var result = new List<StructureLine>();
+            var root = Root(database, transaction, false);
+            if (root == null || !root.Contains(LinesName)) return result;
+            var all = (DBDictionary)transaction.GetObject(root.GetAt(LinesName), OpenMode.ForRead);
+            if (!all.Contains(surfaceId)) return result;
+            if (!(transaction.GetObject(all.GetAt(surfaceId), OpenMode.ForRead) is DBDictionary lines)) return result;
+            foreach (DBDictionaryEntry entry in lines)
+                result.Add(StructureLine.Decode(entry.Key, ReadPairs(lines, entry.Key, transaction)));
+            return result.OrderBy(line => line.Kind).ThenBy(line => line.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+        }
+
+        internal static Dictionary<string, List<StructureLine>> ReadAllLines(Database database, Transaction transaction)
+        {
+            var result = new Dictionary<string, List<StructureLine>>(StringComparer.Ordinal);
+            var root = Root(database, transaction, false);
+            if (root == null || !root.Contains(LinesName)) return result;
+            var all = (DBDictionary)transaction.GetObject(root.GetAt(LinesName), OpenMode.ForRead);
+            foreach (DBDictionaryEntry entry in all) result[entry.Key] = ReadLines(database, transaction, entry.Key);
+            return result;
+        }
+
+        internal static void WriteLine(Database database, Transaction transaction, string surfaceId, StructureLine line)
+        {
+            if (string.IsNullOrEmpty(line.Id)) throw new ArgumentException("Нет идентификатора структурной линии.");
+            var root = Root(database, transaction, true);
+            var lines = Child(Child(root, LinesName, transaction), surfaceId, transaction);
+            WritePairs(lines, line.Id, StructureLine.Encode(line), transaction);
+        }
+
+        internal static void DeleteLine(Database database, Transaction transaction, string surfaceId, string lineId)
+        {
+            var root = Root(database, transaction, false);
+            if (root == null || !root.Contains(LinesName)) return;
+            var all = (DBDictionary)transaction.GetObject(root.GetAt(LinesName), OpenMode.ForRead);
+            if (!all.Contains(surfaceId)) return;
+            var lines = (DBDictionary)transaction.GetObject(all.GetAt(surfaceId), OpenMode.ForWrite);
+            if (!lines.Contains(lineId)) return;
+            var record = transaction.GetObject(lines.GetAt(lineId), OpenMode.ForWrite);
+            lines.Remove(lineId);
+            record.Erase();
+        }
+
+        internal static void DeleteLines(Database database, Transaction transaction, string surfaceId)
+        {
+            var root = Root(database, transaction, false);
+            if (root == null || !root.Contains(LinesName)) return;
+            var all = (DBDictionary)transaction.GetObject(root.GetAt(LinesName), OpenMode.ForWrite);
+            if (!all.Contains(surfaceId)) return;
+            var lines = (DBDictionary)transaction.GetObject(all.GetAt(surfaceId), OpenMode.ForWrite);
+            foreach (var key in lines.Cast<DBDictionaryEntry>().Select(entry => entry.Key).ToList())
+            {
+                var record = transaction.GetObject(lines.GetAt(key), OpenMode.ForWrite);
+                lines.Remove(key);
+                record.Erase();
+            }
+            all.Remove(surfaceId);
+            lines.Erase();
+        }
+
+        // ---------- objects drawn by a cartogram (to find them without scanning the drawing) ----------
+
+        /// <summary>Null when the cartogram was drawn by version 0.4 (no list kept).</summary>
+        internal static List<ObjectId> ReadCartogramObjects(Database database, Transaction transaction, string cartogramId)
+        {
+            var root = Root(database, transaction, false);
+            if (root == null || !root.Contains(CartogramObjectsName)) return null;
+            var dictionary = (DBDictionary)transaction.GetObject(root.GetAt(CartogramObjectsName), OpenMode.ForRead);
+            if (!dictionary.Contains(cartogramId)) return null;
+            if (!(transaction.GetObject(dictionary.GetAt(cartogramId), OpenMode.ForRead) is Xrecord record)) return null;
+            return (record.Data?.AsArray() ?? new TypedValue[0]).Select(value => value.Value).OfType<ObjectId>().ToList();
+        }
+
+        internal static void WriteCartogramObjects(Database database, Transaction transaction, string cartogramId, IEnumerable<ObjectId> ids)
+        {
+            var root = Root(database, transaction, true);
+            var data = new ResultBuffer();
+            foreach (var id in ids) data.Add(new TypedValue((int)DxfCode.SoftPointerId, id));
+            WriteRecord(Child(root, CartogramObjectsName, transaction), cartogramId, data, transaction);
+        }
+
+        internal static void DeleteCartogramObjects(Database database, Transaction transaction, string cartogramId)
+        {
+            var root = Root(database, transaction, false);
+            if (root == null || !root.Contains(CartogramObjectsName)) return;
+            var dictionary = (DBDictionary)transaction.GetObject(root.GetAt(CartogramObjectsName), OpenMode.ForWrite);
             if (!dictionary.Contains(cartogramId)) return;
             var record = transaction.GetObject(dictionary.GetAt(cartogramId), OpenMode.ForWrite);
             dictionary.Remove(cartogramId);

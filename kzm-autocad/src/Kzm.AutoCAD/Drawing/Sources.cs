@@ -30,6 +30,46 @@ namespace Kzm.AutoCAD.Drawing
         }
 
         /// <summary>
+        /// POINT with an elevation in Z (задание п. 2.1). The number is written with a decimal part so that
+        /// the rule «отметка — число с дробной частью» accepts it; Z = 0 means «no elevation» (null).
+        /// </summary>
+        internal static SourceText ReadPoint(DBPoint point)
+        {
+            double z = point.Position.Z;
+            if (Math.Abs(z) < 1e-9) return null;
+            string text = z.ToString("0.0###########", System.Globalization.CultureInfo.InvariantCulture);
+            return new SourceText(point.Handle.ToString(), SourceKind.Point, text, text, Plan(point.Position));
+        }
+
+        /// <summary>Attribute values of a block by tag (upper case).</summary>
+        internal static Dictionary<string, AttributeReference> Attributes(BlockReference block, Transaction transaction)
+        {
+            var result = new Dictionary<string, AttributeReference>(StringComparer.OrdinalIgnoreCase);
+            foreach (ObjectId id in block.AttributeCollection)
+                if (transaction.GetObject(id, OpenMode.ForRead) is AttributeReference attribute && !result.ContainsKey(attribute.Tag))
+                    result[attribute.Tag] = attribute;
+            return result;
+        }
+
+        /// <summary>
+        /// Block with an elevation attribute (тег выбирает пользователь): the text of the attribute, with the number
+        /// attribute in front of it («15 145,32») so that the point number is taken as from a text label.
+        /// </summary>
+        internal static SourceText ReadBlock(BlockReference block, Transaction transaction, string elevationTag, string numberTag)
+        {
+            var attributes = Attributes(block, transaction);
+            if (string.IsNullOrEmpty(elevationTag) || !attributes.TryGetValue(elevationTag, out var elevation)) return null;
+            string raw = elevation.IsMTextAttribute ? elevation.MTextAttribute.Contents : elevation.TextString ?? string.Empty;
+            string plain = elevation.IsMTextAttribute ? TextCleaner.CleanMText(raw) : TextCleaner.CleanText(raw);
+            if (!string.IsNullOrEmpty(numberTag) && attributes.TryGetValue(numberTag, out var number))
+            {
+                string value = TextCleaner.CleanText(number.TextString ?? string.Empty).Trim();
+                if (value.Length > 0) plain = value + " " + plain;
+            }
+            return new SourceText(block.Handle.ToString(), SourceKind.Block, raw, plain, Plan(block.Position), elevation.TextStyleName, elevation.Height);
+        }
+
+        /// <summary>
         /// The point AutoCAD shows as the insertion point: Position for left/aligned/fit
         /// texts, AlignmentPoint for all other justifications.
         /// </summary>

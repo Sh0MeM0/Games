@@ -21,6 +21,9 @@ namespace Kzm.AutoCAD.Services
         internal Dictionary<string, ImportOverride> Overrides { get; set; } = new Dictionary<string, ImportOverride>(StringComparer.OrdinalIgnoreCase);
         /// <summary>Take the text style and height of the points from the imported texts.</summary>
         internal bool AppearanceFromTexts { get; set; }
+        /// <summary>Blocks: the attribute with the elevation and (optionally) the one with the point number.</summary>
+        internal string ElevationTag { get; set; }
+        internal string NumberTag { get; set; }
     }
 
     internal sealed class ImportResult
@@ -35,6 +38,8 @@ namespace Kzm.AutoCAD.Services
         internal Dictionary<ImportItem, ObjectId> Created { get; } = new Dictionary<ImportItem, ObjectId>();
         internal bool Committed { get; set; }
         internal List<string> Summary { get; } = new List<string>();
+        /// <summary>Objects of the selection that are not sources (POINT without Z, blocks without the tag).</summary>
+        internal List<string> Notes { get; } = new List<string>();
     }
 
     internal static class ImportService
@@ -50,14 +55,29 @@ namespace Kzm.AutoCAD.Services
             {
                 result.Surface = KzmStore.ReadSurfaces(database, transaction).FirstOrDefault(surface => surface.Id == request.SurfaceId)
                                  ?? throw new KzmException("Поверхность для импорта не найдена в чертеже. Выберите её в списке.");
+                int withoutZ = 0, withoutTag = 0;
                 foreach (var id in request.TextIds.Where(id => id.IsValid && !id.IsErased))
                 {
                     if (!(transaction.GetObject(id, OpenMode.ForRead) is Entity entity)) continue;
-                    var text = Sources.ReadText(entity);
+                    SourceText text;
+                    if (entity is DBPoint point)
+                    {
+                        text = Sources.ReadPoint(point);
+                        if (text == null) { withoutZ++; continue; }
+                    }
+                    else if (entity is BlockReference block)
+                    {
+                        if (PointBlocks.Decode(block) != null) continue; // points of the module are not sources
+                        text = Sources.ReadBlock(block, transaction, request.ElevationTag, request.NumberTag);
+                        if (text == null) { withoutTag++; continue; }
+                    }
+                    else text = Sources.ReadText(entity);
                     if (text == null) continue;
                     texts.Add(text);
                     result.TextIds[text.Handle] = id;
                 }
+                if (withoutZ > 0) result.Notes.Add("POINT с Z = 0 (без отметки) пропущено: " + withoutZ + ".");
+                if (withoutTag > 0) result.Notes.Add("Блоков без атрибута «" + request.ElevationTag + "» пропущено: " + withoutTag + ".");
                 existing = PointBlocks.Read(database, transaction, settings, request.SurfaceId);
                 transaction.Commit();
             }
@@ -73,6 +93,7 @@ namespace Kzm.AutoCAD.Services
             PointNumbering.Assign(result.Plan, PointNumbering.Next(existing.Select(point => point.Number)), markers);
             result.Duplicates = ImportPlanner.FindDuplicates(result.Plan, existingPoints);
             result.Summary.AddRange(ImportSummary.Lines(result.Plan, result.Duplicates.Count, result.Plan.Accepted.Count(), true));
+            result.Summary.AddRange(result.Notes);
             if (result.BrokenPoints.Count > 0)
                 result.Summary.Add("Точки поверхности с нечитаемой отметкой: " + result.BrokenPoints.Count + " (см. «Точки»).");
             return result;
@@ -152,6 +173,7 @@ namespace Kzm.AutoCAD.Services
             result.Summary.Clear();
             result.Summary.Add("Импорт в поверхность " + surface.Title + " выполнен.");
             result.Summary.AddRange(ImportSummary.Lines(plan, result.Duplicates.Count, result.Created.Count));
+            result.Summary.AddRange(result.Notes);
             if (plan.Rejected.Any() || plan.Disputed.Any() || result.Duplicates.Count > 0 || plan.Accepted.Any(item => item.Warning != null))
                 result.Summary.Add("Проблемные места помечены на слое " + Layers.Check + " (не печатается).");
             return result;
@@ -258,6 +280,77 @@ namespace Kzm.AutoCAD.Services
             }
         }
 
+        /// <summary>POINT objects by a window (or any selection).</summary>
+        internal static List<ObjectId> PickPointObjects(Editor editor)
+        {
+            var filter = new SelectionFilter(new[] { new TypedValue((int)DxfCode.Start, "POINT") });
+            var selection = editor.GetSelection(new PromptSelectionOptions { MessageForAdding = "\nВыберите точки POINT с отметкой в Z, Enter — готово" }, filter);
+            return selection.Status == PromptStatus.OK ? selection.Value.GetObjectIds().ToList() : null;
+        }
+
+        /// <summary>All POINT objects of the current space on the layer of the picked sample.</summary>
+        internal static (List<ObjectId> Ids, string Description) PickSimilarPoints(Document document)
+        {
+            var options = new PromptEntityOptions("\nУкажите образец точки POINT: ");
+            options.SetRejectMessage("\nНужен POINT.");
+            options.AddAllowedClass(typeof(DBPoint), true);
+            var pick = document.Editor.GetEntity(options);
+            if (pick.Status != PromptStatus.OK) return (null, null);
+            using (var transaction = document.Database.TransactionManager.StartOpenCloseTransaction())
+            {
+                var sample = (Entity)transaction.GetObject(pick.ObjectId, OpenMode.ForRead);
+                var space = (BlockTableRecord)transaction.GetObject(document.Database.CurrentSpaceId, OpenMode.ForRead);
+                var ids = new List<ObjectId>();
+                foreach (ObjectId id in space)
+                {
+                    if (id.ObjectClass.DxfName != "POINT") continue;
+                    if (string.Equals(((Entity)transaction.GetObject(id, OpenMode.ForRead)).Layer, sample.Layer, StringComparison.OrdinalIgnoreCase)) ids.Add(id);
+                }
+                transaction.Commit();
+                return (ids, "POINT, слой «" + sample.Layer + "»");
+            }
+        }
+
+        /// <summary>A sample block: all blocks of the same name in the current space and the attribute tags with the sample values.</summary>
+        internal static (List<ObjectId> Ids, string Description, List<KeyValuePair<string, string>> Tags) PickSimilarBlocks(Document document)
+        {
+            var options = new PromptEntityOptions("\nУкажите образец блока точки съёмки (с атрибутом отметки): ");
+            options.SetRejectMessage("\nНужен блок.");
+            options.AddAllowedClass(typeof(BlockReference), true);
+            var pick = document.Editor.GetEntity(options);
+            if (pick.Status != PromptStatus.OK) return (null, null, null);
+            using (var transaction = document.Database.TransactionManager.StartOpenCloseTransaction())
+            {
+                var sample = (BlockReference)transaction.GetObject(pick.ObjectId, OpenMode.ForRead);
+                string blockName = Sources.EffectiveName(sample, transaction);
+                if (string.Equals(blockName, PointBlocks.BlockName, StringComparison.OrdinalIgnoreCase))
+                    throw new KzmException("Образец — точка модуля («" + PointBlocks.BlockName + "»). Укажите блок съёмки.");
+                var tags = Sources.Attributes(sample, transaction).Select(pair => new KeyValuePair<string, string>(pair.Key, pair.Value.TextString ?? string.Empty)).ToList();
+                if (tags.Count == 0) throw new KzmException("У блока «" + blockName + "» нет атрибутов: отметку взять неоткуда.");
+                var space = (BlockTableRecord)transaction.GetObject(document.Database.CurrentSpaceId, OpenMode.ForRead);
+                var ids = new List<ObjectId>();
+                foreach (ObjectId id in space)
+                {
+                    if (id.ObjectClass.DxfName != "INSERT") continue;
+                    if (transaction.GetObject(id, OpenMode.ForRead) is BlockReference block &&
+                        string.Equals(Sources.EffectiveName(block, transaction), blockName, StringComparison.OrdinalIgnoreCase)) ids.Add(id);
+                }
+                transaction.Commit();
+                return (ids, "блок «" + blockName + "»", tags);
+            }
+        }
+
+        /// <summary>The tag whose sample value looks like an elevation (a number with a decimal part).</summary>
+        internal static string GuessElevationTag(IEnumerable<KeyValuePair<string, string>> tags)
+        {
+            foreach (var pair in tags)
+            {
+                var extract = ElevationExtractor.Extract(TextCleaner.CleanText(pair.Value));
+                if (extract.Value.HasValue) return pair.Key;
+            }
+            return tags.Select(pair => pair.Key).FirstOrDefault();
+        }
+
         internal static XY? PickPoint(Editor editor, string prompt)
         {
             var result = editor.GetPoint(new PromptPointOptions("\n" + prompt + ": "));
@@ -268,13 +361,21 @@ namespace Kzm.AutoCAD.Services
 
         internal static string CountTexts(Database database, IEnumerable<ObjectId> ids)
         {
-            int text = 0, mtext = 0;
+            int text = 0, mtext = 0, points = 0, blocks = 0;
             foreach (var id in ids)
             {
-                if (id.ObjectClass.DxfName == "MTEXT") mtext++;
-                else text++;
+                switch (id.ObjectClass.DxfName)
+                {
+                    case "MTEXT": mtext++; break;
+                    case "POINT": points++; break;
+                    case "INSERT": blocks++; break;
+                    default: text++; break;
+                }
             }
-            return (text + mtext).ToString(CultureInfo.InvariantCulture) + " (TEXT " + text + ", MTEXT " + mtext + ")";
+            if (points > 0 && text + mtext + blocks == 0) return points.ToString(CultureInfo.InvariantCulture) + " POINT";
+            if (blocks > 0 && text + mtext + points == 0) return blocks.ToString(CultureInfo.InvariantCulture) + " блоков";
+            return (text + mtext + points + blocks).ToString(CultureInfo.InvariantCulture) + " (TEXT " + text + ", MTEXT " + mtext +
+                   (points > 0 ? ", POINT " + points : string.Empty) + (blocks > 0 ? ", блоков " + blocks : string.Empty) + ")";
         }
     }
 }

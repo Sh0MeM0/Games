@@ -19,6 +19,7 @@ namespace Kzm.AutoCAD.UI.Panel
         private readonly NumericUpDown decimals = new NumericUpDown { Minimum = 0, Maximum = 4, Width = 60 };
         private readonly ComboBox scale = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 100 };
         private readonly Label problems = new Label { AutoSize = true, MaximumSize = new Size(330, 0), ForeColor = Color.Firebrick };
+        private readonly Label templateNote = new Label { AutoSize = true, MaximumSize = new Size(330, 0) };
         private KzmPanel panel;
         private KzmSettings loaded;
 
@@ -49,6 +50,21 @@ namespace Kzm.AutoCAD.UI.Panel
             };
             table.Controls.Add(note);
             table.SetColumnSpan(note, 2);
+
+            var templateHeader = new Label { Text = "Шаблон по умолчанию", AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont, FontStyle.Bold), Margin = new Padding(3, 14, 3, 3) };
+            table.Controls.Add(templateHeader);
+            table.SetColumnSpan(templateHeader, 2);
+            table.Controls.Add(templateNote);
+            table.SetColumnSpan(templateNote, 2);
+            var saveTemplate = new Button { Text = "Сохранить как шаблон", AutoSize = true };
+            saveTemplate.Click += (s, e) => SaveTemplate();
+            var resetTemplate = new Button { Text = "Удалить шаблон", AutoSize = true };
+            resetTemplate.Click += (s, e) => ResetTemplate();
+            var buttons = new FlowLayoutPanel { AutoSize = true, Margin = Padding.Empty };
+            buttons.Controls.Add(saveTemplate);
+            buttons.Controls.Add(resetTemplate);
+            table.Controls.Add(buttons);
+            table.SetColumnSpan(buttons, 2);
             Controls.Add(table);
         }
 
@@ -65,6 +81,56 @@ namespace Kzm.AutoCAD.UI.Panel
             decimals.Value = Math.Max(0, Math.Min(4, loaded.Decimals));
             scale.SelectedIndex = Math.Max(0, Array.IndexOf(KzmSettings.Scales, loaded.Scale));
             problems.Text = string.Empty;
+            ShowTemplate();
+        }
+
+        private void ShowTemplate()
+        {
+            var template = Drawing.KzmDefaults.Load(out string problem);
+            if (problem != null) { templateNote.Text = problem; templateNote.ForeColor = Color.Firebrick; return; }
+            templateNote.ForeColor = SystemColors.ControlText;
+            if (!template.HasValue)
+            {
+                templateNote.Text = "Шаблона нет: новые чертежи и картограммы получают значения модуля (2 знака, 1:500, шаг 20 м, подписи по примеру Б.4). " +
+                                    "«Сохранить как шаблон» запомнит эти настройки для новых чертежей; параметры картограммы — кнопкой «Сделать шаблоном» в картограмме.";
+                return;
+            }
+            var (settings, c) = template.Value;
+            templateNote.Text = "Файл " + Drawing.KzmDefaults.FilePath + ":\nотметки — знаков " + settings.Decimals + ", масштаб 1:" + settings.Scale +
+                                "; картограмма — шаг " + FormatValue(c.Step) + " м, масштаб 1:" + c.Scale + ", текст " + FormatValue(c.NodeTextMm) + "/" +
+                                FormatValue(c.VolumeTextMm) + "/" + FormatValue(c.TotalsTextMm) + " мм, рабочая отметка " + NodeLabelStyle.Title(c.WorkingLabel.Corner) + ".";
+        }
+
+        private void SaveTemplate()
+        {
+            var settings = loaded.Clone();
+            settings.Decimals = (int)decimals.Value;
+            settings.Scale = KzmSettings.Scales[Math.Max(0, scale.SelectedIndex)];
+            try
+            {
+                var template = Drawing.KzmDefaults.Load()?.Template ?? new CartogramInfo();
+                Drawing.KzmDefaults.Save(settings, template);
+                PanelMessages.Info("Шаблон по умолчанию сохранён: " + Drawing.KzmDefaults.FilePath + ".");
+            }
+            catch (Exception exception) when (exception is System.IO.IOException || exception is UnauthorizedAccessException)
+            {
+                PanelMessages.Error("шаблон не записан: " + exception.Message);
+            }
+            ShowTemplate();
+        }
+
+        private void ResetTemplate()
+        {
+            try
+            {
+                Drawing.KzmDefaults.Reset();
+                PanelMessages.Info("Шаблон по умолчанию удалён: дальше — значения модуля.");
+            }
+            catch (Exception exception) when (exception is System.IO.IOException || exception is UnauthorizedAccessException)
+            {
+                PanelMessages.Error("шаблон не удалён: " + exception.Message);
+            }
+            ShowTemplate();
         }
 
         internal static string FormatValue(double? value) =>

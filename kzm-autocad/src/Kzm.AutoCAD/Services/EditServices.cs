@@ -112,7 +112,7 @@ namespace Kzm.AutoCAD.Services
                 }
                 else
                 {
-                    SurfaceModels.EraseTriangles(database, transaction, surface.Id);
+                    SurfaceModels.EraseTriangles(database, transaction, surface);
                     surface.TrianglesFingerprint = null;
                 }
                 KzmStore.WriteSurface(database, transaction, surface);
@@ -159,7 +159,8 @@ namespace Kzm.AutoCAD.Services
                     entity.Erase();
                     erased++;
                 }
-                SurfaceModels.EraseTriangles(database, transaction, surfaceId);
+                SurfaceModels.EraseTriangles(database, transaction, ReadSurface(database, transaction, surfaceId));
+                KzmStore.DeleteLines(database, transaction, surfaceId);
                 KzmStore.DeleteSurface(database, transaction, surfaceId);
                 KzmStore.WriteConflicts(database, transaction, KzmStore.ReadConflicts(database, transaction));
                 transaction.Commit();
@@ -206,6 +207,81 @@ namespace Kzm.AutoCAD.Services
                 transaction.Commit();
             }
         }
+
+        /// <summary>Exact elevation into XData and the formatted one into the «ОТМЕТКА» attribute.</summary>
+        internal static void WriteElevation(Transaction transaction, BlockReference reference, PointData data, double elevation, int decimals)
+        {
+            if (!reference.IsWriteEnabled) reference.UpgradeOpen();
+            data.Elevation = elevation;
+            reference.XData = PointBlocks.Encode(data);
+            foreach (ObjectId id in reference.AttributeCollection)
+            {
+                var attribute = (AttributeReference)transaction.GetObject(id, OpenMode.ForWrite);
+                if (string.Equals(attribute.Tag, PointBlocks.Tag, StringComparison.OrdinalIgnoreCase))
+                    attribute.TextString = ElevationFormat.Format(elevation, decimals);
+            }
+        }
+
+        /// <summary>Задание п. 3: временно исключить точки из триангуляции (или вернуть). Исключённые — серые.</summary>
+        internal static int SetExcluded(Database database, IEnumerable<ObjectId> ids, bool excluded, KzmSettings settings)
+        {
+            int changed = 0;
+            using (var transaction = database.TransactionManager.StartTransaction())
+            {
+                var surfaces = KzmStore.ReadSurfaces(database, transaction);
+                var touched = new HashSet<string>();
+                foreach (var id in ids.Where(id => id.IsValid && !id.IsErased).Distinct())
+                {
+                    if (!(transaction.GetObject(id, OpenMode.ForRead) is BlockReference reference)) continue;
+                    var data = PointBlocks.Decode(reference);
+                    if (data == null || data.Excluded == excluded) continue;
+                    if (!Layers.IsUsable(database, transaction, reference.Layer, out string problem))
+                        throw new KzmException("Точка " + reference.Handle + ": " + problem + ".");
+                    var surface = surfaces.FirstOrDefault(s => s.Id == data.SurfaceId);
+                    // The elevation typed into the attribute (if any) is kept as the exact value.
+                    var state = PointElevation.Resolve(data.Elevation, PointBlocks.ReadLabel(reference, transaction), settings.Decimals);
+                    if (state.IsValid) data.Elevation = state.Value.Value;
+                    data.Excluded = excluded;
+                    reference.UpgradeOpen();
+                    reference.XData = PointBlocks.Encode(data);
+                    if (surface != null) PointBlocks.Apply(transaction, reference, data, surface.Appearance, settings.Decimals, false);
+                    touched.Add(data.SurfaceId);
+                    changed++;
+                }
+                RefreshTriangles(database, transaction, touched, settings);
+                transaction.Commit();
+            }
+            return changed;
+        }
+
+        /// <summary>Сдвинуть отметки выбранных точек на Δ (например, перенос в другую систему высот участка).</summary>
+        internal static int ShiftElevations(Database database, IEnumerable<ObjectId> ids, double delta, KzmSettings settings)
+        {
+            if (!Guard(delta)) throw new KzmException("Сдвиг отметок должен быть числом.");
+            int changed = 0;
+            using (var transaction = database.TransactionManager.StartTransaction())
+            {
+                var touched = new HashSet<string>();
+                foreach (var id in ids.Where(id => id.IsValid && !id.IsErased).Distinct())
+                {
+                    if (!(transaction.GetObject(id, OpenMode.ForRead) is BlockReference reference)) continue;
+                    var data = PointBlocks.Decode(reference);
+                    if (data == null) continue;
+                    var state = PointElevation.Resolve(data.Elevation, PointBlocks.ReadLabel(reference, transaction), settings.Decimals);
+                    if (!state.IsValid) throw new KzmException("Точка " + reference.Handle + ": " + state.Problem + ". Исправьте отметку, затем сдвигайте.");
+                    if (!Layers.IsUsable(database, transaction, reference.Layer, out string problem))
+                        throw new KzmException("Точка " + reference.Handle + ": " + problem + ".");
+                    WriteElevation(transaction, reference, data, state.Value.Value + delta, settings.Decimals);
+                    touched.Add(data.SurfaceId);
+                    changed++;
+                }
+                RefreshTriangles(database, transaction, touched, settings);
+                transaction.Commit();
+            }
+            return changed;
+        }
+
+        private static bool Guard(double value) => !double.IsNaN(value) && !double.IsInfinity(value);
 
         internal static int ErasePoints(Database database, IEnumerable<ObjectId> ids, KzmSettings settings)
         {

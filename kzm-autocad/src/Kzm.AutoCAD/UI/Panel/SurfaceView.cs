@@ -46,6 +46,8 @@ namespace Kzm.AutoCAD.UI.Panel
         private readonly CheckBox showTriangles = new CheckBox { Text = "Показывать треугольники (слой КЗМ_ТРЕУГ)", AutoSize = true };
         private readonly Label tinNote = new Label { AutoSize = true, MaximumSize = new Size(330, 0) };
         private readonly Button refreshTriangles = new Button { Text = "Обновить треугольники", AutoSize = true };
+        private readonly ListBox lines = new ListBox { Width = 320, Height = 80, IntegralHeight = false };
+        private readonly Label linesNote = new Label { AutoSize = true, MaximumSize = new Size(330, 0), ForeColor = SystemColors.GrayText };
         private string elevationColorValue = PointAppearance.ByLayer;
         private string numberColorValue = PointAppearance.ByLayer;
         private bool bindingDetails;
@@ -100,7 +102,13 @@ namespace Kzm.AutoCAD.UI.Panel
             table.Controls.Add(control);
         }
 
-        internal void PrepareNew() => isNew = true;
+        private SurfaceKind newKind = SurfaceKind.Fact;
+
+        internal void PrepareNew(SurfaceKind? kind = null)
+        {
+            isNew = true;
+            newKind = kind ?? SurfaceKind.Fact;
+        }
 
         private static Label Section(string text) =>
             new Label { Text = text, AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont, FontStyle.Bold), Margin = new Padding(3, 12, 3, 3) };
@@ -130,7 +138,9 @@ namespace Kzm.AutoCAD.UI.Panel
             manual.Click += (s, e) => CreateByHand();
             var table = new Button { Text = "Таблица точек", AutoSize = true };
             table.Click += (s, e) => panel.ShowPoints(surface?.Info.Id);
-            Span(Flow(importButton, manual, table));
+            var plane = new Button { Text = "Плоскость…", AutoSize = true };
+            plane.Click += (s, e) => panel.ShowPlane(surface?.Info.Id);
+            Span(Flow(importButton, manual, table, plane));
             Span(new Label
             {
                 AutoSize = true, MaximumSize = new Size(330, 0), ForeColor = SystemColors.GrayText,
@@ -156,6 +166,18 @@ namespace Kzm.AutoCAD.UI.Panel
             elevationColor.Click += (s, e) => PickColor(ref elevationColorValue, elevationColor);
             numberColor.Click += (s, e) => PickColor(ref numberColorValue, numberColor);
 
+            Span(Section("Структурные линии"));
+            Span(lines);
+            var addLine = new Button { Text = "Добавить по полилинии…", AutoSize = true };
+            addLine.Click += (s, e) => LineView.PickPolyline(panel, surface?.Info.Id);
+            var showLine = new Button { Text = "Показать", AutoSize = true };
+            showLine.Click += (s, e) => ShowLine();
+            var deleteLine = new Button { Text = "Удалить…", AutoSize = true };
+            deleteLine.Click += (s, e) => DeleteLine();
+            Span(Flow(addLine, showLine, deleteLine));
+            Span(linesNote);
+            lines.DoubleClick += (s, e) => ShowLine();
+
             Span(Section("Поверхность (триангуляция)"));
             Span(boundaryNote);
             var pickBoundary = new Button { Text = "Указать границу…", AutoSize = true };
@@ -168,7 +190,9 @@ namespace Kzm.AutoCAD.UI.Panel
             refreshTriangles.Click += (s, e) => ShowTriangles(true);
             var check = new Button { Text = "Проверить триангуляцию", AutoSize = true };
             check.Click += (s, e) => CheckTin();
-            Span(Flow(refreshTriangles, check));
+            var flip = new Button { Text = "Поменять диагональ…", AutoSize = true };
+            flip.Click += (s, e) => FlipDiagonals();
+            Span(Flow(refreshTriangles, check, flip));
             Span(tinNote);
         }
 
@@ -203,7 +227,13 @@ namespace Kzm.AutoCAD.UI.Panel
                     : "Оформление ещё не задано: оно возьмётся с текстов при импорте или с образца («Взять с образца»).";
                 boundaryNote.Text = string.IsNullOrEmpty(surface.Info.BoundaryHandle)
                     ? "Граница поверхности не задана: треугольники строятся по всем точкам (выпуклая оболочка)."
-                    : "Граница поверхности: полилиния " + surface.Info.BoundaryHandle + " — треугольники снаружи отбрасываются.";
+                    : "Граница поверхности: полилиния " + surface.Info.BoundaryHandle + " — снаружи отметок нет, треугольники обрезаются по ней.";
+                lines.Items.Clear();
+                foreach (var line in surface.Lines) lines.Items.Add(new LineItem(line));
+                linesNote.Text = surface.Lines.Count == 0
+                    ? "Структурная линия (бровка, бортовой камень, лоток) — рёбра треугольников идут по ней, отметки между её точками — по длине линии."
+                    : "Линий: " + surface.StructureLines + (surface.Flips > 0 ? ", заданных диагоналей: " + surface.Flips : string.Empty) +
+                      ". Красные рёбра треугольников — структурные линии. Двойной щелчок — показать.";
                 showTriangles.Checked = surface.Info.ShowTriangles;
                 refreshTriangles.Visible = surface.Info.ShowTriangles && surface.TrianglesOutdated;
                 tinNote.Text = surface.TrianglesOutdated
@@ -301,10 +331,14 @@ namespace Kzm.AutoCAD.UI.Panel
 
         private void CreateByHand()
         {
-            if (surface == null) return;
-            string id = surface.Info.Id;
-            var settings = panel.Snapshot.Settings;
-            PanelActions.Run("точки вручную", document => EditServices.CreatePointsByHand(document, id, settings), panel.RefreshAll);
+            if (surface != null) CreateByHand(panel, surface.Info.Id);
+        }
+
+        /// <summary>Also from the context menu of the tree (for any surface).</summary>
+        internal void CreateByHand(KzmPanel owner, string id)
+        {
+            var settings = owner.Snapshot.Settings;
+            PanelActions.RunInteractive("точки вручную", document => EditServices.CreatePointsByHand(document, id, settings), owner.RefreshAll);
         }
 
         private void PickBoundary()
@@ -335,15 +369,62 @@ namespace Kzm.AutoCAD.UI.Panel
 
         private void ShowTriangles(bool show)
         {
-            if (surface == null) return;
-            string id = surface.Info.Id;
-            var settings = panel.Snapshot.Settings;
+            if (surface != null) ToggleTriangles(panel, surface.Info.Id, show);
+        }
+
+        internal void ToggleTriangles(KzmPanel owner, string id, bool show)
+        {
+            var settings = owner.Snapshot.Settings;
             PanelActions.Run(show ? "треугольники" : "скрыть треугольники", document =>
             {
                 var model = EditServices.ShowTriangles(document.Database, id, show, settings);
                 PanelMessages.Info(model == null ? "Треугольники скрыты." :
-                    "Треугольников: " + model.Tin.TriangleCount + (model.Problems.Count > 0 ? "; " + string.Join("; ", model.Problems) : string.Empty) + ".");
+                    "Треугольников: " + model.Tin.TriangleCount + (model.Tin.ConstrainedEdgeCount > 0 ? ", рёбер структурных линий: " + model.Tin.ConstrainedEdgeCount : string.Empty) +
+                    (model.Problems.Count > 0 ? "; " + string.Join("; ", model.Problems) : string.Empty) + ".");
+            }, owner.RefreshAll);
+        }
+
+        private sealed class LineItem
+        {
+            internal LineItem(StructureLine line) { Line = line; }
+            internal StructureLine Line { get; }
+            public override string ToString() =>
+                (Line.Kind == StructureLineKind.Flip ? "↔ " : "— ") + Line.Name + " (" + Line.PointHandles.Count + " т." + (Line.Closed ? ", замкнутая" : string.Empty) + ")";
+        }
+
+        private void ShowLine()
+        {
+            if (!(lines.SelectedItem is LineItem item) || panel.Document == null) return;
+            var ids = SurfaceTools.PointsOf(panel.Document.Database, item.Line);
+            if (ids.Count == 0) { PanelMessages.Error("точек линии нет в чертеже."); return; }
+            PanelActions.Show(panel.Document, ids, Commands.KzmCommands.ZoomSize(surface?.Info.Appearance.TextHeight));
+        }
+
+        private void DeleteLine()
+        {
+            if (surface == null || !(lines.SelectedItem is LineItem item)) return;
+            var answer = MessageBox.Show(this,
+                "Удалить " + (item.Line.Kind == StructureLineKind.Flip ? "заданную диагональ" : "структурную линию") + " «" + item.Line.Name + "»?\n\n" +
+                "«Да» — удалить линию и созданные ею точки (точки, бывшие в поверхности раньше, останутся).\n" +
+                "«Нет» — удалить только линию, все точки оставить.\n\nОтменить можно командой U.",
+                "КЗМ", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
+            if (answer == DialogResult.Cancel) return;
+            bool erasePoints = answer == DialogResult.Yes;
+            string id = surface.Info.Id, lineId = item.Line.Id, name = item.Line.Name;
+            var settings = panel.Snapshot.Settings;
+            PanelActions.Run("удаление структурной линии", document =>
+            {
+                int erased = SurfaceTools.DeleteLine(document.Database, id, lineId, erasePoints, settings);
+                PanelMessages.Info("Линия «" + name + "» удалена" + (erased > 0 ? ", точек удалено: " + erased : string.Empty) + ".");
             }, panel.RefreshAll);
+        }
+
+        private void FlipDiagonals()
+        {
+            if (surface == null) return;
+            string id = surface.Info.Id;
+            var settings = panel.Snapshot.Settings;
+            PanelActions.RunInteractive("замена диагонали", document => SurfaceTools.FlipDiagonals(document, id, settings), panel.RefreshAll);
         }
 
         private void CheckTin()
@@ -357,7 +438,7 @@ namespace Kzm.AutoCAD.UI.Panel
                     var model = SurfaceModels.Build(panel.Document.Database, transaction, surface.Info, panel.Snapshot.Settings);
                     transaction.Commit();
                     tinNote.Text = "Точек в триангуляции: " + model.Used.Count + ", треугольников: " + model.Tin.TriangleCount +
-                                   (model.Tin.RemovedByBoundary > 0 ? ", отброшено границей: " + model.Tin.RemovedByBoundary : string.Empty) +
+                                   (model.Tin.ConstrainedEdgeCount > 0 ? ", рёбер структурных линий: " + model.Tin.ConstrainedEdgeCount : string.Empty) +
                                    (model.Problems.Count > 0 ? ".\n" + string.Join(".\n", model.Problems) : string.Empty) + ".";
                 }
             }
@@ -381,8 +462,8 @@ namespace Kzm.AutoCAD.UI.Panel
                 if (isNew || !creating)
                 {
                     name.Text = string.Empty;
-                    fact.Checked = true;
-                    layer.Text = SurfaceInfo.DefaultLayer(SurfaceKind.Fact);
+                    (newKind == SurfaceKind.Project ? project : fact).Checked = true;
+                    layer.Text = SurfaceInfo.DefaultLayer(newKind);
                 }
                 isNew = false;
                 creating = true;
@@ -492,19 +573,29 @@ namespace Kzm.AutoCAD.UI.Panel
 
         private void Delete()
         {
-            if (surface == null) return;
-            var answer = MessageBox.Show(this,
-                "Удалить поверхность «" + surface.Info.Name + "» и все её точки (" + surface.Points + ")?\n\nОтменить можно командой U (ОТМЕНИТЬ).",
+            if (surface != null) Delete(panel, surface.Info.Id);
+        }
+
+        /// <summary>Also from the tree (context menu, Delete key).</summary>
+        internal void Delete(KzmPanel owner, string id)
+        {
+            var target = owner.Snapshot.Find(id);
+            if (target == null) return;
+            var used = owner.Snapshot.Cartograms.Where(c => c.Info.FactSurfaceId == id || c.Info.ProjectSurfaceId == id).Select(c => "«" + c.Info.Name + "»").ToList();
+            var answer = MessageBox.Show(owner,
+                "Удалить поверхность «" + target.Info.Name + "» и все её точки (" + target.Points + ")?" +
+                (target.Lines.Count > 0 ? "\nСтруктурные линии поверхности (" + target.Lines.Count + ") тоже будут удалены." : string.Empty) +
+                (used.Count > 0 ? "\n\nОна используется в картограммах " + string.Join(", ", used) + " — их нельзя будет пересчитать." : string.Empty) +
+                "\n\nОтменить можно командой U (ОТМЕНИТЬ).",
                 "КЗМ", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
             if (answer != DialogResult.Yes) return;
-            string id = surface.Info.Id;
-            string title = surface.Info.Name;
-            var settings = panel.Snapshot.Settings;
+            string title = target.Info.Name;
+            var settings = owner.Snapshot.Settings;
             PanelActions.Run("удаление поверхности", document =>
             {
                 int erased = EditServices.DeleteSurface(document.Database, id, settings);
                 PanelMessages.Info("Поверхность «" + title + "» удалена, точек удалено: " + erased + ".");
-            }, () => panel.AfterSurfaceChange(null));
+            }, () => owner.AfterSurfaceChange(null));
         }
     }
 }

@@ -151,18 +151,27 @@ namespace Kzm.Core.Tests
         }
 
         [Fact]
-        public void BoundaryRemovesOutsideTriangles()
+        public void BoundaryIsAnExactMask()
         {
             var points = new List<XY>();
             for (int i = 0; i <= 10; i++)
             for (int j = 0; j <= 10; j++)
                 points.Add(new XY(i * 10.0, j * 10.0));
-            var boundary = new List<XY> { new XY(0, 0), new XY(50, 0), new XY(50, 50), new XY(0, 50) };
-            var tin = Tin.Build(points, points.Select(_ => 100.0).ToList(), null, boundary);
-            Assert.Equal(50, tin.TriangleCount);
-            Assert.Equal(150, tin.RemovedByBoundary);
-            Assert.NotNull(tin.ZAt(new XY(25, 25)));
+            // The outline cuts triangles: inside it the surface is interpolated, outside — no data.
+            var boundary = new List<XY> { new XY(0, 0), new XY(55, 0), new XY(55, 45), new XY(0, 45) };
+            var tin = Tin.Build(points, points.Select(p => p.X * 0.01).ToList(), null, boundary);
+            Assert.Equal(200, tin.TriangleCount);
+            Assert.Equal(0.25, tin.ZAt(new XY(25, 25)).Value, 9);
+            Assert.Equal(0.54, tin.ZAt(new XY(54, 44)).Value, 9);
+            Assert.Equal(0.55, tin.ZAt(new XY(55, 20)).Value, 9); // on the outline
+            Assert.Null(tin.ZAt(new XY(56, 20)));
             Assert.Null(tin.ZAt(new XY(75, 75)));
+            // Edges drawn only inside the outline.
+            foreach (var (a, b, _) in tin.DisplayEdges())
+            {
+                Assert.True(Geometry.Contains(boundary, a, 1e-6));
+                Assert.True(Geometry.Contains(boundary, b, 1e-6));
+            }
         }
 
         [Fact]

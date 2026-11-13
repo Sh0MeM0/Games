@@ -23,10 +23,17 @@ namespace Kzm.AutoCAD.UI.Panel
     {
         private enum Selection { Window, Layers, Similar }
 
+        /// <summary>Задание п. 2.1: TEXT/MTEXT; дополнительно POINT с Z и блоки с атрибутом отметки.</summary>
+        private enum SourceType { Texts, Points, Blocks }
+
         /// <summary>What the user collected for one drawing (kept while the drawing is open).</summary>
         private sealed class State
         {
             internal string SurfaceId;
+            internal SourceType Source = SourceType.Texts;
+            internal List<KeyValuePair<string, string>> BlockTags = new List<KeyValuePair<string, string>>();
+            internal string ElevationTag;
+            internal string NumberTag;
             internal Selection Selection = Selection.Window;
             internal readonly HashSet<string> Layers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             internal List<ObjectId> TextIds = new List<ObjectId>();
@@ -41,6 +48,13 @@ namespace Kzm.AutoCAD.UI.Panel
 
         private readonly ConditionalWeakTable<Document, State> states = new ConditionalWeakTable<Document, State>();
         private readonly ComboBox surface = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList };
+        private readonly RadioButton srcTexts = new RadioButton { Text = "Тексты", AutoSize = true, Checked = true };
+        private readonly RadioButton srcPoints = new RadioButton { Text = "POINT (отметка в Z)", AutoSize = true };
+        private readonly RadioButton srcBlocks = new RadioButton { Text = "Блоки с атрибутом", AutoSize = true };
+        private readonly ComboBox elevationTag = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 200 };
+        private readonly ComboBox numberTag = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 200 };
+        private readonly FlowLayoutPanel tagsPanel = new FlowLayoutPanel { AutoSize = true, FlowDirection = System.Windows.Forms.FlowDirection.TopDown, WrapContents = false };
+        private readonly Label tagsNote = new Label { AutoSize = true, MaximumSize = new Size(330, 0), ForeColor = SystemColors.GrayText };
         private readonly RadioButton byWindow = new RadioButton { Text = "Рамкой", AutoSize = true };
         private readonly RadioButton byLayers = new RadioButton { Text = "По слоям", AutoSize = true };
         private readonly RadioButton bySimilar = new RadioButton { Text = "Подобные", AutoSize = true };
@@ -73,7 +87,7 @@ namespace Kzm.AutoCAD.UI.Panel
         internal ImportView()
         {
             var form = new TableLayoutPanel { ColumnCount = 1, AutoSize = true, Dock = DockStyle.Top, Padding = new Padding(4) };
-            form.Controls.Add(Header("Импорт отметок из текстов съёмки"));
+            form.Controls.Add(Header("Импорт отметок съёмки"));
             form.Controls.Add(Line("В поверхность", surface));
             surface.Width = 220;
             form.Controls.Add(new Label
@@ -84,8 +98,13 @@ namespace Kzm.AutoCAD.UI.Panel
                 Text = "Список ранее созданных поверхностей. Новая — кнопкой «+ Поверхность».",
             });
 
-            form.Controls.Add(Header("1. Тексты отметок"));
+            form.Controls.Add(Header("1. Откуда отметки"));
+            form.Controls.Add(Flow(srcTexts, srcPoints, srcBlocks));
             form.Controls.Add(Flow(byWindow, byLayers, bySimilar));
+            tagsPanel.Controls.Add(Line("Атрибут отметки", elevationTag));
+            tagsPanel.Controls.Add(Line("Атрибут номера", numberTag));
+            tagsPanel.Controls.Add(tagsNote);
+            form.Controls.Add(tagsPanel);
             form.Controls.Add(layers);
             layers.Width = 320;
             form.Controls.Add(pickTexts);
@@ -157,6 +176,21 @@ namespace Kzm.AutoCAD.UI.Panel
             surface.SelectedIndexChanged += (s, e) => Remember(state =>
             {
                 state.SurfaceId = (surface.SelectedItem as SurfaceItem)?.Info.Id;
+                state.Result = null;
+                FillGrid();
+            });
+            srcTexts.CheckedChanged += (s, e) => SourceChanged();
+            srcPoints.CheckedChanged += (s, e) => SourceChanged();
+            srcBlocks.CheckedChanged += (s, e) => SourceChanged();
+            elevationTag.SelectedIndexChanged += (s, e) => Remember(state =>
+            {
+                state.ElevationTag = elevationTag.SelectedItem as string;
+                state.Result = null;
+                FillGrid();
+            });
+            numberTag.SelectedIndexChanged += (s, e) => Remember(state =>
+            {
+                state.NumberTag = numberTag.SelectedIndex <= 0 ? null : numberTag.SelectedItem as string;
                 state.Result = null;
                 FillGrid();
             });
@@ -242,6 +276,10 @@ namespace Kzm.AutoCAD.UI.Panel
                 surface.SelectedItem = match;
                 state.SurfaceId = match?.Info.Id;
 
+                srcTexts.Checked = state.Source == SourceType.Texts;
+                srcPoints.Checked = state.Source == SourceType.Points;
+                srcBlocks.Checked = state.Source == SourceType.Blocks;
+                LoadTags(state);
                 byWindow.Checked = state.Selection == Selection.Window;
                 byLayers.Checked = state.Selection == Selection.Layers;
                 bySimilar.Checked = state.Selection == Selection.Similar;
@@ -268,7 +306,7 @@ namespace Kzm.AutoCAD.UI.Panel
         {
             layers.Items.Clear();
             if (state.Selection != Selection.Layers) return;
-            foreach (var pair in DrawingData.TextLayers(panel.Document))
+            foreach (var pair in DrawingData.EntityLayers(panel.Document, Types(state)))
                 layers.Items.Add(new LayerItem(pair.Key, pair.Value), state.Layers.Contains(pair.Key));
         }
 
@@ -284,13 +322,20 @@ namespace Kzm.AutoCAD.UI.Panel
         {
             var state = Current;
             if (state == null) return;
-            layers.Visible = state.Selection == Selection.Layers;
-            pickTexts.Visible = state.Selection != Selection.Layers;
-            pickTexts.Text = state.Selection == Selection.Similar ? "Указать образец текста" : "Выбрать тексты в чертеже";
+            bool texts = state.Source == SourceType.Texts;
+            bool blocks = state.Source == SourceType.Blocks;
+            byWindow.Enabled = byLayers.Enabled = !blocks;
+            tagsPanel.Visible = blocks;
+            layers.Visible = state.Selection == Selection.Layers && !blocks;
+            pickTexts.Visible = state.Selection != Selection.Layers || blocks;
+            string what = texts ? "текста" : blocks ? "блока" : "POINT";
+            pickTexts.Text = state.Selection == Selection.Similar || blocks ? "Указать образец " + what
+                : texts ? "Выбрать тексты в чертеже" : "Выбрать POINT в чертеже";
             textsNote.Text = "Выбрано: " + state.TextsNote;
-            pickMarker.Enabled = state.Mode == XyMode.Marker;
-            markersNote.Text = state.Mode == XyMode.Marker
-                ? "Маркеры: " + state.MarkersNote
+            xyMarker.Enabled = xyInsertion.Enabled = texts;
+            pickMarker.Enabled = texts && state.Mode == XyMode.Marker;
+            markersNote.Text = !texts ? (blocks ? "XY = точка вставки блока; номер — из атрибута номера (если выбран)." : "XY = положение POINT, отметка = его Z.")
+                : state.Mode == XyMode.Marker ? "Маркеры: " + state.MarkersNote
                 : "XY = точка вставки каждого текста.";
             settingsNote.Text = surface.Items.Count == 0 ? "Сначала создайте поверхность: «+ Поверхность»." : string.Empty;
             import.Enabled = surface.SelectedItem != null;
@@ -302,6 +347,49 @@ namespace Kzm.AutoCAD.UI.Panel
                 appearanceFromTexts.Enabled = false;
             }
             else appearanceFromTexts.Enabled = true;
+        }
+
+        private static ICollection<string> Types(State state) =>
+            state.Source == SourceType.Points ? DrawingData.PointTypes : state.Source == SourceType.Blocks ? DrawingData.BlockTypes : DrawingData.TextTypes;
+
+        private void LoadTags(State state)
+        {
+            elevationTag.Items.Clear();
+            numberTag.Items.Clear();
+            numberTag.Items.Add("(нет)");
+            foreach (var pair in state.BlockTags)
+            {
+                elevationTag.Items.Add(pair.Key);
+                numberTag.Items.Add(pair.Key);
+            }
+            tagsNote.Text = state.BlockTags.Count == 0 ? "Укажите образец блока — появятся его атрибуты."
+                : "Атрибуты образца: " + string.Join("; ", state.BlockTags.Select(pair => pair.Key + " = «" + KzmCommands.OneLine(pair.Value) + "»")) + ".";
+            elevationTag.SelectedItem = state.ElevationTag != null && elevationTag.Items.Contains(state.ElevationTag) ? state.ElevationTag : null;
+            numberTag.SelectedIndex = state.NumberTag != null && numberTag.Items.Contains(state.NumberTag) ? numberTag.Items.IndexOf(state.NumberTag) : 0;
+        }
+
+        private void SourceChanged()
+        {
+            if (binding) return;
+            var state = Current;
+            if (state == null) return;
+            var source = srcPoints.Checked ? SourceType.Points : srcBlocks.Checked ? SourceType.Blocks : SourceType.Texts;
+            if (source == state.Source) return;
+            state.Source = source;
+            state.TextIds = new List<ObjectId>();
+            state.TextsNote = "ничего не выбрано";
+            state.Layers.Clear();
+            state.Result = null;
+            if (source == SourceType.Blocks)
+            {
+                state.Selection = Selection.Similar;
+                binding = true;
+                try { bySimilar.Checked = true; }
+                finally { binding = false; }
+            }
+            LoadLayers(state);
+            UpdateControls();
+            FillGrid();
         }
 
         private void SelectionChanged()
@@ -326,7 +414,7 @@ namespace Kzm.AutoCAD.UI.Panel
             if (state == null || binding) return;
             state.Layers.Clear();
             foreach (LayerItem item in layers.CheckedItems) state.Layers.Add(item.Name);
-            state.TextIds = DrawingData.TextsOnLayers(panel.Document, state.Layers);
+            state.TextIds = DrawingData.EntitiesOnLayers(panel.Document, state.Layers, Types(state));
             state.TextsNote = ImportService.CountTexts(panel.Document.Database, state.TextIds) +
                               (state.Layers.Count > 0 ? " на слоях " + string.Join(", ", state.Layers) : string.Empty);
             state.Result = null;
@@ -350,11 +438,30 @@ namespace Kzm.AutoCAD.UI.Panel
             var state = Current;
             if (state == null) return;
             List<ObjectId> picked = null;
+            List<KeyValuePair<string, string>> tags = null;
             string note = null;
             bool similar = state.Selection == Selection.Similar;
-            PanelActions.Pick("выбор текстов", document =>
+            var source = state.Source;
+            PanelActions.Pick("выбор источников отметок", document =>
             {
-                if (similar)
+                if (source == SourceType.Blocks)
+                {
+                    var (ids, description, found) = ImportService.PickSimilarBlocks(document);
+                    picked = ids;
+                    note = description;
+                    tags = found;
+                }
+                else if (source == SourceType.Points)
+                {
+                    if (similar)
+                    {
+                        var (ids, description) = ImportService.PickSimilarPoints(document);
+                        picked = ids;
+                        note = description;
+                    }
+                    else picked = ImportService.PickPointObjects(document.Editor);
+                }
+                else if (similar)
                 {
                     var (ids, description) = ImportService.PickSimilarTexts(document);
                     picked = ids;
@@ -367,6 +474,15 @@ namespace Kzm.AutoCAD.UI.Panel
             }, () =>
             {
                 if (picked == null) return;
+                if (tags != null)
+                {
+                    state.BlockTags = tags;
+                    state.ElevationTag = ImportService.GuessElevationTag(tags);
+                    state.NumberTag = null;
+                    binding = true;
+                    try { LoadTags(state); }
+                    finally { binding = false; }
+                }
                 state.TextIds = picked;
                 state.TextsNote = ImportService.CountTexts(panel.Document.Database, picked) + (note != null ? " — подобные: " + note : string.Empty);
                 state.Result = null;
@@ -408,8 +524,9 @@ namespace Kzm.AutoCAD.UI.Panel
             settings.LastSelectionMode = state.Selection.ToString().ToUpperInvariant();
             var surfaceItem = surface.SelectedItem as SurfaceItem;
             if (surfaceItem == null) errors.Add("выберите поверхность (или создайте: «+ Поверхность»)");
-            if (state.TextIds.Count == 0) errors.Add("выберите тексты");
-            if (state.Mode == XyMode.Marker && state.Markers == null) errors.Add("укажите образец маркера");
+            if (state.TextIds.Count == 0) errors.Add(state.Source == SourceType.Texts ? "выберите тексты" : state.Source == SourceType.Points ? "выберите POINT" : "укажите образец блока");
+            if (state.Source == SourceType.Texts && state.Mode == XyMode.Marker && state.Markers == null) errors.Add("укажите образец маркера");
+            if (state.Source == SourceType.Blocks && string.IsNullOrEmpty(state.ElevationTag)) errors.Add("выберите атрибут отметки");
             if (errors.Count > 0)
             {
                 PanelMessages.Error(string.Join("; ", errors.Distinct()) + ".");
@@ -421,8 +538,10 @@ namespace Kzm.AutoCAD.UI.Panel
             {
                 SurfaceId = surfaceItem.Info.Id,
                 TextIds = state.TextIds.ToList(),
-                Markers = state.Markers ?? new List<MarkerCandidate>(),
-                Mode = state.Mode,
+                Markers = state.Source == SourceType.Texts ? state.Markers ?? new List<MarkerCandidate>() : new List<MarkerCandidate>(),
+                Mode = state.Source == SourceType.Texts ? state.Mode : XyMode.Insertion,
+                ElevationTag = state.ElevationTag,
+                NumberTag = state.NumberTag,
                 Settings = settings,
                 Overrides = state.Overrides,
                 AppearanceFromTexts = appearanceFromTexts.Checked,

@@ -48,6 +48,8 @@ namespace Kzm.AutoCAD.Drawing
         internal const string Tag = "ОТМЕТКА";
         internal const string NumberTag = "НОМЕР";
         internal const string AppName = "SH0MEM0_KZM";
+        /// <summary>Grey (ACI 8) for points excluded from the triangulation.</summary>
+        internal const short ExcludedColor = 8;
         private const string RecordMarker = "KZM_POINT";
         private const short RecordVersion = 1;
 
@@ -100,6 +102,8 @@ namespace Kzm.AutoCAD.Drawing
             }
             circle.Center = Point3d.Origin;
             circle.Radius = 0.5;
+            // ByBlock: the sign takes the colour of the point (grey for points excluded from the triangulation).
+            if (!circle.Color.IsByBlock) circle.Color = Color.FromColorIndex(ColorMethod.ByBlock, 0);
             foreach (var (tag, prompt, y) in new[] { (NumberTag, "Номер точки", 0.6), (Tag, "Отметка, м", -0.5) })
             {
                 if (!attributes.TryGetValue(tag, out var attribute))
@@ -142,6 +146,9 @@ namespace Kzm.AutoCAD.Drawing
             double numberHeight = appearance.EffectiveNumberHeight;
             reference.ScaleFactors = new Scale3d(sign);
             reference.Rotation = 0;
+            // Excluded from the triangulation (задание п. 3): the whole point is grey.
+            var excludedColor = Color.FromColorIndex(ColorMethod.ByAci, ExcludedColor);
+            reference.Color = data.Excluded ? excludedColor : Color.FromColorIndex(ColorMethod.ByLayer, 256);
             ObjectId style = TextStyle(database, transaction, appearance.TextStyle);
             var definition = (BlockTableRecord)transaction.GetObject(reference.BlockTableRecord, OpenMode.ForRead);
             var present = new Dictionary<string, AttributeReference>(StringComparer.OrdinalIgnoreCase);
@@ -170,7 +177,7 @@ namespace Kzm.AutoCAD.Drawing
                 if (transaction.GetObject(style, OpenMode.ForRead) is TextStyleTableRecord record && record.XScale > 0)
                     attribute.WidthFactor = record.XScale;
                 attribute.Height = isElevation ? height : numberHeight;
-                attribute.Color = ParseColor(isElevation ? appearance.ElevationColor : appearance.NumberColor);
+                attribute.Color = data.Excluded ? excludedColor : ParseColor(isElevation ? appearance.ElevationColor : appearance.NumberColor);
                 attribute.Invisible = isNumber && (!appearance.ShowNumber || string.IsNullOrEmpty(attribute.TextString));
                 if (resetPositions)
                 {

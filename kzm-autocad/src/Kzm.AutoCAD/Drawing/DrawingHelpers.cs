@@ -88,8 +88,9 @@ namespace Kzm.AutoCAD.Drawing
         internal const string AppName = "SH0MEM0_KZM_MARK";
 
         /// <summary>A circle and a short reason next to a problem object; the size follows the given text height.</summary>
-        internal static void Add(Transaction transaction, BlockTableRecord space, XY at, string label, string targetHandle, double height)
+        internal static List<ObjectId> Add(Transaction transaction, BlockTableRecord space, XY at, string label, string targetHandle, double height)
         {
+            var created = new List<ObjectId>();
             if (!(height > 0)) height = 1;
             double radius = height * 1.5;
             var xdata = new ResultBuffer(
@@ -97,9 +98,9 @@ namespace Kzm.AutoCAD.Drawing
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, label ?? string.Empty),
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, targetHandle ?? string.Empty));
             var circle = new Circle(new Point3d(at.X, at.Y, 0), Vector3d.ZAxis, radius) { Layer = Layers.Check, XData = xdata };
-            space.AppendEntity(circle);
+            created.Add(space.AppendEntity(circle));
             transaction.AddNewlyCreatedDBObject(circle, true);
-            if (string.IsNullOrEmpty(label)) return;
+            if (string.IsNullOrEmpty(label)) return created;
             var text = new DBText
             {
                 Layer = Layers.Check,
@@ -109,8 +110,20 @@ namespace Kzm.AutoCAD.Drawing
                 TextString = label,
                 XData = new ResultBuffer(xdata.AsArray()),
             };
-            space.AppendEntity(text);
+            created.Add(space.AppendEntity(text));
             transaction.AddNewlyCreatedDBObject(text, true);
+            return created;
+        }
+
+        /// <summary>The entity is a check mark of one of the given objects.</summary>
+        internal static bool Targets(Entity entity, ISet<string> targets)
+        {
+            using (var xdata = entity.GetXDataForApplication(AppName))
+            {
+                if (xdata == null) return false;
+                var values = xdata.AsArray();
+                return values.Length > 2 && values[2].Value is string target && targets.Contains(target);
+            }
         }
 
         /// <summary>Erases marks in model and paper space; with a target set, only marks of those objects.</summary>
@@ -124,6 +137,9 @@ namespace Kzm.AutoCAD.Drawing
                 if (!block.IsLayout) continue;
                 foreach (ObjectId id in block)
                 {
+                    // Marks are circles and texts: other objects are not even opened.
+                    string type = id.ObjectClass.DxfName;
+                    if (type != "CIRCLE" && type != "TEXT") continue;
                     var entity = (Entity)transaction.GetObject(id, OpenMode.ForRead);
                     using (var xdata = entity.GetXDataForApplication(AppName))
                     {

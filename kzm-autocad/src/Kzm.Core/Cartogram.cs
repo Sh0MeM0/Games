@@ -138,14 +138,14 @@ namespace Kzm.Core
             var outline = Geometry.Normalize(boundary);
             if (outline.Count < 3) throw new KzmException("Граница картограммы вырождена (нулевая площадь).");
             if (Geometry.IsSelfIntersecting(outline)) throw new KzmException("Граница картограммы самопересекается.");
-            var result = new CartogramResult(grid) { BoundaryArea = Geometry.Area(outline) };
+            var result = new CartogramResult(grid);
 
-            var local = outline.Select(grid.ToLocal).ToList();
+            // The calculation runs in the axes of the grid (node 0,0 at the origin): squares are exact
+            // there and areas keep their precision with survey coordinates (~5 000 000 m).
+            var local = Geometry.Normalize(outline.Select(p => ToLocal(grid, p)).ToList());
+            result.BoundaryArea = Geometry.Area(local);
             double step = grid.Step;
-            result.IMin = (int)Math.Floor(local.Min(p => p.U) / step + Tiny);
-            result.IMax = (int)Math.Ceiling(local.Max(p => p.U) / step - Tiny) - 1;
-            result.JMin = (int)Math.Floor(local.Min(p => p.V) / step + Tiny);
-            result.JMax = (int)Math.Ceiling(local.Max(p => p.V) / step - Tiny) - 1;
+            (result.IMin, result.IMax, result.JMin, result.JMax) = Range(local, step);
             if ((long)(result.IMax - result.IMin + 1) * (result.JMax - result.JMin + 1) > 1_000_000)
                 throw new KzmException("Слишком много квадратов (больше 1 000 000): проверьте шаг сетки.");
 
@@ -162,20 +162,29 @@ namespace Kzm.Core
             for (int i = result.IMin; i <= result.IMax; i++)
             for (int j = result.JMin; j <= result.JMax; j++)
             {
-                var corners = new[] { grid.Node(i, j), grid.Node(i + 1, j), grid.Node(i + 1, j + 1), grid.Node(i, j + 1) };
-                var inside = Geometry.ClipByConvex(outline, corners);
+                var corners = new[] { new XY(i * step, j * step), new XY((i + 1) * step, j * step), new XY((i + 1) * step, (j + 1) * step), new XY(i * step, (j + 1) * step) };
+                var inside = Geometry.ClipByConvex(local, corners);
                 double area = inside.Count >= 3 ? Geometry.Area(inside) : 0;
                 if (area <= Tiny * step * step) continue;
+                var center = Geometry.Centroid(inside);
                 var square = new CartogramSquare
                 {
                     I = i, J = j, Area = area,
                     Full = Math.Abs(area - step * step) <= 1e-9 * step * step,
-                    LabelPoint = Geometry.Centroid(inside),
+                    LabelPoint = grid.ToWorld(center.X, center.Y),
                 };
                 result.Squares.Add(square);
                 var nodes = new[] { Node(i, j), Node(i + 1, j), Node(i + 1, j + 1), Node(i, j + 1) };
                 foreach (var node in nodes) node.Used = true;
-                ComputeSquare(square, corners, nodes, outline, fact, project, grid, result);
+                ComputeSquare(square, corners, nodes, local, fact, project, grid, result);
+                // Results back to the drawing (world) coordinates.
+                for (int k = 0; k < square.CutPolygons.Count; k++)
+                    square.CutPolygons[k] = square.CutPolygons[k].Select(p => grid.ToWorld(p.X, p.Y)).ToArray();
+                for (int k = 0; k < square.ZeroSegments.Count; k++)
+                {
+                    var (a, b) = square.ZeroSegments[k];
+                    square.ZeroSegments[k] = (grid.ToWorld(a.X, a.Y), grid.ToWorld(b.X, b.Y));
+                }
                 zeroSegments.AddRange(square.ZeroSegments);
             }
 
@@ -196,7 +205,25 @@ namespace Kzm.Core
             int missing = result.Squares.Count(s => !s.Computed);
             if (missing > 0)
                 result.Problems.Add("не рассчитано квадратов: " + missing + " — нет данных поверхности в нужных точках (см. пометки)");
+            int empty = result.Nodes.Values.Count(n => n.Used && !n.Working.HasValue);
+            if (empty > 0)
+                result.Problems.Add("узлов без данных поверхности: " + empty + " (помечены «нет данных»)");
             return result;
+        }
+
+        /// <summary>Squares (by index) that cover the outline given in grid axes.</summary>
+        private static (int IMin, int IMax, int JMin, int JMax) Range(IReadOnlyList<XY> local, double step) =>
+            ((int)Math.Floor(local.Min(p => p.X) / step + Tiny), (int)Math.Ceiling(local.Max(p => p.X) / step - Tiny) - 1,
+             (int)Math.Floor(local.Min(p => p.Y) / step + Tiny), (int)Math.Ceiling(local.Max(p => p.Y) / step - Tiny) - 1);
+
+        /// <summary>Squares of the grid that the boundary (drawing coordinates) touches — for a preview of the grid.</summary>
+        public static (int IMin, int IMax, int JMin, int JMax) Range(IReadOnlyList<XY> boundary, GridDefinition grid) =>
+            Range(boundary.Select(p => ToLocal(grid, p)).ToList(), grid.Step);
+
+        private static XY ToLocal(GridDefinition grid, XY p)
+        {
+            var (u, v) = grid.ToLocal(p);
+            return new XY(u, v);
         }
 
         private static (double, double) Add(Dictionary<int, (double Fill, double Cut)> totals, int key, double fill, double cut)
@@ -205,13 +232,14 @@ namespace Kzm.Core
             return (value.Fill + fill, value.Cut + cut);
         }
 
+        /// <summary>One square in grid axes: <paramref name="corners"/> and <paramref name="outline"/> are local; heights are read in the drawing.</summary>
         private static void ComputeSquare(CartogramSquare square, XY[] corners, CartogramNode[] nodes, List<XY> outline,
             Func<XY, double?> fact, Func<XY, double?> project, GridDefinition grid, CartogramResult result)
         {
             var center = Geometry.Lerp(corners[0], corners[2], 0.5);
             double? h0;
             if (nodes.All(node => node.Working.HasValue)) h0 = nodes.Average(node => node.Working.Value);
-            else h0 = Working(center, fact, project);
+            else h0 = Working(grid.ToWorld(center.X, center.Y), fact, project);
 
             var known = new List<(XY Point, double? H)>
             {
@@ -222,7 +250,7 @@ namespace Kzm.Core
             double? HeightAt(XY p)
             {
                 foreach (var k in known) if (k.Point.DistanceTo(p) <= tolerance) return k.H;
-                return Working(p, fact, project);
+                return Working(grid.ToWorld(p.X, p.Y), fact, project);
             }
 
             for (int k = 0; k < 4; k++)
@@ -255,7 +283,7 @@ namespace Kzm.Core
                         var value = HeightAt(piece[v]);
                         if (!value.HasValue)
                         {
-                            Fail(square, piece[v], grid);
+                            Fail(square, grid.ToWorld(piece[v].X, piece[v].Y));
                             return;
                         }
                         h[v] = value.Value;
@@ -272,7 +300,7 @@ namespace Kzm.Core
             return f.HasValue && pr.HasValue ? pr - f : null;
         }
 
-        private static void Fail(CartogramSquare square, XY point, GridDefinition grid)
+        private static void Fail(CartogramSquare square, XY point)
         {
             square.Problem = "нет данных поверхности в точке " + ElevationFormat.Format(point.X, 2) + "; " + ElevationFormat.Format(point.Y, 2);
             square.Fill = square.Cut = 0;

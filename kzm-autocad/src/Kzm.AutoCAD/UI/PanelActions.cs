@@ -30,6 +30,10 @@ namespace Kzm.AutoCAD.UI
         internal static void Run(string title, Action<Document> body, Action after = null) =>
             Send(RunQueue, "KZM_RUN", title, body, after, false);
 
+        /// <summary>A change that asks for points in the drawing: the drawing gets the focus first.</summary>
+        internal static void RunInteractive(string title, Action<Document> body, Action after = null) =>
+            Send(RunQueue, "KZM_RUN", title, body, after, true);
+
         internal static void Pick(string title, Action<Document> body, Action after = null) =>
             Send(PickQueue, "KZM_PICK", title, body, after, true);
 
@@ -76,6 +80,27 @@ namespace Kzm.AutoCAD.UI
         {
             try { Autodesk.AutoCAD.Internal.Utils.SetFocusToDwgView(); }
             catch (System.Exception) { /* focus is a convenience only */ }
+        }
+
+        /// <summary>Zoom to objects without selecting them (a cartogram has thousands of objects).</summary>
+        internal static void ShowArea(Document document, IEnumerable<ObjectId> ids, double minimumSize)
+        {
+            if (document == null || !ReferenceEquals(document, AcadApplication.DocumentManager.MdiActiveDocument)) return;
+            using (document.LockDocument())
+            using (var transaction = document.TransactionManager.StartTransaction())
+            {
+                Views.ZoomToObjects(document.Editor, transaction, ids.Where(id => id.IsValid && !id.IsErased), minimumSize);
+                transaction.Commit();
+            }
+            FocusDrawing();
+        }
+
+        /// <summary>Zoom to a point of the drawing (a problem place found by a check).</summary>
+        internal static void ShowPoint(Document document, Kzm.Core.XY point, double size)
+        {
+            if (document == null || !ReferenceEquals(document, AcadApplication.DocumentManager.MdiActiveDocument)) return;
+            using (document.LockDocument()) Views.ZoomToPoint(document.Editor, point, size);
+            FocusDrawing();
         }
 
         /// <summary>Zoom to objects and leave them selected (from the panel, outside commands).</summary>
