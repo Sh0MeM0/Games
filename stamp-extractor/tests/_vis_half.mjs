@@ -4,7 +4,7 @@ import { segmentImage, resizeImage, setFlatten } from '../lib/segmentation.js';
 if (process.env.FLATTEN) setFlatten(true);
 import { inkGrid } from '../lib/objects.js'; import { workingImage } from '../lib/pipeline.js';
 ort.env.wasm.wasmPaths = path.resolve('vendor/ort') + '/'; ort.env.wasm.numThreads = 1; ort.env.logLevel = 'error';
-const session = await ort.InferenceSession.create(fs.readFileSync('models/ink-seg.onnx'));
+const session = await ort.InferenceSession.create(fs.readFileSync(process.env.MODEL || 'models/ink-seg.onnx'));
 const files = process.argv.slice(3), f = Number(process.argv[2]); const tiles = [];
 for (const file of files) {
   const png = PNG.sync.read(fs.readFileSync(file));

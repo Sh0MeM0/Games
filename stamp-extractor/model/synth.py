@@ -162,6 +162,8 @@ def ink_color(rng, kind):
         return (rng.randint(165, 225), rng.randint(15, 75), rng.randint(30, 90))
     if kind == 'green':
         return (rng.randint(10, 70), rng.randint(100, 160), rng.randint(40, 100))
+    if kind == 'navy':  # blue-black office printing, or black text under bluish light
+        return (rng.randint(10, 60), rng.randint(20, 70), rng.randint(60, 140))
     if kind == 'gray':
         v = rng.randint(70, 130)
         return (v, v, v)
@@ -185,7 +187,8 @@ def draw_text_line(canvas, draw, x, y, text, fnt, fill=255):
 def printed_block(canvas: Canvas, region, xh, rng, color_kind='black'):
     """Paragraph-like printed text inside region (x0, y0, x1, y1)."""
     x0, y0, x1, y1 = region
-    path = rng.choice(available(PRINT_FONTS))
+    fonts = available(PRINT_FONTS)
+    path = rng.choice([f for f in fonts if 'Bold' in f] if rng.random() < .3 else fonts)
     size = max(6, int(xh * rng.uniform(1.75, 2.1)))
     fnt = font(path, size)
     img = canvas.new_alpha(); draw = ImageDraw.Draw(img)
@@ -221,7 +224,7 @@ def form_lines(canvas: Canvas, rng, xh, count):
     size = max(6, int(xh * rng.uniform(1.7, 2.1)))
     fnt = font(path, size)
     fields = []
-    color = ink_color(rng, 'black')
+    color = ink_color(rng, 'black' if rng.random() < .75 else 'navy')
     for _ in range(count):
         y = rng.randint(int(size * 3), canvas.h - size * 2)
         x = rng.randint(0, max(1, canvas.w // 3))
@@ -797,7 +800,7 @@ def document(seed: int, size=(640, 640), objects=None):
             table(c, rng, xh, (x0, y, x1, min(h, y + band)))
         else:
             printed_block(c, (x0, y, x1, min(h, y + band)), xh, rng,
-                          'black' if rng.random() < .9 else rng.choice(['blue', 'red', 'gray']))
+                          rng.choices(['black', 'navy', 'gray', 'blue', 'red'], weights=[60, 25, 8, 5, 2])[0])
         y += band + rng.randint(int(xh * 2), int(xh * 12))
         if rng.random() < .35:  # leave room for a signature block
             y += rng.randint(h // 6, h // 2)
