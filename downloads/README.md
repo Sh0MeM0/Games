@@ -1,6 +1,6 @@
 # Готовая portable-программа
 
-[**StampExtractor-Portable-x64-4.0.0.zip**](https://github.com/Sh0MeM0/Games/raw/claude/admiring-franklin-lc42l2/downloads/StampExtractor-Portable-x64-4.0.0.zip)
+[**StampExtractor-Portable-x64-4.0.0.zip**](https://github.com/Sh0MeM0/Games/raw/stamp-extractor/downloads/StampExtractor-Portable-x64-4.0.0.zip)
 
 Это распакованная portable-версия для Windows 10/11 x64. Архив содержит папку
 `StampExtractor-Portable-x64` с файлами `StampExtractor.exe`, `resources.neu`,

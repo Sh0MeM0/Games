@@ -8,7 +8,7 @@ Portable-программа для Windows 10/11 x64. Открывает PDF (в
 
 ## Скачать
 
-[**StampExtractor-Portable-x64-4.0.0.zip**](https://github.com/Sh0MeM0/Games/raw/claude/admiring-franklin-lc42l2/downloads/StampExtractor-Portable-x64-4.0.0.zip)
+[**StampExtractor-Portable-x64-4.0.0.zip**](https://github.com/Sh0MeM0/Games/raw/stamp-extractor/downloads/StampExtractor-Portable-x64-4.0.0.zip)
 — распакованная portable-версия в ZIP-архиве, контрольная сумма в
 [`downloads/SHA256SUMS.txt`](../downloads/SHA256SUMS.txt).
 
