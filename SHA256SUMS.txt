@@ -1,0 +1,2 @@
+526298f5b144cb4311e4f260d91713fdf194efe5718aa7fb18fcd39017e0c495  PDFMaster-Portable-x64.zip
+2bc4f12639010f2fa2bfcc416cf8f96c6561ac4d01d123ee23de91423a96bbbd  PDFMaster-Source.zip

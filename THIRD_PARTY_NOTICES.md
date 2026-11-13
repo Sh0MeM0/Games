@@ -1,0 +1,120 @@
+# PDF Мастер — лицензии и исходный код
+
+Код PDF Мастер распространяется по GNU AGPL версии 3 или более поздней
+(полный текст — `LICENSE`). Это свободная программа без гарантий. Компоненты
+сохраняют собственные авторские права и лицензии. Коммерческая лицензия Artifex
+в эту поставку не входит: для PyMuPDF/MuPDF используется AGPL.
+
+Поставка работает локально, без обязательной установки AutoCAD, ODA, Python или
+Tesseract. Шрифты сторонних коммерческих продуктов не включены. Права на
+дополнительно импортированные пользователем шрифты остаются у правообладателей.
+
+| Компонент | Версия | Лицензия / исходники |
+|---|---|---|
+| CPython | 3.12.10 | PSF-2.0; https://github.com/python/cpython/tree/v3.12.10 |
+| PySide6 Essentials, Shiboken6, Qt | 6.8.3 | LGPL-3.0 / GPL-3.0; https://github.com/pyside/pyside-setup/tree/v6.8.3 ; https://github.com/qt/qtbase/tree/v6.8.3 |
+| PyMuPDF | 1.26.6 | AGPL-3.0; https://github.com/pymupdf/PyMuPDF/tree/1.26.6 |
+| MuPDF (в PyMuPDF) | 1.26.11 | AGPL-3.0; https://github.com/ArtifexSoftware/mupdf/tree/1.26.11 |
+| GNU LibreDWG | 0.14; `dxf2dwg.exe` с исправлением PDF Мастер | GPL-3.0-or-later; `licenses/LibreDWG-PDFMaster`; https://github.com/LibreDWG/libredwg/releases/download/0.14/libredwg-0.14.tar.xz |
+| GCC runtime и MinGW-w64 (статический импортер) | GCC 14, точная сборка в `vendor/libredwg/PDFMASTER_BUILD.json` | GPL-3.0 с GCC Runtime Library Exception 3.1; лицензии MinGW-w64; `assets/licenses/GCC-Runtime-NOTICES.txt`, `assets/licenses/MinGW-w64-NOTICES.txt` |
+| PCRE2 (в поставке LibreDWG) | 10.47 | BSD-3-Clause; https://github.com/PCRE2Project/pcre2/tree/pcre2-10.47 |
+| GNU libiconv (в поставке LibreDWG) | 1.18 | LGPL-2.1-or-later; https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.18.tar.gz |
+| Tesseract | 5.5.3 | Apache-2.0; https://github.com/tesseract-ocr/tesseract/archive/refs/tags/5.5.3.tar.gz |
+| tessdata_best (eng, rus) | e12c65a915945e4c28e237a9b52bc4a8f39a0cec | Apache-2.0; `licenses/TesseractBest/LICENSE.txt`; https://github.com/tesseract-ocr/tessdata_best/tree/e12c65a915945e4c28e237a9b52bc4a8f39a0cec |
+| tessdata_fast (osd) | 4.1.0 | Apache-2.0; https://github.com/tesseract-ocr/tessdata_fast/tree/4.1.0 |
+| ezdxf | 1.4.4 | MIT; https://github.com/mozman/ezdxf/tree/v1.4.4 |
+| python-docx | 1.2.0 | MIT; https://github.com/python-openxml/python-docx/tree/v1.2.0 |
+| Pillow | 12.3.0 | MIT-CMU/HPND; исходный архив указан в `DEPENDENCIES.json` |
+| fonttools | 4.60.1 | MIT; https://github.com/fonttools/fonttools/tree/4.60.1 |
+| NumPy | 2.2.6 | BSD-3-Clause и лицензии OpenBLAS; https://github.com/numpy/numpy/tree/v2.2.6 |
+| OpenCV headless | 4.11.0.86 | Apache-2.0 и лицензии зависимостей; https://github.com/opencv/opencv/tree/4.11.0 ; https://github.com/opencv/opencv-python/tree/86 |
+| lxml | 6.0.2 | BSD и лицензии libxml2/libxslt; исходный архив указан в `DEPENDENCIES.json` |
+| pyparsing, typing_extensions | версии в `DEPENDENCIES.json` | MIT / PSF; тексты в `licenses/python` |
+| ONNX Runtime | 1.31.1 | MIT; https://github.com/microsoft/onnxruntime/tree/v1.31.1 ; `runtime/Lib/site-packages/onnxruntime/LICENSE` и `ThirdPartyNotices.txt` |
+| SentencePiece | 0.2.2 | Apache-2.0; `licenses/general/SentencePiece-LICENSE.txt`; исходный архив указан в `DEPENDENCIES.json` |
+| Модели OCR PP-OCRv6 det small, ch_ppocr_mobile_v2.0_cls | RapidOCR 3.10.0 | Apache-2.0 (правообладатели весов — Baidu / PaddleOCR); `licenses/models/RapidOCR-MODEL_LICENSES.md` |
+| Модель OCR PP-OCRv5 eslav mobile (ONNX) | RapidOCR model hub v3.10.0 | Apache-2.0 по лицензии проекта PaddleOCR; см. `licenses/models/MODELS_NOTICE.txt` |
+| Модели перевода Argos Translate ru→en, en→ru | 1.9 | проект Argos Translate: MIT или CC0; отдельного файла лицензии в пакетах нет; `licenses/models` |
+| osifont, Liberation | см. `assets/fonts` | лицензии и сведения об авторах рядом с файлами шрифтов |
+| PT Sans, PT Serif, PT Mono, Caption и Narrow | Debian fonts-paratype 20181108-4 | ParaType Free Font License; `assets/fonts/ParaType-LICENSE.txt`; https://company.paratype.com/pt-sans-pt-serif |
+| DejaVu Sans, Serif, Sans Mono | 2.37, Debian 2.37-8 | Bitstream Vera; изменения DejaVu — public domain; `assets/fonts/DejaVu-LICENSE.txt`; https://dejavu-fonts.github.io/ |
+| Noto Sans, Serif, Math, Symbols, Symbols2 | Debian fonts-noto-core 20201225-2 | SIL OFL 1.1; `assets/fonts/Noto-LICENSE.txt`; https://github.com/notofonts/noto-fonts |
+
+Модели перевода хранятся в формате CTranslate2, но выполняются собственным
+модулем PDF Мастер на NumPy (`app/pdf2office/nmt.py`); библиотека CTranslate2
+не поставляется. Причина: её колесо для Windows содержит проприетарные
+компоненты Intel (MKL, OpenMP `libiomp5md.dll`), а лицензия Intel для
+разработчиков (п. 3.1 (x)) запрещает распространять их так, чтобы они
+становились частью ПО с взаимной (copyleft) лицензией, тогда как PDF Мастер
+распространяется по AGPL-3.0.
+Нейросетевые модели (папка `models`) и их происхождение описаны в
+`licenses/models/MODELS_NOTICE.txt`; URL и SHA-256 каждого файла модели — в
+`DEPENDENCIES-MODELS.json`. Для модели распознавания eslav отдельного
+модельного уведомления у RapidOCR нет; её лицензия указана по лицензии проекта
+PaddleOCR (Apache-2.0). Для моделей Argos Translate в пакетах нет отдельного
+лицензионного файла: указана лицензия проекта Argos Translate, а README пакетов
+с перечнем обучающих корпусов OPUS сохранены без изменений.
+В `runtime` добавлены `msvcp140.dll`, `msvcp140_1.dll`, `msvcp140_2.dll` из уже
+входящего conda-пакета `vc14_runtime` 14.51 (распространяемый Microsoft VC Runtime).
+
+Полные тексты основных свободных лицензий находятся в `licenses/general` и
+`assets/licenses`. Сохранены оригинальные лицензии Python-пакетов в
+`runtime/Lib/site-packages/*.dist-info` и `licenses/python`. Лицензии, точные
+версии, исходные URL, патчи и сборочные рецепты библиотек Tesseract находятся в
+`licenses/conda/<имя>/licenses`, `licenses/conda/<имя>/recipe` и `index.json`.
+В частности, поставка содержит Leptonica, libarchive, libpng, libjpeg-turbo,
+libtiff, libwebp, OpenJPEG, GIFLIB, zlib, zstd, xz/liblzma, bzip2, LZ4, LZO,
+libdeflate, LERC, libxml2, libiconv, ICU, libcurl, libssh2, libpsl, Kerberos,
+OpenSSL и распространяемые Microsoft VC Runtime/UCRT. Их лицензии применяются
+отдельно. Ни одна коммерческая лицензия Qt не заявляется: используются права
+открытых LGPL/GPL лицензий.
+
+Qt и другие LGPL библиотеки загружаются динамически. Замена совместимых DLL и
+отладка таких замен не запрещаются. Python-код не зашифрован и лежит в `app`;
+исходники приложения, тесты, C launcher и сценарии сборки приложены отдельно в
+`PDFMaster-Source.zip`. Для модификации достаточно заменить исходники и
+совместимые динамические библиотеки либо пересобрать дистрибутив. Проверка
+подписи, запрещающая запуск модифицированной версии, не применяется.
+
+## Получение соответствующих исходников зависимостей
+
+`DEPENDENCIES.json` рядом с исполняемым файлом содержит прямой URL каждого
+использованного бинарного пакета, SHA-256 и URL исходного архива для Python-
+зависимостей. Для conda-пакетов точные URL, контрольные суммы исходников и патчи
+есть в приложенных `recipe/rendered_recipe.yaml`, `recipe/recipe.yaml` или
+`recipe/meta.yaml`. Эти рецепты относятся именно к включённым версиям.
+Исходники LibreDWG приложены в `assets/licenses/libredwg-0.14.tar.xz` и также
+доступны по прямой ссылке в таблице; исходники Qt 6.8.3:
+https://download.qt.io/archive/qt/6.8/6.8.3/single/qt-everywhere-src-6.8.3.tar.xz
+и https://github.com/pyside/pyside-setup/archive/refs/tags/v6.8.3.tar.gz .
+Исходники PyMuPDF также доступны по прямому URL `source` в `DEPENDENCIES.json`;
+этот архив содержит сборочный рецепт точной версии MuPDF и инструкции сборки.
+Сведения об исходниках нужно передавать вместе с бинарной поставкой.
+
+Импортер `dxf2dwg.exe` изменён проектом PDF Мастер 15 октября 2026 года:
+ограничена стоимость проверки префикса при чтении DXF и сохранён быстрый поиск
+ссылок при повторных нулевых ссылках. Ненулевые дубликаты сохраняют прежнюю
+защитную обработку. Полные соответствующие исходники доступны непосредственно
+в portable и исходном ZIP: `assets/licenses/libredwg-0.14.tar.xz`, точный patch
+и рецепт в `licenses/LibreDWG-PDFMaster` (portable) или `packaging/patches` и
+`scripts/build_libredwg_windows.py` (исходный ZIP). Манифест закрепляет архив,
+подпись, patch и параметры сборки. Исходный ZIP содержит готовую структуру
+каталогов для пересборки; для неё нужны Linux/WSL, MinGW-w64, GNU make/patch,
+GnuPG и Python 3.12+. Исходники не заменены предложением получить их по запросу.
+Подпись сопровождающего LibreDWG удостоверяет исходный архив, а не изменённый
+EXE. Официальные утилиты обратного чтения DWG оставлены без изменений.
+
+Архивы получены через HTTPS с проверкой TLS. Пакеты PyPI и conda сверены с
+SHA-256, опубликованными в метаданных соответствующего реестра. Все входящие
+артефакты закреплены контрольными суммами в `packaging/windows-assets.lock.json`;
+дополнительные шрифты — в `assets/fonts/SOURCES.json`. Шрифты получены
+из официальных Debian-пакетов, проверенных по SHA-256 индекса `Packages`,
+который сверен с подписанным `InRelease`. Подробности и команды повторного
+получения находятся в `assets/fonts/README.md`.
+Подписи OpenPGP Windows-архива и исходников LibreDWG проверены ключом
+`38A4167B0DB69E49C5F7216CB8C28866AB27A7A2`, полученным с HTTPS-страницы
+сопровождающего проекта https://github.com/rurban.gpg . Ключ и подпись бинарной
+поставки приложены в `packaging/keys` исходного архива; сборка повторяет проверку
+подписи. Это проверка ключа, опубликованного на GitHub, без независимой
+сертификации личности его владельца. Созданные EXE не имеют
+коммерческой Authenticode-подписи издателя.
