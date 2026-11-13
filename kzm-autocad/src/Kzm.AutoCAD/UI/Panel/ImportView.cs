@@ -44,6 +44,8 @@ namespace Kzm.AutoCAD.UI.Panel
             internal KzmSettings Settings;
             internal readonly Dictionary<string, ImportOverride> Overrides = new Dictionary<string, ImportOverride>(StringComparer.OrdinalIgnoreCase);
             internal ImportResult Result;
+            /// <summary>Selected sources highlighted on the drawing until the import (замечание: видно, что выбрано).</summary>
+            internal List<ObjectId> Highlighted = new List<ObjectId>();
         }
 
         private readonly ConditionalWeakTable<Document, State> states = new ConditionalWeakTable<Document, State>();
@@ -240,6 +242,42 @@ namespace Kzm.AutoCAD.UI.Panel
 
         internal void Forget(Document document) => states.Remove(document);
 
+        /// <summary>The selected texts, POINT or blocks are highlighted on the drawing until they are imported.</summary>
+        private void Highlight(State state, List<ObjectId> ids)
+        {
+            Unhighlight(state);
+            var document = panel?.Document;
+            if (document == null || ids == null || ids.Count == 0) return;
+            try
+            {
+                using (document.LockDocument(DocumentLockMode.Read, null, null, false))
+                    KzmCommands.Highlight(document.Database, ids, true);
+                state.Highlighted = ids.ToList();
+                document.Editor.UpdateScreen();
+            }
+            catch (System.Exception)
+            {
+                state.Highlighted = new List<ObjectId>();
+            }
+        }
+
+        private void Unhighlight(State state)
+        {
+            var document = panel?.Document;
+            if (state == null || state.Highlighted.Count == 0 || document == null) return;
+            try
+            {
+                using (document.LockDocument(DocumentLockMode.Read, null, null, false))
+                    KzmCommands.Highlight(document.Database, state.Highlighted, false);
+                document.Editor.UpdateScreen();
+            }
+            catch (System.Exception) { /* highlighting is a convenience */ }
+            state.Highlighted = new List<ObjectId>();
+        }
+
+        /// <summary>Leaving the import form: the highlight goes away.</summary>
+        internal void ClearHighlight() => Unhighlight(Current);
+
         internal void ResetSettings(Document document)
         {
             if (document == null || !states.TryGetValue(document, out var state)) return;
@@ -376,6 +414,7 @@ namespace Kzm.AutoCAD.UI.Panel
             var source = srcPoints.Checked ? SourceType.Points : srcBlocks.Checked ? SourceType.Blocks : SourceType.Texts;
             if (source == state.Source) return;
             state.Source = source;
+            Unhighlight(state);
             state.TextIds = new List<ObjectId>();
             state.TextsNote = "ничего не выбрано";
             state.Layers.Clear();
@@ -400,6 +439,7 @@ namespace Kzm.AutoCAD.UI.Panel
             var selection = byLayers.Checked ? Selection.Layers : bySimilar.Checked ? Selection.Similar : Selection.Window;
             if (selection == state.Selection) return;
             state.Selection = selection;
+            Unhighlight(state);
             state.TextIds = new List<ObjectId>();
             state.TextsNote = "тексты не выбраны";
             state.Result = null;
@@ -415,6 +455,7 @@ namespace Kzm.AutoCAD.UI.Panel
             state.Layers.Clear();
             foreach (LayerItem item in layers.CheckedItems) state.Layers.Add(item.Name);
             state.TextIds = DrawingData.EntitiesOnLayers(panel.Document, state.Layers, Types(state));
+            Highlight(state, state.TextIds);
             state.TextsNote = ImportService.CountTexts(panel.Document.Database, state.TextIds) +
                               (state.Layers.Count > 0 ? " на слоях " + string.Join(", ", state.Layers) : string.Empty);
             state.Result = null;
@@ -486,6 +527,7 @@ namespace Kzm.AutoCAD.UI.Panel
                 state.TextIds = picked;
                 state.TextsNote = ImportService.CountTexts(panel.Document.Database, picked) + (note != null ? " — подобные: " + note : string.Empty);
                 state.Result = null;
+                Highlight(state, picked);
                 UpdateControls();
                 FillGrid();
                 PanelMessages.Info("Тексты выбраны. Нажмите «Проверить».");
@@ -577,15 +619,13 @@ namespace Kzm.AutoCAD.UI.Panel
             {
                 result = ImportService.Commit(document, request);
                 foreach (var line in result.Summary) document.Editor.WriteMessage("\nКЗМ: " + line);
-                var problems = result.Plan.Rejected.Concat(result.Plan.Disputed)
-                    .Select(item => result.TextIds.TryGetValue(item.Source.Handle, out var id) ? id : ObjectId.Null)
-                    .Where(id => id.IsValid).ToArray();
-                if (problems.Length > 0) document.Editor.SetImpliedSelection(problems);
+                // After the import nothing stays highlighted; problem places are marked on КЗМ_ПРОВЕРКА.
             }, () =>
             {
                 if (result == null) return;
                 state.Result = result;
                 state.Overrides.Clear();
+                Unhighlight(state);
                 PanelMessages.Info("Импорт выполнен: создано точек " + result.Created.Count + ". Отменить — U.");
                 panel.RefreshAll();
             });

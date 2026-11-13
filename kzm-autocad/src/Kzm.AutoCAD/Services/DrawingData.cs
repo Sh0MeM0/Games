@@ -27,6 +27,8 @@ namespace Kzm.AutoCAD.Services
     {
         internal CartogramInfo Info { get; set; }
         internal bool Outdated { get; set; }
+        /// <summary>Labels whose elevations the user typed on the drawing (taken into the surfaces by «Пересчитать»).</summary>
+        internal int LabelEdits { get; set; }
     }
 
     internal sealed class DrawingSnapshot
@@ -36,6 +38,9 @@ namespace Kzm.AutoCAD.Services
         internal List<CartogramSummary> Cartograms { get; } = new List<CartogramSummary>();
         internal string CurrentId { get; set; }
         internal string Error { get; set; }
+        internal List<ProjectInfo> Projects { get; } = new List<ProjectInfo>();
+        /// <summary>The open project (null — none: the panel offers to create or open one).</summary>
+        internal ProjectInfo Project { get; set; }
 
         internal SurfaceSummary Find(string id) => Surfaces.FirstOrDefault(surface => surface.Info.Id == id);
 
@@ -65,12 +70,17 @@ namespace Kzm.AutoCAD.Services
                 using (var transaction = database.TransactionManager.StartOpenCloseTransaction())
                 {
                     snapshot.Settings = KzmStore.ReadSettings(database, transaction);
+                    snapshot.Projects.AddRange(KzmStore.ReadProjects(database, transaction));
+                    string projectId = KzmStore.ReadCurrentProjectId(database, transaction);
+                    snapshot.Project = snapshot.Projects.FirstOrDefault(project => project.Id == projectId);
                     snapshot.CurrentId = KzmStore.ReadCurrentSurfaceId(database, transaction);
                     var points = PointBlocks.Read(database, transaction, snapshot.Settings);
                     var bySurface = points.GroupBy(point => point.Data.SurfaceId).ToDictionary(group => group.Key, group => group.ToList());
                     var pointSurface = points.ToDictionary(point => point.Id, point => point.Data.SurfaceId);
                     var pairs = KzmStore.ReadConflicts(database, transaction).Where(pair => pair.IsAlive).ToList();
-                    var surfaces = KzmStore.ReadSurfaces(database, transaction);
+                    // Only the open project is shown in the panel.
+                    var surfaces = KzmStore.ReadSurfaces(database, transaction)
+                        .Where(surface => snapshot.Project != null && ProjectInfo.Of(surface.ProjectId) == snapshot.Project.Id).ToList();
                     var lines = KzmStore.ReadAllLines(database, transaction);
                     // Each surface is fingerprinted once and reused by all cartograms.
                     var signatures = new Dictionary<string, SurfaceSignature>(StringComparer.Ordinal);
@@ -94,11 +104,13 @@ namespace Kzm.AutoCAD.Services
                             Lines = ownLines,
                         });
                     }
-                    foreach (var cartogram in KzmStore.ReadCartograms(database, transaction))
+                    foreach (var cartogram in KzmStore.ReadCartograms(database, transaction)
+                                 .Where(c => snapshot.Project != null && ProjectInfo.Of(c.ProjectId) == snapshot.Project.Id))
                     {
-                        bool outdated = cartogram.Built && cartogram.BuiltFingerprint != CartogramService.FingerprintOf(database, transaction,
-                            cartogram, surfaces, id => signatures[id]);
-                        snapshot.Cartograms.Add(new CartogramSummary { Info = cartogram, Outdated = outdated });
+                        int edits = cartogram.Built ? CartogramService.CountLabelEdits(database, transaction, cartogram.Id) : 0;
+                        bool outdated = cartogram.Built && (edits > 0 || cartogram.OldDrawing || cartogram.BuiltFingerprint != CartogramService.FingerprintOf(database, transaction,
+                            cartogram, surfaces, id => signatures[id]));
+                        snapshot.Cartograms.Add(new CartogramSummary { Info = cartogram, Outdated = outdated, LabelEdits = edits });
                     }
                     transaction.Commit();
                 }

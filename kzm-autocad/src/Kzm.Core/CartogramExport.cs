@@ -20,6 +20,9 @@ namespace Kzm.Core
 
     public static class CartogramExport
     {
+        /// <summary>Centre of the full grid square (i, j) in drawing coordinates.</summary>
+        public static XY Center(CartogramResult r, int i, int j) => r.Grid.ToWorld((i + 0.5) * r.Grid.Step, (j + 0.5) * r.Grid.Step);
+
         public static string ColumnLabel(CartogramInfo c, CartogramResult r, int i) => GridLabels.Label(c.Columns, i - r.IMin + 1);
 
         /// <summary>Rows are counted from the top (as on the drawing).</summary>
@@ -32,38 +35,41 @@ namespace Kzm.Core
             int hd = Math.Max(2, report.ElevationDecimals);
             var sheets = new List<ExportSheet>();
 
-            var nodes = new ExportSheet("Узлы") { FrozenRows = 1 };
-            nodes.Header("Линия сетки слева направо", "Линия сетки сверху вниз", "X, м", "Y, м", "Hф, м", "Hпр, м", "h = Hпр − Hф, м", "Примечание");
-            foreach (var node in r.Nodes.Values.Where(n => n.Used).OrderByDescending(n => n.J).ThenBy(n => n.I))
-            {
-                nodes.Row(node.I - r.IMin + 1, r.JMax + 1 - node.J + 1, node.Position.X, node.Position.Y,
+            var nodes = new ExportSheet("Точки") { FrozenRows = 1 };
+            nodes.Header("Точка", "X, м", "Y, м", "Hф, м", "Hпр, м", "h = Hпр − Hф, м", "Примечание");
+            foreach (var node in r.Nodes.Values.Where(n => n.Used && n.Inside).OrderByDescending(n => n.J).ThenBy(n => n.I))
+                nodes.Row("узел сетки", node.Position.X, node.Position.Y,
                     (object)node.Fact ?? string.Empty, (object)node.Project ?? string.Empty, (object)node.Working ?? string.Empty,
                     node.Working.HasValue ? string.Empty : "нет данных поверхности");
-            }
-            foreach (var (column, decimals) in new[] { (2, 3), (3, 3), (4, hd), (5, hd), (6, hd) }) nodes.Decimals[column] = decimals;
-            foreach (var (column, width) in new[] { (0, 12.0), (1, 12.0), (2, 14.0), (3, 14.0), (4, 10.0), (5, 10.0), (6, 12.0), (7, 26.0) }) nodes.Widths[column] = width;
+            foreach (var point in r.BoundaryPoints.OrderByDescending(b => b.Position.Y).ThenBy(b => b.Position.X))
+                nodes.Row("сетка × граница", point.Position.X, point.Position.Y,
+                    (object)point.Fact ?? string.Empty, (object)point.Project ?? string.Empty, (object)point.Working ?? string.Empty,
+                    point.Working.HasValue ? string.Empty : "нет данных поверхности");
+            foreach (var (column, decimals) in new[] { (1, 3), (2, 3), (3, hd), (4, hd), (5, hd) }) nodes.Decimals[column] = decimals;
+            foreach (var (column, width) in new[] { (0, 16.0), (1, 14.0), (2, 14.0), (3, 10.0), (4, 10.0), (5, 14.0), (6, 26.0) }) nodes.Widths[column] = width;
             sheets.Add(nodes);
 
             var squares = new ExportSheet("Квадраты") { FrozenRows = 1 };
-            squares.Header("Столбец", "Ряд", "Площадь, м²", "Насыпь (+), м³", "Выемка (–), м³", "Квадрат", "Примечание");
-            foreach (var square in r.Squares.OrderByDescending(s => s.J).ThenBy(s => s.I))
+            squares.Header("X центра, м", "Y центра, м", "Площадь, м²", "Насыпь (+), м³", "Выемка (–), м³", "Квадрат", "Примечание");
+            foreach (var square in r.Squares.OrderByDescending(q => q.J).ThenBy(q => q.I))
             {
-                squares.Row(ColumnLabel(c, r, square.I), RowLabel(c, r, square.J), square.Area,
+                var center = Center(r, square.I, square.J);
+                squares.Row(center.X, center.Y, square.Area,
                     square.Computed ? (object)square.Fill : string.Empty, square.Computed ? (object)square.Cut : string.Empty,
                     square.Full ? "полный" : "неполный (по границе)", square.Problem ?? string.Empty);
             }
-            foreach (var column in new[] { 2, 3, 4 }) squares.Decimals[column] = 2;
-            foreach (var (column, width) in new[] { (0, 9.0), (1, 9.0), (2, 13.0), (3, 15.0), (4, 15.0), (5, 22.0), (6, 40.0) }) squares.Widths[column] = width;
+            foreach (var (column, decimals) in new[] { (0, 3), (1, 3), (2, 2), (3, 2), (4, 2) }) squares.Decimals[column] = decimals;
+            foreach (var (column, width) in new[] { (0, 14.0), (1, 14.0), (2, 13.0), (3, 15.0), (4, 15.0), (5, 22.0), (6, 40.0) }) squares.Widths[column] = width;
             sheets.Add(squares);
 
             var totals = new ExportSheet("Итоги");
-            totals.Header("Итоги по столбцам", "Насыпь (+), м³", "Выемка (–), м³");
+            totals.Header("Итоги по столбцам: X центра, м", "Насыпь (+), м³", "Выемка (–), м³");
             foreach (var i in r.ColumnTotals.Keys.OrderBy(k => k))
-                totals.Row(ColumnLabel(c, r, i), r.ColumnTotals[i].Fill, r.ColumnTotals[i].Cut);
+                totals.Row(Center(r, i, r.JMin).X.ToString("0.###", CultureInfo.InvariantCulture).Replace('.', ','), r.ColumnTotals[i].Fill, r.ColumnTotals[i].Cut);
             totals.Row();
-            totals.Header("Итоги по рядам", "Насыпь (+), м³", "Выемка (–), м³");
+            totals.Header("Итоги по рядам: Y центра, м", "Насыпь (+), м³", "Выемка (–), м³");
             foreach (var j in r.RowTotals.Keys.OrderByDescending(k => k))
-                totals.Row(RowLabel(c, r, j), r.RowTotals[j].Fill, r.RowTotals[j].Cut);
+                totals.Row(Center(r, r.IMin, j).Y.ToString("0.###", CultureInfo.InvariantCulture).Replace('.', ','), r.RowTotals[j].Fill, r.RowTotals[j].Cut);
             totals.Row();
             totals.Header("Всего", "Насыпь (+), м³", "Выемка (–), м³");
             totals.Row("По картограмме (метод квадратов)", r.TotalFill, r.TotalCut);
@@ -90,7 +96,6 @@ namespace Kzm.Core
             totals.Row("Фактическая поверхность", report.FactName ?? string.Empty);
             totals.Row("Проектная поверхность", report.ProjectName ?? string.Empty);
             totals.Row("Шаг сетки, м", c.Step);
-            totals.Row("Угол поворота сетки, °", c.AngleDegrees);
             totals.Row("Базовая точка (узел 0,0), X; Y", r.Grid.Origin.X.ToString("0.###", CultureInfo.InvariantCulture).Replace('.', ',') + "; " +
                                                        r.Grid.Origin.Y.ToString("0.###", CultureInfo.InvariantCulture).Replace('.', ','));
             totals.Row("Масштаб", "1:" + c.Scale.ToString(CultureInfo.InvariantCulture));

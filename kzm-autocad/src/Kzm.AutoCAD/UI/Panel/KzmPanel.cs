@@ -53,7 +53,10 @@ namespace Kzm.AutoCAD.UI.Panel
         private readonly LineView lineView = new LineView();
         private readonly PlaneView planeView = new PlaneView();
         private readonly StartView startView = new StartView();
+        private readonly ProjectsView projectsView = new ProjectsView();
         private readonly ToolStripButton updateButton;
+        private readonly ToolStripDropDownButton projectButton = new ToolStripDropDownButton { DisplayStyle = ToolStripItemDisplayStyle.Text };
+        private readonly List<ToolStripItem> projectOnly = new List<ToolStripItem>();
         private Control shown;
         private string shownSurfaceId;
         private string selectedKey;
@@ -64,10 +67,14 @@ namespace Kzm.AutoCAD.UI.Panel
             Dock = DockStyle.Fill;
             Font = SystemFonts.MessageBoxFont;
 
+            // The project comes first: everything else works inside the open project.
+            var projectBar = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Dock = DockStyle.Top, Stretch = true };
+            projectButton.ToolTipText = "Проект: создать, открыть другой, переименовать, закрыть";
+            projectBar.Items.Add(projectButton);
             var toolbar = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, Dock = DockStyle.Top, Stretch = true };
-            toolbar.Items.Add(Button("+ Поверхность", "Создать фактическую или проектную поверхность", () => ShowNewSurface()));
-            toolbar.Items.Add(Button("+ Картограмма", "Новая картограмма: граница, поверхности, сетка, оформление", ShowNewCartogram));
-            toolbar.Items.Add(Button("Импорт", "Импорт отметок из текстов съёмки", () => ShowImport(SelectedSurfaceId)));
+            projectOnly.Add(toolbar.Items[toolbar.Items.Add(Button("+ Поверхность", "Создать фактическую или проектную поверхность", () => ShowNewSurface()))]);
+            projectOnly.Add(toolbar.Items[toolbar.Items.Add(Button("+ Картограмма", "Новая картограмма: граница, поверхности, сетка, оформление", ShowNewCartogram))]);
+            projectOnly.Add(toolbar.Items[toolbar.Items.Add(Button("Импорт", "Импорт отметок съёмки", () => ShowImport(SelectedSurfaceId)))]);
             updateButton = Button("Пересчитать", "Пересчитать устаревшие картограммы (KZM_UPDATE)", UpdateOutdated);
             toolbar.Items.Add(updateButton);
             toolbar.Items.Add(new ToolStripSeparator());
@@ -112,6 +119,7 @@ namespace Kzm.AutoCAD.UI.Panel
 
             Controls.Add(split);
             Controls.Add(toolbar);
+            Controls.Add(projectBar);
             Controls.Add(status);
             PanelMessages.Posted += (text, error) =>
             {
@@ -201,6 +209,9 @@ namespace Kzm.AutoCAD.UI.Panel
             int outdated = Snapshot.Cartograms.Count(c => c.Outdated);
             updateButton.Enabled = outdated > 0;
             updateButton.Text = outdated > 0 ? "Пересчитать (" + outdated + ")" : "Пересчитать";
+            RebuildProjectMenu();
+            // Without an open project only the project page makes sense.
+            if (Snapshot.Project == null && !(shown is ProjectsView)) shown = null;
             RebuildTree();
             if (shown is IPanelView view) view.Bind(this, shownSurfaceId);
             else if (shown == null) Display(null, null);
@@ -208,6 +219,65 @@ namespace Kzm.AutoCAD.UI.Panel
         }
 
         internal void Forget(Document document) => importView.Forget(document);
+
+        // ---------- projects ----------
+
+        private void RebuildProjectMenu()
+        {
+            var project = Snapshot.Project;
+            projectButton.Text = project != null ? "Проект: " + project.Name : "Проект: не открыт";
+            projectButton.ForeColor = project != null ? SystemColors.ControlText : Color.DarkOrange;
+            projectButton.DropDownItems.Clear();
+            foreach (var item in Snapshot.Projects)
+            {
+                string id = item.Id;
+                var menuItem = new ToolStripMenuItem(item.Name) { Checked = project?.Id == id };
+                menuItem.Click += (s, e) => OpenProject(id);
+                projectButton.DropDownItems.Add(menuItem);
+            }
+            if (Snapshot.Projects.Count > 0) projectButton.DropDownItems.Add(new ToolStripSeparator());
+            projectButton.DropDownItems.Add("Новый проект…", null, (s, e) => ShowProjects());
+            projectButton.DropDownItems.Add("Переименовать / закрыть…", null, (s, e) => ShowProjects()).Enabled = project != null;
+            projectButton.DropDownItems.Add("Закрыть проект", null, (s, e) => CloseProject()).Enabled = project != null;
+            foreach (var item in projectOnly) item.Enabled = project != null && Document != null;
+        }
+
+        internal void ShowProjects()
+        {
+            tree.SelectedNode = null;
+            selectedKey = null;
+            Display(projectsView, null);
+        }
+
+        internal void OpenProject(string projectId)
+        {
+            if (projectId == Snapshot.Project?.Id) { ShowStart(); return; }
+            PanelActions.Run("открыть проект", document =>
+            {
+                EditServices.OpenProject(document.Database, projectId);
+                PanelMessages.Info("Открыт проект «" + Snapshot.Projects.FirstOrDefault(p => p.Id == projectId)?.Name + "».");
+            }, AfterProjectChange);
+        }
+
+        internal void CloseProject()
+        {
+            if (Snapshot.Project == null) return;
+            string name = Snapshot.Project.Name;
+            PanelActions.Run("закрыть проект", document =>
+            {
+                EditServices.OpenProject(document.Database, null);
+                PanelMessages.Info("Проект «" + name + "» закрыт. Его данные остаются в чертеже — откройте его снова из списка.");
+            }, AfterProjectChange);
+        }
+
+        /// <summary>After a project was created, opened, renamed or closed.</summary>
+        internal void AfterProjectChange()
+        {
+            selectedKey = null;
+            shown = null;
+            RefreshAll();
+            Display(null, null);
+        }
 
         /// <summary>The import form takes the new drawing settings.</summary>
         internal void SettingsSaved() => importView.ResetSettings(Document);
@@ -482,7 +552,8 @@ namespace Kzm.AutoCAD.UI.Panel
         {
             if (shown is PairsView pairs && !ReferenceEquals(view, pairs)) pairs.ClearLabels();
             if (shown is CartogramView cartogram && !ReferenceEquals(view, cartogram)) cartogram.ClearPreview();
-            view = view ?? startView;
+            if (shown is ImportView import && !ReferenceEquals(view, import)) import.ClearHighlight();
+            view = view ?? (Snapshot.Project == null ? (Control)projectsView : startView);
             detail.SuspendLayout();
             detail.Controls.Clear();
             shown = view;

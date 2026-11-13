@@ -122,7 +122,12 @@ namespace Kzm.AutoCAD.UI.Panel
                 var obj = e.DBObject;
                 if (obj is AttributeReference attribute)
                 {
-                    if (string.Equals(attribute.Tag, PointBlocks.Tag, StringComparison.OrdinalIgnoreCase)) MarkDirty();
+                    // Elevation of a point, or an elevation typed on a cartogram node (the cartogram becomes outdated).
+                    string tag = attribute.Tag;
+                    if (string.Equals(tag, PointBlocks.Tag, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(tag, Services.CartogramService.ProjectTag, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(tag, Services.CartogramService.FactTag, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(tag, Services.CartogramService.WorkingTag, StringComparison.OrdinalIgnoreCase)) MarkDirty();
                 }
                 else if (obj is BlockReference reference)
                 {

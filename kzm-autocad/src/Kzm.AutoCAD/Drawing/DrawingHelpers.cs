@@ -24,6 +24,10 @@ namespace Kzm.AutoCAD.Drawing
         internal const string Totals = "КЗМ_ИТОГИ";
         /// <summary>Hatching of cut areas (СТБ 2073-2010, п. 7.1 б); not in the list of п. 8 — a separate layer to switch it off.</summary>
         internal const string CutHatch = "КЗМ_ВЫЕМКА_ШТРИХ";
+        /// <summary>Blocks of the node labels (the three elevations are attributes on КЗМ_ОТМ_* layers) and their leaders.</summary>
+        internal const string Nodes = "КЗМ_УЗЛЫ";
+        /// <summary>Boundary of works drawn by points.</summary>
+        internal const string Boundary = "КЗМ_ГРАНИЦА";
 
         /// <summary>Thin dashed line for the zero line (СТБ 2073-2010, п. 3.12); falls back to a solid line.</summary>
         internal static void EnsureDashed(Database database, Transaction transaction, string layerName)

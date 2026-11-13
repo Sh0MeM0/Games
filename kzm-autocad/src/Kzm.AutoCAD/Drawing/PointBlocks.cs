@@ -22,6 +22,8 @@ namespace Kzm.AutoCAD.Drawing
         internal string Number { get; set; }
         /// <summary>Temporarily excluded from triangulation.</summary>
         internal bool Excluded { get; set; }
+        /// <summary>No visible label (a point written from a label of the cartogram: the cartogram shows the value).</summary>
+        internal bool HideLabel { get; set; }
     }
 
     /// <summary>A point block read from the drawing with its current elevation and number.</summary>
@@ -178,7 +180,7 @@ namespace Kzm.AutoCAD.Drawing
                     attribute.WidthFactor = record.XScale;
                 attribute.Height = isElevation ? height : numberHeight;
                 attribute.Color = data.Excluded ? excludedColor : ParseColor(isElevation ? appearance.ElevationColor : appearance.NumberColor);
-                attribute.Invisible = isNumber && (!appearance.ShowNumber || string.IsNullOrEmpty(attribute.TextString));
+                attribute.Invisible = data.HideLabel || (isNumber && (!appearance.ShowNumber || string.IsNullOrEmpty(attribute.TextString)));
                 if (resetPositions)
                 {
                     attribute.HorizontalMode = TextHorizontalMode.TextLeft;
@@ -241,6 +243,11 @@ namespace Kzm.AutoCAD.Drawing
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, XyModes.Code(data.XyMode)),
                 new TypedValue((int)DxfCode.ExtendedDataAsciiString, "excl"),
                 new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)(data.Excluded ? 1 : 0)));
+            if (data.HideLabel)
+            {
+                buffer.Add(new TypedValue((int)DxfCode.ExtendedDataAsciiString, "nolbl"));
+                buffer.Add(new TypedValue((int)DxfCode.ExtendedDataInteger16, (short)1));
+            }
             if (!string.IsNullOrEmpty(data.Number))
             {
                 buffer.Add(new TypedValue((int)DxfCode.ExtendedDataAsciiString, "num"));
@@ -281,6 +288,7 @@ namespace Kzm.AutoCAD.Drawing
                         case "src": data.Source = SourceKinds.Parse(value as string); break;
                         case "xy": data.XyMode = XyModes.Parse(value as string); break;
                         case "excl": data.Excluded = Convert.ToInt32(value) != 0; break;
+                        case "nolbl": data.HideLabel = Convert.ToInt32(value) != 0; break;
                         case "num": data.Number = value as string; break;
                         case "srch": data.SourceHandle = Convert.ToString(value); break;
                         case "mkh": data.MarkerHandle = Convert.ToString(value); break;

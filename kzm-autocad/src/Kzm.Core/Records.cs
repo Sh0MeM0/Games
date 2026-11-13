@@ -71,6 +71,7 @@ namespace Kzm.Core
                 Pair("tin_shown", surface.ShowTriangles ? "1" : "0"),
                 Pair("tin_fp", surface.TrianglesFingerprint ?? string.Empty),
                 Pair("tin_ref", surface.TrianglesBlockHandle ?? string.Empty),
+                Pair("prj", surface.ProjectId ?? string.Empty),
             };
             values.AddRange((surface.Appearance ?? new PointAppearance()).Encode());
             return values;
@@ -92,6 +93,7 @@ namespace Kzm.Core
                 ShowTriangles = map.TryGetValue("tin_shown", out string shown) && shown == "1",
                 TrianglesFingerprint = map.TryGetValue("tin_fp", out string fp) && fp.Length > 0 ? fp : null,
                 TrianglesBlockHandle = map.TryGetValue("tin_ref", out string tinRef) && tinRef.Length > 0 ? tinRef : null,
+                ProjectId = map.TryGetValue("prj", out string prj) && prj.Length > 0 ? prj : null,
                 Appearance = PointAppearance.Decode(map),
             };
         }
@@ -131,6 +133,17 @@ namespace Kzm.Core
         public bool ControlCheck { get; set; } = true;
         /// <summary>При пересчёте ставить подписи, сдвинутые вручную, туда же (задание п. 7).</summary>
         public bool KeepMovedLabels { get; set; } = true;
+        /// <summary>Проект, к которому относится картограмма (null — данные версий до 0.6, «Проект 1»).</summary>
+        public string ProjectId { get; set; }
+        /// <summary>Зазор между сеткой и таблицей объёмов под ней, мм на листе.</summary>
+        public double TableGapMm { get; set; } = 10;
+        /// <summary>Толщина линий сетки, сотые доли мм (18 — 0,18 мм).</summary>
+        public int GridLineWeight { get; set; } = 18;
+        /// <summary>Version of the drawing rules the cartogram was built with (0 — before 0.6).</summary>
+        public int DrawVersion { get; set; }
+        /// <summary>Drawing rules of this version: blocks, colours, clipped grid, table below (0.6).</summary>
+        public const int CurrentDrawVersion = 2;
+        public bool OldDrawing => Built && DrawVersion < CurrentDrawVersion;
         public bool Built { get; set; }
         public string BuiltFingerprint { get; set; }
         public double LastFill { get; set; }
@@ -170,6 +183,8 @@ namespace Kzm.Core
             if (!KzmSettings.Scales.Contains(Scale)) problems.Add("масштаб должен быть 1:500, 1:1000 или 1:2000");
             if (!(NodeTextMm > 0) || !(VolumeTextMm > 0) || !(TotalsTextMm > 0)) problems.Add("высоты текста должны быть больше нуля");
             if (VolumeDecimals < 0 || VolumeDecimals > 3) problems.Add("округление объёмов: от 0 до 3 знаков");
+            if (!(TableGapMm >= 0) || TableGapMm > 500) problems.Add("зазор до таблицы: от 0 до 500 мм");
+            if (!LineWeights.Contains(GridLineWeight)) problems.Add("толщина линий сетки задана неверно");
             foreach (var (title, style) in Labels())
                 if (!NodeLabelStyle.IsValidLayer(style.Layer)) problems.Add("слой подписи (" + title + ") задан неверно: «" + style.Layer + "»");
             var corners = Labels().GroupBy(l => l.Style.Corner).Where(g => g.Count() > 1).ToList();
@@ -182,9 +197,12 @@ namespace Kzm.Core
         /// Parameters the drawing depends on (for «устарела»). New parameters are added only when they
         /// differ from their defaults, so cartograms built by version 0.4 are not reported outdated.
         /// </summary>
+        /// <summary>Standard AutoCAD lineweights offered for the grid, hundredths of a millimetre.</summary>
+        public static readonly int[] LineWeights = { 5, 9, 13, 15, 18, 20, 25, 30, 35, 40, 50 };
+
         public static IReadOnlyList<KeyValuePair<string, string>> FingerprintPairs(CartogramInfo c)
         {
-            var skip = new HashSet<string> { "name", "built", "built_fp", "fill", "cut", "built_at", "control", "keep_moved", "cfill", "ccut", "area", "squares" };
+            var skip = new HashSet<string> { "name", "built", "built_fp", "fill", "cut", "built_at", "control", "keep_moved", "cfill", "ccut", "area", "squares", "prj", "draw_v" };
             var defaults = new CartogramInfo();
             var result = new List<KeyValuePair<string, string>>();
             foreach (var pair in Encode(c))
@@ -193,6 +211,8 @@ namespace Kzm.Core
                 if (pair.Key == "lbl_w" && c.WorkingLabel.Same(defaults.WorkingLabel)) continue;
                 if (pair.Key == "lbl_p" && c.ProjectLabel.Same(defaults.ProjectLabel)) continue;
                 if (pair.Key == "lbl_f" && c.FactLabel.Same(defaults.FactLabel)) continue;
+                if (pair.Key == "table_gap" && c.TableGapMm == defaults.TableGapMm) continue;
+                if (pair.Key == "grid_lw" && c.GridLineWeight == defaults.GridLineWeight) continue;
                 result.Add(pair);
             }
             return result;
@@ -229,6 +249,10 @@ namespace Kzm.Core
             Pair("ccut", Codec.Number(c.LastControlCut)),
             Pair("area", Codec.Number(c.LastArea)),
             Pair("squares", c.LastSquares.ToString(CultureInfo.InvariantCulture)),
+            Pair("prj", c.ProjectId ?? string.Empty),
+            Pair("table_gap", Codec.Number(c.TableGapMm)),
+            Pair("grid_lw", c.GridLineWeight.ToString(CultureInfo.InvariantCulture)),
+            Pair("draw_v", c.DrawVersion.ToString(CultureInfo.InvariantCulture)),
         };
 
         public static CartogramInfo Decode(string id, IReadOnlyDictionary<string, string> map)
@@ -267,6 +291,10 @@ namespace Kzm.Core
             c.LastControlCut = Codec.Optional(map, "ccut");
             c.LastArea = Codec.Optional(map, "area");
             if (int.TryParse(Text("squares"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int squares)) c.LastSquares = squares;
+            c.ProjectId = Text("prj");
+            c.TableGapMm = Codec.Optional(map, "table_gap") ?? 10;
+            if (int.TryParse(Text("grid_lw"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int weight) && LineWeights.Contains(weight)) c.GridLineWeight = weight;
+            if (int.TryParse(Text("draw_v"), NumberStyles.Integer, CultureInfo.InvariantCulture, out int drawVersion)) c.DrawVersion = drawVersion;
             return c;
         }
 
@@ -287,9 +315,41 @@ namespace Kzm.Core
             FactLabel = template.FactLabel.Clone();
             ControlCheck = template.ControlCheck;
             KeepMovedLabels = template.KeepMovedLabels;
+            TableGapMm = template.TableGapMm;
+            GridLineWeight = template.GridLineWeight;
         }
 
         private static KeyValuePair<string, string> Pair(string key, string value) => new KeyValuePair<string, string>(key, value);
+    }
+
+    /// <summary>
+    /// Проект — именованный набор поверхностей и картограмм внутри чертежа (данные хранятся в DWG).
+    /// Данные версий до 0.6 относятся к проекту «Проект 1» (идентификатор <see cref="LegacyId"/>).
+    /// </summary>
+    public sealed class ProjectInfo
+    {
+        public const string LegacyId = "legacy";
+        public const string LegacyName = "Проект 1";
+
+        public string Id { get; set; }
+        public string Name { get; set; }
+        public string Created { get; set; }
+
+        /// <summary>Project of a surface or cartogram (records without a project belong to «Проект 1»).</summary>
+        public static string Of(string projectId) => string.IsNullOrEmpty(projectId) ? LegacyId : projectId;
+
+        public static IReadOnlyList<KeyValuePair<string, string>> Encode(ProjectInfo project) => new List<KeyValuePair<string, string>>
+        {
+            new KeyValuePair<string, string>("name", project.Name ?? string.Empty),
+            new KeyValuePair<string, string>("created", project.Created ?? string.Empty),
+        };
+
+        public static ProjectInfo Decode(string id, IReadOnlyDictionary<string, string> map) => new ProjectInfo
+        {
+            Id = id,
+            Name = map.TryGetValue("name", out string name) && name.Length > 0 ? name : (id == LegacyId ? LegacyName : "Проект"),
+            Created = map.TryGetValue("created", out string created) ? created : string.Empty,
+        };
     }
 
     public enum LabelCorner
@@ -437,6 +497,7 @@ namespace Kzm.Core
         private static readonly string[] TemplateKeys =
         {
             "step", "columns", "rows", "scale", "node_mm", "volume_mm", "totals_mm", "volume_dec", "lbl_w", "lbl_p", "lbl_f", "control", "keep_moved",
+            "table_gap", "grid_lw",
         };
 
         public static string Encode(KzmSettings settings, CartogramInfo template)

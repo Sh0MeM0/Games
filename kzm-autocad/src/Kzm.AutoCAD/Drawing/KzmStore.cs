@@ -39,6 +39,8 @@ namespace Kzm.AutoCAD.Drawing
         private const string SettingsName = "SETTINGS";
         private const string SurfacesName = "SURFACES";
         private const string CurrentName = "CURRENT_SURFACE";
+        private const string ProjectsName = "PROJECTS";
+        private const string CurrentProjectName = "CURRENT_PROJECT";
         private const string ConflictsName = "DUPLICATE_PAIRS";
         private const string KeptName = "KEPT_PAIRS";
         private const string CartogramsName = "CARTOGRAMS";
@@ -91,9 +93,9 @@ namespace Kzm.AutoCAD.Drawing
             if (string.IsNullOrEmpty(surface.Id)) throw new ArgumentException("Нет идентификатора поверхности.");
             surface.Name = SurfaceNames.Validate(surface.Name);
             var existing = ReadSurfaces(database, transaction);
-            if (existing.Any(other => other.Id != surface.Id &&
+            if (existing.Any(other => other.Id != surface.Id && ProjectInfo.Of(other.ProjectId) == ProjectInfo.Of(surface.ProjectId) &&
                     string.Equals(other.Name, surface.Name, StringComparison.CurrentCultureIgnoreCase)))
-                throw new KzmException("Поверхность с именем «" + surface.Name + "» уже есть в чертеже.");
+                throw new KzmException("Поверхность с именем «" + surface.Name + "» уже есть в этом проекте.");
             if (existing.All(other => other.Id != surface.Id) && existing.Count >= MaximumSurfaces)
                 throw new KzmException("В чертеже уже " + MaximumSurfaces + " поверхностей.");
             var root = Root(database, transaction, true);
@@ -115,12 +117,11 @@ namespace Kzm.AutoCAD.Drawing
                     record.Erase();
                 }
             }
-            if (ReadCurrentSurfaceId(database, transaction) == surfaceId)
+            if (root.Contains(CurrentName))
             {
-                var record = transaction.GetObject(root.GetAt(CurrentName), OpenMode.ForWrite);
-                root.UpgradeOpen();
-                root.Remove(CurrentName);
-                record.Erase();
+                var pairs = ReadPairs(root, CurrentName, transaction);
+                if (pairs.Any(pair => pair.Value == surfaceId))
+                    WritePairs(root, CurrentName, pairs.Where(pair => pair.Value != surfaceId), transaction);
             }
         }
 
@@ -132,16 +133,86 @@ namespace Kzm.AutoCAD.Drawing
             WriteSurface(database, transaction, surface);
         }
 
+        /// <summary>Key of the current surface of a project («id» — the one record of versions before 0.6, «Проект 1»).</summary>
+        private static string CurrentKey(string projectId) => ProjectInfo.Of(projectId) == ProjectInfo.LegacyId ? "id" : ProjectInfo.Of(projectId);
+
+        /// <summary>The current surface of the open project (null when none or it belongs to another project).</summary>
         internal static string ReadCurrentSurfaceId(Database database, Transaction transaction)
         {
             var root = Root(database, transaction, false);
             if (root == null || !root.Contains(CurrentName)) return null;
-            return ReadPairs(root, CurrentName, transaction).Where(pair => pair.Key == "id").Select(pair => pair.Value).FirstOrDefault();
+            string project = ReadCurrentProjectId(database, transaction);
+            if (project == null) return null;
+            string id = ReadPairs(root, CurrentName, transaction).Where(pair => pair.Key == CurrentKey(project)).Select(pair => pair.Value).FirstOrDefault();
+            var surface = ReadSurfaces(database, transaction).FirstOrDefault(s => s.Id == id);
+            return surface != null && ProjectInfo.Of(surface.ProjectId) == project ? id : null;
         }
 
+        /// <summary>Makes the surface current in its project (each project remembers its own current surface).</summary>
         internal static void WriteCurrentSurfaceId(Database database, Transaction transaction, string surfaceId)
         {
-            WritePairs(Root(database, transaction, true), CurrentName, new[] { Pair("id", surfaceId) }, transaction);
+            var surface = ReadSurfaces(database, transaction).FirstOrDefault(s => s.Id == surfaceId);
+            string key = CurrentKey(surface?.ProjectId);
+            var root = Root(database, transaction, true);
+            var pairs = root.Contains(CurrentName) ? ReadPairs(root, CurrentName, transaction).Where(pair => pair.Key != key).ToList()
+                : new List<KeyValuePair<string, string>>();
+            pairs.Add(Pair(key, surfaceId));
+            WritePairs(root, CurrentName, pairs, transaction);
+        }
+
+        // ---------- projects ----------
+
+        /// <summary>Projects of the drawing; «Проект 1» stands for the data of versions before 0.6 if there are any.</summary>
+        internal static List<ProjectInfo> ReadProjects(Database database, Transaction transaction)
+        {
+            var result = new List<ProjectInfo>();
+            var root = Root(database, transaction, false);
+            if (root != null && root.Contains(ProjectsName))
+            {
+                var dictionary = (DBDictionary)transaction.GetObject(root.GetAt(ProjectsName), OpenMode.ForRead);
+                foreach (DBDictionaryEntry entry in dictionary)
+                    result.Add(ProjectInfo.Decode(entry.Key, ReadPairs(dictionary, entry.Key, transaction)
+                        .GroupBy(pair => pair.Key).ToDictionary(group => group.Key, group => group.Last().Value, StringComparer.Ordinal)));
+            }
+            if (result.All(project => project.Id != ProjectInfo.LegacyId) && HasLegacyData(database, transaction))
+                result.Add(new ProjectInfo { Id = ProjectInfo.LegacyId, Name = ProjectInfo.LegacyName });
+            return result.OrderBy(project => project.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
+        }
+
+        private static bool HasLegacyData(Database database, Transaction transaction) =>
+            ReadSurfaces(database, transaction).Any(s => ProjectInfo.Of(s.ProjectId) == ProjectInfo.LegacyId) ||
+            ReadCartograms(database, transaction).Any(c => ProjectInfo.Of(c.ProjectId) == ProjectInfo.LegacyId);
+
+        internal static void WriteProject(Database database, Transaction transaction, ProjectInfo project)
+        {
+            if (string.IsNullOrEmpty(project.Id)) throw new ArgumentException("Нет идентификатора проекта.");
+            project.Name = SurfaceNames.Validate(project.Name);
+            if (ReadProjects(database, transaction).Any(other => other.Id != project.Id &&
+                    string.Equals(other.Name, project.Name, StringComparison.CurrentCultureIgnoreCase)))
+                throw new KzmException("Проект «" + project.Name + "» уже есть в чертеже.");
+            var root = Root(database, transaction, true);
+            WritePairs(Child(root, ProjectsName, transaction), project.Id, ProjectInfo.Encode(project), transaction);
+        }
+
+        /// <summary>
+        /// The open project. A drawing of versions before 0.6 opens «Проект 1» with its data; an explicitly closed
+        /// project is stored as an empty id (null — no project is open).
+        /// </summary>
+        internal static string ReadCurrentProjectId(Database database, Transaction transaction)
+        {
+            var root = Root(database, transaction, false);
+            if (root != null && root.Contains(CurrentProjectName))
+            {
+                string id = ReadPairs(root, CurrentProjectName, transaction).Where(pair => pair.Key == "id").Select(pair => pair.Value).FirstOrDefault();
+                if (string.IsNullOrEmpty(id)) return null;
+                return ReadProjects(database, transaction).Any(project => project.Id == id) ? id : null;
+            }
+            return HasLegacyData(database, transaction) ? ProjectInfo.LegacyId : null;
+        }
+
+        internal static void WriteCurrentProjectId(Database database, Transaction transaction, string projectId)
+        {
+            WritePairs(Root(database, transaction, true), CurrentProjectName, new[] { Pair("id", projectId ?? string.Empty) }, transaction);
         }
 
         // ---------- cartograms ----------
@@ -168,9 +239,9 @@ namespace Kzm.AutoCAD.Drawing
         {
             if (string.IsNullOrEmpty(cartogram.Id)) throw new ArgumentException("Нет идентификатора картограммы.");
             cartogram.Name = SurfaceNames.Validate(cartogram.Name);
-            if (ReadCartograms(database, transaction).Any(other => other.Id != cartogram.Id &&
+            if (ReadCartograms(database, transaction).Any(other => other.Id != cartogram.Id && ProjectInfo.Of(other.ProjectId) == ProjectInfo.Of(cartogram.ProjectId) &&
                     string.Equals(other.Name, cartogram.Name, StringComparison.CurrentCultureIgnoreCase)))
-                throw new KzmException("Картограмма с именем «" + cartogram.Name + "» уже есть в чертеже.");
+                throw new KzmException("Картограмма с именем «" + cartogram.Name + "» уже есть в этом проекте.");
             var root = Root(database, transaction, true);
             WritePairs(Child(root, CartogramsName, transaction), cartogram.Id, CartogramInfo.Encode(cartogram), transaction);
         }

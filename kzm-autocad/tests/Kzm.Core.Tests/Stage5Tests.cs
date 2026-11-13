@@ -192,7 +192,7 @@ namespace Kzm.Core.Tests
                 Assert.Contains("xl/worksheets/sheet3.xml", names);
                 XNamespace main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
                 var workbook = XDocument.Load(zip.GetEntry("xl/workbook.xml").Open());
-                Assert.Equal(new[] { "Узлы", "Квадраты", "Итоги" }, workbook.Descendants(main + "sheet").Select(e => (string)e.Attribute("name")).ToArray());
+                Assert.Equal(new[] { "Точки", "Квадраты", "Итоги" }, workbook.Descendants(main + "sheet").Select(e => (string)e.Attribute("name")).ToArray());
                 foreach (var entry in zip.Entries) XDocument.Load(entry.Open()); // every part is well-formed XML
                 var totals = XDocument.Load(zip.GetEntry("xl/worksheets/sheet3.xml").Open());
                 var texts = totals.Descendants(main + "t").Select(t => t.Value).ToList();
@@ -214,7 +214,7 @@ namespace Kzm.Core.Tests
             Assert.Equal(new byte[] { 0xEF, 0xBB, 0xBF }, bytes.Take(3).ToArray());
             string text = Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
             Assert.Contains("По картограмме (метод квадратов);400,00;0,00", text);
-            Assert.Contains("Столбец;Ряд;Площадь, м²", text);
+            Assert.Contains("X центра, м;Y центра, м;Площадь, м²", text);
         }
 
         [Fact]

@@ -34,9 +34,9 @@ namespace Kzm.AutoCAD.UI.Panel
         private readonly RadioButton originPoint = new RadioButton { Text = "Точка", AutoSize = true };
         private readonly TextBox originX = new TextBox { Width = 110 };
         private readonly TextBox originY = new TextBox { Width = 110 };
-        private readonly TextBox angle = new TextBox { Width = 70 };
-        private readonly ComboBox columns = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 110 };
-        private readonly ComboBox rows = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 110 };
+        private readonly TextBox tableGap = new TextBox { Width = 60 };
+        private readonly ComboBox gridWeight = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 90 };
+        private readonly Button boundaryButton = new Button { Text = "Указать границу ▾", AutoSize = true };
         private readonly ComboBox scale = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 100 };
         private readonly TextBox nodeText = new TextBox { Width = 60 };
         private readonly TextBox volumeText = new TextBox { Width = 60 };
@@ -60,6 +60,8 @@ namespace Kzm.AutoCAD.UI.Panel
         private string boundaryHandle;
         private string lastBound;
         private CartogramComputation lastComputation;
+        /// <summary>Id of a new cartogram before it is saved (the boundary drawn by points is tagged with it).</summary>
+        private string draftId;
 
         internal CartogramView()
         {
@@ -91,16 +93,17 @@ namespace Kzm.AutoCAD.UI.Panel
 
             Span(Section("Граница работ"));
             Span(boundaryNote);
-            Span(Flow(Action("Указать границу…", (s, e) => PickBoundary()), Action("Показать", (s, e) => ShowBoundary())));
+            boundaryButton.Click += (s, e) => BoundaryMenu().Show(boundaryButton, 0, boundaryButton.Height);
+            Span(Flow(boundaryButton, Action("Показать", (s, e) => ShowBoundary())));
+            Span(Hint("По точкам: укажите точки границы по очереди — отметка берётся у существующей точки или по выбранной поверхности, " +
+                      "её можно заменить. Точки границы войдут в проектную поверхность, сама граница — её структурной линией."));
 
             Span(Section("Сетка квадратов"));
             Row("Шаг, м", step);
             Row("Базовая точка", Flow(originAuto, originPoint));
             Row("X / Y", Flow(originX, originY, Action("Указать…", (s, e) => PickOrigin())));
-            Row("Угол поворота, °", Flow(angle, Action("По двум точкам…", (s, e) => PickAngle())));
-            foreach (var box in new[] { columns, rows }) { box.Items.Add("1, 2, 3 …"); box.Items.Add("А, Б, В …"); }
-            Row("Столбцы", columns);
-            Row("Ряды (сверху вниз)", rows);
+            foreach (int weight in CartogramInfo.LineWeights) gridWeight.Items.Add(ElevationFormat.Format(weight / 100.0, 2) + " мм");
+            Row("Толщина линий сетки", gridWeight);
             preview.Click += (s, e) => TogglePreview();
             Span(preview);
 
@@ -111,6 +114,7 @@ namespace Kzm.AutoCAD.UI.Panel
             Row("Текст объёмов, мм", volumeText);
             Row("Текст итогов, мм", totalsText);
             Row("Объёмы: знаков после запятой", volumeDecimals);
+            Row("Зазор от сетки до таблицы, мм", tableGap);
 
             Span(Section("Подписи в узле"));
             string[] titles = { "Рабочая (h)", "Проектная (Hпр)", "Фактическая (Hф)" };
@@ -122,11 +126,19 @@ namespace Kzm.AutoCAD.UI.Panel
                 colors[i] = new Button { AutoSize = true, Text = "ПоСлою" };
                 colors[i].Click += (s, e) => PickColor(index);
                 layers[i] = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown, Width = 150 };
-                Row(titles[i], Flow(corners[i], colors[i], layers[i]));
+                if (i == 0)
+                {
+                    // Рабочая отметка: насыпь — красным, выемка — синим.
+                    colors[i].Visible = false;
+                    Row(titles[i], Flow(corners[i], new Label { Text = "цвет по знаку", AutoSize = true, Margin = new Padding(3, 7, 3, 0) }, layers[i]));
+                }
+                else Row(titles[i], Flow(corners[i], colors[i], layers[i]));
             }
             Span(Hint("По умолчанию — как в примере Б.4 СТБ 2073-2010: рабочая — слева вверху, проектная — справа вверху, фактическая — справа внизу. " +
-                      "Линия нулевых работ — штриховая тонкая (п. 3.12), выемки — штриховка 45° (п. 7.1). Под сеткой — таблица по рис. 8, справа — итоги по рядам. " +
-                      "Высоты текста — из ряда ГОСТ 2.304, их можно менять."));
+                      "Отметки подписываются в узлах внутри границы и там, где сетка пересекает границу; близкие подписи разводятся с выноской. " +
+                      "Отметки — блок «КЗМ_УЗЕЛ»: проектную и фактическую можно поправить в «Быстрых свойствах» — при пересчёте они запишутся в поверхности. " +
+                      "Насыпь — красным, выемка — синим, выемки заштрихованы под 45° (п. 7.1). Сетка — один зелёный блок, только внутри границы. " +
+                      "Таблица объёмов (рис. 8) — один блок ниже сетки. Высоты текста — из ряда ГОСТ 2.304, их можно менять."));
 
             Span(Section("Расчёт"));
             Span(control);
@@ -136,8 +148,10 @@ namespace Kzm.AutoCAD.UI.Panel
             Span(Flow(build, Action("Проверить", (s, e) => Check()), Action("Сохранить", (s, e) => Save(false))));
             Span(Flow(Action("Показать на чертеже", (s, e) => ShowDrawing()), Action("В Excel…", (s, e) => Export(panel, cartogram?.Info.Id)),
                 Action("Ведомость объёмов…", (s, e) => Statement(panel, cartogram?.Info.Id))));
-            Span(Flow(Action("Стереть построение", (s, e) => EraseDrawing()), Action("Удалить…", (s, e) => Delete(panel, cartogram?.Info.Id)),
-                Action("Сделать шаблоном", (s, e) => MakeTemplate())));
+            Span(Flow(Action("Стереть построение", (s, e) => EraseDrawing()), Action("Сделать шаблоном", (s, e) => MakeTemplate())));
+            var deleteButton = new Button { Text = "Удалить картограмму", AutoSize = true, ForeColor = Color.Firebrick, Margin = new Padding(3, 10, 3, 3) };
+            deleteButton.Click += (s, e) => Delete(panel, cartogram?.Info.Id);
+            Span(deleteButton);
             Span(Section("Итоги"));
             Span(status);
             Span(problems);
@@ -190,8 +204,11 @@ namespace Kzm.AutoCAD.UI.Panel
                 lastBound = null;
                 boundaryHandle = null;
                 lastComputation = null;
+                draftId = Guid.NewGuid().ToString("N");
                 var info = new CartogramInfo
                 {
+                    Id = draftId,
+                    ProjectId = panel.Snapshot.Project == null || panel.Snapshot.Project.Id == ProjectInfo.LegacyId ? null : panel.Snapshot.Project.Id,
                     Name = "Картограмма " + (panel.Snapshot.Cartograms.Count + 1),
                     Scale = panel.Snapshot.Settings.Scale,
                     FactSurfaceId = panel.Snapshot.Surfaces.FirstOrDefault(s => s.Info.Kind == SurfaceKind.Fact)?.Info.Id,
@@ -236,9 +253,8 @@ namespace Kzm.AutoCAD.UI.Panel
             originX.Text = SettingsView.FormatValue(info.OriginX);
             originY.Text = SettingsView.FormatValue(info.OriginY);
             originX.Enabled = originY.Enabled = originPoint.Checked;
-            angle.Text = SettingsView.FormatValue(info.AngleDegrees);
-            columns.SelectedIndex = (int)info.Columns;
-            rows.SelectedIndex = (int)info.Rows;
+            tableGap.Text = SettingsView.FormatValue(info.TableGapMm);
+            gridWeight.SelectedIndex = Math.Max(0, Array.IndexOf(CartogramInfo.LineWeights, info.GridLineWeight));
             scale.SelectedIndex = Math.Max(0, Array.IndexOf(KzmSettings.Scales, info.Scale));
             nodeText.Text = SettingsView.FormatValue(info.NodeTextMm);
             volumeText.Text = SettingsView.FormatValue(info.VolumeTextMm);
@@ -286,7 +302,12 @@ namespace Kzm.AutoCAD.UI.Panel
                               ElevationFormat.Format(info.LastControlCut.Value, 1) + " м³.");
                 status.Text = string.Join("\n", lines);
             }
-            if (outdated) status.Text += "\nУСТАРЕЛА: точки, структурные линии, границы или параметры изменились — нажмите «Пересчитать».";
+            if (outdated)
+                status.Text += cartogram.LabelEdits > 0
+                    ? "\nУСТАРЕЛА: на картограмме исправлены отметки (" + cartogram.LabelEdits + ") — «Пересчитать» запишет их в поверхности и пересчитает объёмы."
+                    : info.OldDrawing
+                        ? "\nПостроена прежней версией модуля — нажмите «Пересчитать», чтобы получить новое оформление (блоки, цвета, сетка по границе)."
+                        : "\nУСТАРЕЛА: точки, структурные линии, границы или параметры изменились — нажмите «Пересчитать».";
             status.ForeColor = outdated ? Color.Firebrick : SystemColors.ControlText;
             if (problems.Items.Count == 0) problems.Items.Add(new ProblemItem(lastComputation != null ? "Замечаний нет." : "Замечания появятся после проверки или построения.", null));
         }
@@ -330,7 +351,11 @@ namespace Kzm.AutoCAD.UI.Panel
 
         private CartogramInfo Read(List<string> errors)
         {
-            var info = cartogram?.Info.Clone() ?? new CartogramInfo { Id = Guid.NewGuid().ToString("N") };
+            var info = cartogram?.Info.Clone() ?? new CartogramInfo
+            {
+                Id = draftId ?? (draftId = Guid.NewGuid().ToString("N")),
+                ProjectId = panel?.Snapshot.Project == null || panel.Snapshot.Project.Id == ProjectInfo.LegacyId ? null : panel.Snapshot.Project.Id,
+            };
             info.Name = name.Text.Trim();
             info.FactSurfaceId = (fact.SelectedItem as SurfaceItem)?.Info.Id;
             info.ProjectSurfaceId = (project.SelectedItem as SurfaceItem)?.Info.Id;
@@ -343,9 +368,9 @@ namespace Kzm.AutoCAD.UI.Panel
                 if (!info.OriginX.HasValue || !info.OriginY.HasValue) errors.Add("укажите базовую точку или выберите «Авто»");
             }
             else info.OriginX = info.OriginY = null;
-            info.AngleDegrees = SettingsView.Parse(angle.Text, "угол", errors) ?? 0;
-            info.Columns = (LabelScheme)Math.Max(0, columns.SelectedIndex);
-            info.Rows = (LabelScheme)Math.Max(0, rows.SelectedIndex);
+            info.AngleDegrees = 0;
+            info.TableGapMm = SettingsView.Parse(tableGap.Text, "зазор до таблицы", errors) ?? 10;
+            info.GridLineWeight = CartogramInfo.LineWeights[Math.Max(0, gridWeight.SelectedIndex)];
             info.Scale = KzmSettings.Scales[Math.Max(0, scale.SelectedIndex)];
             info.NodeTextMm = SettingsView.Parse(nodeText.Text, "текст отметок", errors) ?? 0;
             info.VolumeTextMm = SettingsView.Parse(volumeText.Text, "текст объёмов", errors) ?? 0;
@@ -377,7 +402,9 @@ namespace Kzm.AutoCAD.UI.Panel
 
         private void Save(bool andBuild)
         {
-            if (panel?.Document == null || !TryRead(out var info)) return;
+            if (panel?.Document == null) return;
+            if (panel.Snapshot.Project == null) { PanelMessages.Error("сначала создайте или откройте проект (кнопка «Проект» вверху панели)."); return; }
+            if (!TryRead(out var info)) return;
             ClearPreview();
             var settings = panel.Snapshot.Settings;
             CartogramComputation computation = null;
@@ -425,7 +452,9 @@ namespace Kzm.AutoCAD.UI.Panel
                     transaction.Commit();
                 }
                 ShowResults(info, false);
-                status.Text = "Проверка (чертёж не изменён):\n" + string.Join("\n", CartogramService.Summary(lastComputation));
+                status.Text = "Проверка (чертёж не изменён):\n" + string.Join("\n", CartogramService.Summary(lastComputation)) +
+                              (cartogram != null && cartogram.LabelEdits > 0
+                                  ? "\nПравки отметок на картограмме (" + cartogram.LabelEdits + ") в проверке не учтены — они войдут при «Пересчитать»." : string.Empty);
                 PanelMessages.Info("Проверка выполнена: " + CartogramService.Summary(lastComputation)[0]);
             }
             catch (KzmException exception)
@@ -494,17 +523,30 @@ namespace Kzm.AutoCAD.UI.Panel
             });
         }
 
+        /// <summary>«Удалить картограмму»: целиком — построение, ведомости, граница по точкам и параметры.</summary>
         internal void Delete(KzmPanel owner, string cartogramId)
         {
             var c = owner?.Snapshot.FindCartogram(cartogramId);
-            if (c == null) return;
-            if (MessageBox.Show(owner, "Удалить картограмму «" + c.Info.Name + "» вместе с построением?\nВедомости объёмов останутся на чертеже.\nОтменить можно командой U.", "КЗМ",
+            if (c == null || owner.Document == null) return;
+            int statements;
+            bool boundary;
+            using (owner.Document.LockDocument(DocumentLockMode.Read, null, null, false))
+            using (var transaction = owner.Document.Database.TransactionManager.StartOpenCloseTransaction())
+            {
+                (statements, boundary) = CartogramService.Extras(owner.Document.Database, transaction, c.Info);
+                transaction.Commit();
+            }
+            string details = "Будут удалены: сетка, отметки, объёмы, штриховка, линия нулевых работ, таблица объёмов, параметры картограммы" +
+                             (statements > 0 ? ", ведомость объёмов (" + statements + ")" : string.Empty) +
+                             (boundary ? ", граница, нарисованная по точкам" : string.Empty) + ".\n" +
+                             "Поверхности и их точки не меняются.";
+            if (MessageBox.Show(owner, "Удалить картограмму «" + c.Info.Name + "» целиком?\n\n" + details + "\n\nОтменить можно командой U.", "КЗМ",
                     MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
-            string id = c.Info.Id;
+            string id = c.Info.Id, name = c.Info.Name;
             PanelActions.Run("удаление картограммы", document =>
             {
-                CartogramService.Delete(document.Database, id, true);
-                PanelMessages.Info("Картограмма удалена.");
+                CartogramService.Delete(document.Database, id);
+                PanelMessages.Info("Картограмма «" + name + "» удалена целиком. Отменить — U.");
             }, () => owner.AfterCartogramChange(null));
         }
 
@@ -585,10 +627,9 @@ namespace Kzm.AutoCAD.UI.Panel
                 var grid = CartogramService.GridFor(info, boundary);
                 var (iMin, iMax, jMin, jMax) = CartogramCalculator.Range(boundary, grid);
                 if ((long)(iMax - iMin + 2) + (jMax - jMin + 2) > 20000) { PanelMessages.Error("слишком много линий сетки — проверьте шаг."); return; }
-                double s = grid.Step;
-                Point3d P(double u, double v) { var w = grid.ToWorld(u, v); return new Point3d(w.X, w.Y, 0); }
-                for (int i = iMin; i <= iMax + 1; i++) previewEntities.Add(new Line(P(i * s, jMin * s), P(i * s, (jMax + 1) * s)) { ColorIndex = 3 });
-                for (int j = jMin; j <= jMax + 1; j++) previewEntities.Add(new Line(P(iMin * s, j * s), P((iMax + 1) * s, j * s)) { ColorIndex = 3 });
+                // As it will be drawn: only inside the boundary.
+                foreach (var (a, b) in CartogramCalculator.GridSegments(boundary, grid))
+                    previewEntities.Add(new Line(new Point3d(a.X, a.Y, 0), new Point3d(b.X, b.Y, 0)) { ColorIndex = 3 });
                 var manager = TransientManager.CurrentTransientManager;
                 foreach (var entity in previewEntities) manager.AddTransient(entity, TransientDrawingMode.DirectShortTerm, 128, new IntegerCollection());
                 preview.Text = "Скрыть сетку";
@@ -616,6 +657,49 @@ namespace Kzm.AutoCAD.UI.Panel
             previewEntities.Clear();
             preview.Text = "Показать сетку";
             try { panel?.Document?.Editor.UpdateScreen(); } catch (System.Exception) { }
+        }
+
+        /// <summary>«Указать границу»: how — by points with elevations from a surface, or an existing polyline.</summary>
+        private ContextMenuStrip BoundaryMenu()
+        {
+            var menu = new ContextMenuStrip();
+            var factItem = fact.SelectedItem as SurfaceItem;
+            var projectItem = project.SelectedItem as SurfaceItem;
+            void Item(string text, Action action, bool enabled = true)
+            {
+                var item = new ToolStripMenuItem(text) { Enabled = enabled };
+                item.Click += (s, e) => action();
+                menu.Items.Add(item);
+            }
+            Item(factItem != null ? "По точкам — отметки с фактической «" + factItem.Info.Name + "»…" : "По точкам — отметки с фактической (не выбрана)",
+                () => DrawBoundary(factItem.Info.Id), factItem != null && projectItem != null);
+            Item(projectItem != null ? "По точкам — отметки с проектной «" + projectItem.Info.Name + "»…" : "По точкам — отметки с проектной (не выбрана)",
+                () => DrawBoundary(projectItem.Info.Id), projectItem != null);
+            menu.Items.Add(new ToolStripSeparator());
+            Item("Выбрать готовую полилинию (например, 3D с отметками)…", PickBoundary);
+            return menu;
+        }
+
+        private void DrawBoundary(string sourceSurfaceId)
+        {
+            if (panel?.Document == null) return;
+            var projectItem = project.SelectedItem as SurfaceItem;
+            if (projectItem == null) { PanelMessages.Error("сначала выберите проектную поверхность: в неё войдут точки границы."); return; }
+            var errors = new List<string>();
+            var info = Read(errors);
+            string id = info.Id, name = string.IsNullOrWhiteSpace(info.Name) ? "Картограмма" : info.Name, old = boundaryHandle;
+            string target = projectItem.Info.Id;
+            var settings = panel.Snapshot.Settings;
+            string handle = null;
+            PanelActions.RunInteractive("граница по точкам", document =>
+                handle = SurfaceTools.DrawBoundary(document, id, name, target, sourceSurfaceId, old, settings), () =>
+            {
+                if (handle == null) return;
+                boundaryHandle = handle;
+                boundaryNote.Text = "Граница: нарисована по точкам, полилиния " + handle + " (сохраните или постройте картограмму).";
+                PanelMessages.Info("Граница нарисована: точки и структурная линия добавлены в проектную поверхность. Нажмите «Проверить» или «Построить».");
+                panel.RefreshAll();
+            });
         }
 
         private void PickBoundary()
@@ -658,23 +742,5 @@ namespace Kzm.AutoCAD.UI.Panel
             });
         }
 
-        private void PickAngle()
-        {
-            double? degrees = null;
-            PanelActions.Pick("угол сетки", document =>
-            {
-                var first = document.Editor.GetPoint(new PromptPointOptions("\nПервая точка направления осей сетки: "));
-                if (first.Status != PromptStatus.OK) return;
-                var second = document.Editor.GetPoint(new PromptPointOptions("\nВторая точка: ") { BasePoint = first.Value, UseBasePoint = true });
-                if (second.Status != PromptStatus.OK) return;
-                var ucs = document.Editor.CurrentUserCoordinateSystem;
-                var a = first.Value.TransformBy(ucs);
-                var b = second.Value.TransformBy(ucs);
-                degrees = Math.Atan2(b.Y - a.Y, b.X - a.X) * 180 / Math.PI;
-            }, () =>
-            {
-                if (degrees.HasValue) angle.Text = SettingsView.FormatValue(Math.Round(degrees.Value, 6));
-            });
-        }
     }
 }

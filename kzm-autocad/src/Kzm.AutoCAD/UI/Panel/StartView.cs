@@ -31,6 +31,10 @@ namespace Kzm.AutoCAD.UI.Panel
                 root.Controls.Clear();
                 root.Controls.Add(new Label { Text = "Порядок работы", AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont.FontFamily, 10, FontStyle.Bold) });
                 var snapshot = panel.Snapshot;
+                if (snapshot.Project != null)
+                {
+                    root.Controls.Add(Note("Проект «" + snapshot.Project.Name + "». Другой проект — кнопка «Проект» вверху панели.", SystemColors.ControlText));
+                }
                 if (panel.Document == null)
                 {
                     root.Controls.Add(Note("Откройте чертёж.", Color.Firebrick));
@@ -81,6 +85,7 @@ namespace Kzm.AutoCAD.UI.Panel
                 root.Controls.Add(new Label { Text = "Подсказки", AutoSize = true, Font = new Font(SystemFonts.MessageBoxFont, FontStyle.Bold), Margin = new Padding(3, 14, 3, 3) });
                 root.Controls.Add(Note(
                     "• Правый щелчок по поверхности или картограмме в списке — все действия; двойной щелчок — показать на чертеже; Delete — удалить.\n" +
+                    "• Отметки на картограмме — блоки: проектную и фактическую можно поправить в «Быстрых свойствах», «Пересчитать» запишет их в поверхности.\n" +
                     "• Точки — обычные блоки: двигайте, копируйте, удаляйте как всегда; отметку меняйте в «Свойствах» (атрибут ОТМЕТКА) или в таблице точек.\n" +
                     "• Каждое действие панели — одна отмена (U).\n" +
                     "• Проблемные места помечаются красным на слое КЗМ_ПРОВЕРКА (не печатается), убрать — «Убрать пометки».",

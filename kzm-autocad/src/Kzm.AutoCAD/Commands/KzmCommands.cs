@@ -53,8 +53,10 @@ namespace Kzm.AutoCAD.Commands
             {
                 settings = KzmStore.ReadSettings(database, transaction);
                 surfaceId = KzmStore.ReadCurrentSurfaceId(database, transaction);
+                if (KzmStore.ReadCurrentProjectId(database, transaction) == null)
+                    throw new KzmException("Проект не открыт. Откройте или создайте проект в панели (KZM).");
                 if (surfaceId == null || KzmStore.ReadSurfaces(database, transaction).All(s => s.Id != surfaceId))
-                    throw new KzmException("Нет текущей поверхности. Создайте поверхность в панели (KZM → «+ Поверхность»).");
+                    throw new KzmException("В открытом проекте нет текущей поверхности. Создайте её в панели (KZM → «+ Поверхность») или сделайте текущей.");
                 transaction.Commit();
             }
             Services.EditServices.CreatePointsByHand(document, surfaceId, settings);

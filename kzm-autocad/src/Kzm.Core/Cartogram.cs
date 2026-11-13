@@ -73,6 +73,22 @@ namespace Kzm.Core
         public double? Working => Fact.HasValue && Project.HasValue ? Project - Fact : null;
         /// <summary>The node is a corner of at least one square that has area inside the boundary.</summary>
         public bool Used { get; internal set; }
+        /// <summary>Inside the boundary or on it: labelled on the drawing (nodes outside are not drawn).</summary>
+        public bool Inside { get; internal set; }
+    }
+
+    /// <summary>
+    /// Точка пересечения линии сетки с границей работ. В ней, как в узле, подписываются
+    /// фактическая, проектная и рабочая отметки (интерполяция по поверхностям).
+    /// </summary>
+    public sealed class BoundaryPoint
+    {
+        public XY Position { get; internal set; }
+        public double? Fact { get; internal set; }
+        public double? Project { get; internal set; }
+        public double? Working => Fact.HasValue && Project.HasValue ? Project - Fact : null;
+        /// <summary>Stable key (grid axes, mm): the same point keeps its key after a rebuild.</summary>
+        public string Key { get; internal set; }
     }
 
     public sealed class CartogramSquare
@@ -111,6 +127,10 @@ namespace Kzm.Core
         public double BoundaryArea { get; internal set; }
         public double ComputedArea { get; internal set; }
         public List<List<XY>> ZeroLines { get; } = new List<List<XY>>();
+        /// <summary>Grid lines clipped by the boundary (drawing coordinates).</summary>
+        public List<(XY A, XY B)> GridSegments { get; } = new List<(XY, XY)>();
+        /// <summary>Crossings of the grid lines with the boundary.</summary>
+        public List<BoundaryPoint> BoundaryPoints { get; } = new List<BoundaryPoint>();
         public List<string> Problems { get; } = new List<string>();
         /// <summary>Сумма по столбцам = сумма по рядам = общий итог.</summary>
         public bool Balanced { get; internal set; }
@@ -205,10 +225,101 @@ namespace Kzm.Core
             int missing = result.Squares.Count(s => !s.Computed);
             if (missing > 0)
                 result.Problems.Add("не рассчитано квадратов: " + missing + " — нет данных поверхности в нужных точках (см. пометки)");
-            int empty = result.Nodes.Values.Count(n => n.Used && !n.Working.HasValue);
+            foreach (var node in result.Nodes.Values)
+                node.Inside = Geometry.Contains(local, ToLocal(grid, node.Position), 1e-6 * step);
+            AddGridSegments(result, local, grid);
+            AddBoundaryPoints(result, local, grid, fact, project);
+            int empty = result.Nodes.Values.Count(n => n.Used && n.Inside && !n.Working.HasValue) +
+                        result.BoundaryPoints.Count(b => !b.Working.HasValue);
             if (empty > 0)
-                result.Problems.Add("узлов без данных поверхности: " + empty + " (помечены «нет данных»)");
+                result.Problems.Add("точек сетки и границы без данных поверхности: " + empty + " (помечены «нет данных»)");
             return result;
+        }
+
+        /// <summary>Lines of the grid inside the boundary (задание: сетка не выходит за границу работ).</summary>
+        private static void AddGridSegments(CartogramResult result, List<XY> local, GridDefinition grid) =>
+            result.GridSegments.AddRange(Segments(local, grid, result.IMin, result.IMax, result.JMin, result.JMax));
+
+        /// <summary>The grid as it will be drawn (only inside the boundary): for a preview before building.</summary>
+        public static List<(XY A, XY B)> GridSegments(IReadOnlyList<XY> boundary, GridDefinition grid)
+        {
+            var local = Geometry.Normalize(boundary.Select(p => ToLocal(grid, p)).ToList());
+            if (local.Count < 3) return new List<(XY, XY)>();
+            var (iMin, iMax, jMin, jMax) = Range(local, grid.Step);
+            return Segments(local, grid, iMin, iMax, jMin, jMax);
+        }
+
+        private static List<(XY A, XY B)> Segments(List<XY> local, GridDefinition grid, int iMin, int iMax, int jMin, int jMax)
+        {
+            var segments = new List<(XY, XY)>();
+            double s = grid.Step;
+            double v0 = jMin * s, v1 = (jMax + 1) * s, u0 = iMin * s, u1 = (iMax + 1) * s;
+            void Add(XY a, XY b)
+            {
+                foreach (var (p, q) in Geometry.ClipSegment(a, b, local))
+                    if (p.DistanceTo(q) > 1e-9 * s) segments.Add((grid.ToWorld(p.X, p.Y), grid.ToWorld(q.X, q.Y)));
+            }
+            for (int i = iMin; i <= iMax + 1; i++) Add(new XY(i * s, v0 - s), new XY(i * s, v1 + s));
+            for (int j = jMin; j <= jMax + 1; j++) Add(new XY(u0 - s, j * s), new XY(u1 + s, j * s));
+            return segments;
+        }
+
+        /// <summary>Crossings of the grid lines with the boundary; crossings at nodes are nodes (not repeated).</summary>
+        private static void AddBoundaryPoints(CartogramResult result, List<XY> local, GridDefinition grid, Func<XY, double?> fact, Func<XY, double?> project)
+        {
+            double s = grid.Step;
+            double tolerance = 1e-6 * s;
+            var seen = new HashSet<(long, long)>();
+            void Add(XY p)
+            {
+                // A crossing that falls on a node is that node.
+                double ri = p.X / s, rj = p.Y / s;
+                if (Math.Abs(ri - Math.Round(ri)) * s <= tolerance && Math.Abs(rj - Math.Round(rj)) * s <= tolerance) return;
+                var key = ((long)Math.Round(p.X * 1000), (long)Math.Round(p.Y * 1000));
+                if (!seen.Add(key)) return;
+                var world = grid.ToWorld(p.X, p.Y);
+                result.BoundaryPoints.Add(new BoundaryPoint
+                {
+                    Position = world,
+                    Fact = fact(world),
+                    Project = project(world),
+                    Key = "B:" + key.Item1.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" + key.Item2.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                });
+            }
+            for (int k = 0, n = local.Count; k < n; k++)
+            {
+                var a = local[k];
+                var b = local[(k + 1) % n];
+                // Vertical lines u = i·s.
+                int i0 = (int)Math.Ceiling(Math.Min(a.X, b.X) / s - 1e-9), i1 = (int)Math.Floor(Math.Max(a.X, b.X) / s + 1e-9);
+                for (int i = i0; i <= i1; i++)
+                {
+                    double u = i * s;
+                    if (Math.Abs(b.X - a.X) <= tolerance)
+                    {
+                        // The edge lies on the grid line: its ends are the crossings.
+                        if (Math.Abs(a.X - u) <= tolerance) { Add(new XY(u, a.Y)); Add(new XY(u, b.Y)); }
+                        continue;
+                    }
+                    double t = (u - a.X) / (b.X - a.X);
+                    if (t < -1e-12 || t > 1 + 1e-12) continue;
+                    Add(new XY(u, a.Y + t * (b.Y - a.Y)));
+                }
+                // Horizontal lines v = j·s.
+                int j0 = (int)Math.Ceiling(Math.Min(a.Y, b.Y) / s - 1e-9), j1 = (int)Math.Floor(Math.Max(a.Y, b.Y) / s + 1e-9);
+                for (int j = j0; j <= j1; j++)
+                {
+                    double v = j * s;
+                    if (Math.Abs(b.Y - a.Y) <= tolerance)
+                    {
+                        if (Math.Abs(a.Y - v) <= tolerance) { Add(new XY(a.X, v)); Add(new XY(b.X, v)); }
+                        continue;
+                    }
+                    double t = (v - a.Y) / (b.Y - a.Y);
+                    if (t < -1e-12 || t > 1 + 1e-12) continue;
+                    Add(new XY(a.X + t * (b.X - a.X), v));
+                }
+            }
         }
 
         /// <summary>Squares (by index) that cover the outline given in grid axes.</summary>

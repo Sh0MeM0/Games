@@ -27,6 +27,28 @@ namespace Kzm.AutoCAD.Services
         internal List<(string Text, XY At)> Marks { get; } = new List<(string, XY)>();
         /// <summary>Labels put back where the user had moved them (after a rebuild).</summary>
         internal int MovedLabels { get; set; }
+        /// <summary>Elevations typed on the cartogram and written into the surfaces before this rebuild.</summary>
+        internal List<string> Applied { get; } = new List<string>();
+    }
+
+    /// <summary>Where the user moved the labels and the table of the cartogram (kept on rebuild, задание п. 7).</summary>
+    internal sealed class MovedLabels
+    {
+        /// <summary>Node or boundary point key → displacement of the working, project and fact labels.</summary>
+        internal Dictionary<string, Vector3d[]> Nodes { get; } = new Dictionary<string, Vector3d[]>(StringComparer.Ordinal);
+        /// <summary>Volume labels by key.</summary>
+        internal Dictionary<string, Vector3d> Texts { get; } = new Dictionary<string, Vector3d>(StringComparer.Ordinal);
+        internal Vector3d? Table { get; set; }
+    }
+
+    /// <summary>An elevation typed into a label of the cartogram (задание: правка отметок прямо на картограмме).</summary>
+    internal sealed class LabelEdit
+    {
+        internal XY At { get; set; }
+        /// <summary>true — проектная, false — фактическая.</summary>
+        internal bool Project { get; set; }
+        internal double Value { get; set; }
+        internal double Before { get; set; }
     }
 
     /// <summary>
@@ -40,13 +62,22 @@ namespace Kzm.AutoCAD.Services
     {
         internal const string App = "SH0MEM0_KZM_CART";
         private const string StatementMark = "STATEMENT";
-        private const string LabelMark = "L";
+        internal const string LabelMark = "L";
+        internal const string NodeMark = "N";
+        internal const string TableMark = "T";
+        internal const string GridMark = "G";
+        /// <summary>Boundary polyline drawn by points for this cartogram (not part of the drawing that is rebuilt).</summary>
+        internal const string BoundaryMark = "BOUNDARY";
         private const string StatementsSuffix = ".statements";
+        internal const string WorkingTag = "РАБОЧАЯ";
+        internal const string ProjectTag = "ПРОЕКТНАЯ";
+        internal const string FactTag = "ФАКТИЧЕСКАЯ";
         internal const string PlanningRow = "Грунт планировки территории";
 
         internal static GridDefinition GridFor(CartogramInfo c, IReadOnlyList<XY> boundary)
         {
-            double angle = c.AngleDegrees * Math.PI / 180;
+            // The grid is parallel to the drawing axes (the user rotates the finished drawing if needed).
+            const double angle = 0;
             if (c.OriginX.HasValue && c.OriginY.HasValue) return new GridDefinition(c.Step, new XY(c.OriginX.Value, c.OriginY.Value), angle);
             // Auto: the grid lines are multiples of the step in the rotated world axes.
             var provisional = new GridDefinition(c.Step, new XY(0, 0), angle);
@@ -111,10 +142,11 @@ namespace Kzm.AutoCAD.Services
                 }
             }
             foreach (var square in result.Squares.Where(s => !s.Computed))
-                computation.Marks.Add(("квадрат " + CartogramExport.ColumnLabel(c, result, square.I) + "/" + CartogramExport.RowLabel(c, result, square.J) +
-                                       ": " + square.Problem, square.LabelPoint));
-            foreach (var node in result.Nodes.Values.Where(n => n.Used && !n.Working.HasValue))
+                computation.Marks.Add(("квадрат у " + CartogramExport.Center(result, square.I, square.J) + ": " + square.Problem, square.LabelPoint));
+            foreach (var node in result.Nodes.Values.Where(n => n.Used && n.Inside && !n.Working.HasValue))
                 computation.Marks.Add(("узел без данных " + node.Position, node.Position));
+            foreach (var point in result.BoundaryPoints.Where(b => !b.Working.HasValue))
+                computation.Marks.Add(("точка границы без данных " + point.Position, point.Position));
             computation.Fingerprint = FingerprintOf(database, transaction, c, surfaces,
                 id => id == fact.Id ? computation.Fact.Signature : computation.Project.Signature);
             return computation;
@@ -143,6 +175,7 @@ namespace Kzm.AutoCAD.Services
             }
             lines.Add(r.Balanced ? "Проверка: Σ по столбцам = Σ по рядам = итог — сходится." : "ВНИМАНИЕ: суммы по столбцам и рядам не сходятся.");
             if (computation.MovedLabels > 0) lines.Add("Подписей, поставленных на место, сдвинутое вручную: " + computation.MovedLabels + ".");
+            lines.AddRange(computation.Applied);
             return lines;
         }
 
@@ -171,10 +204,12 @@ namespace Kzm.AutoCAD.Services
                 foreach (var id in tracked)
                 {
                     if (!id.IsValid || id.IsErased || !(transaction.GetObject(id, OpenMode.ForRead) is Entity entity) || entity is Table) continue;
-                    bool tagged = IsTagged(entity, cartogramId, out bool statement, out _);
-                    if (statement) continue;
+                    bool tagged = IsTagged(entity, cartogramId, out bool statement, out var values);
+                    if (statement || (values != null && values.Length > 2 && Equals(values[2].Value, BoundaryMark))) continue;
                     if (!tagged && !CheckMarks.Targets(entity, ours)) continue;
+                    var definitionId = entity is BlockReference reference ? reference.BlockTableRecord : ObjectId.Null;
                     EraseEntity(database, transaction, entity);
+                    EraseAnonymousDefinition(transaction, definitionId);
                     count++;
                 }
                 KzmStore.DeleteCartogramObjects(database, transaction, cartogramId);
@@ -200,6 +235,16 @@ namespace Kzm.AutoCAD.Services
             return count;
         }
 
+        /// <summary>The grid and the table are anonymous blocks: the definition goes with its last reference.</summary>
+        internal static void EraseAnonymousDefinition(Transaction transaction, ObjectId definitionId)
+        {
+            if (definitionId.IsNull || definitionId.IsErased) return;
+            var definition = (BlockTableRecord)transaction.GetObject(definitionId, OpenMode.ForRead);
+            if (!definition.IsAnonymous || !definition.GetBlockReferenceIds(true, false).Cast<ObjectId>().All(r => r.IsErased)) return;
+            definition.UpgradeOpen();
+            definition.Erase();
+        }
+
         private static void EraseEntity(Database database, Transaction transaction, Entity entity)
         {
             if (!Layers.IsUsable(database, transaction, entity.Layer, out string problem))
@@ -208,21 +253,150 @@ namespace Kzm.AutoCAD.Services
             entity.Erase();
         }
 
-        /// <summary>Labels the user moved: key «роль:i:j» → displacement from where the module put them.</summary>
-        private static Dictionary<string, Vector3d> MovedLabels(Database database, Transaction transaction, string cartogramId)
+        private static bool Straight(double rotation) => Math.Abs(Math.IEEERemainder(rotation, 2 * Math.PI)) < 1e-6;
+
+        /// <summary>
+        /// Labels and the table the user moved: displacement from where the module put them. Labels that were
+        /// rotated (the whole cartogram turned by the user) do not count as moved.
+        /// </summary>
+        private static MovedLabels ReadMoved(Database database, Transaction transaction, string cartogramId)
         {
-            var result = new Dictionary<string, Vector3d>(StringComparer.Ordinal);
+            var result = new MovedLabels();
             var tracked = KzmStore.ReadCartogramObjects(database, transaction, cartogramId);
             if (tracked == null) return result;
             foreach (var id in tracked)
             {
-                if (!id.IsValid || id.IsErased || !(transaction.GetObject(id, OpenMode.ForRead) is DBText text)) continue;
-                if (!IsTagged(text, cartogramId, out _, out var values) || values.Length < 5 || !Equals(values[2].Value, LabelMark)) continue;
-                if (!(values[3].Value is string key) || !(values[4].Value is Point3d placed)) continue;
-                var offset = Sources.TextAnchor(text) - placed;
-                if (offset.Length > 1e-6) result[key] = offset;
+                if (!id.IsValid || id.IsErased || !(transaction.GetObject(id, OpenMode.ForRead) is Entity entity)) continue;
+                if (!IsTagged(entity, cartogramId, out _, out var values) || values.Length < 3) continue;
+                string mark = values[2].Value as string;
+                if (entity is DBText text && mark == LabelMark && values.Length >= 5 && values[3].Value is string key && values[4].Value is Point3d placed)
+                {
+                    if (!Straight(text.Rotation)) continue;
+                    var offset = Sources.TextAnchor(text) - placed;
+                    if (offset.Length > 1e-6) result.Texts[key] = offset;
+                }
+                else if (entity is BlockReference block && mark == NodeMark && values.Length >= 11 && values[3].Value is string nodeKey)
+                {
+                    var attributes = Sources.Attributes(block, transaction);
+                    var offsets = new Vector3d[3];
+                    bool any = false;
+                    string[] tags = { WorkingTag, ProjectTag, FactTag };
+                    for (int k = 0; k < 3; k++)
+                    {
+                        if (!attributes.TryGetValue(tags[k], out var attribute) || !(values[8 + k].Value is Point3d put)) continue;
+                        if (!Straight(attribute.Rotation)) { any = false; break; }
+                        offsets[k] = Sources.TextAnchor(attribute) - put;
+                        if (offsets[k].Length > 1e-6) any = true;
+                    }
+                    if (any) result.Nodes[nodeKey] = offsets;
+                }
+                else if (entity is BlockReference table && mark == TableMark)
+                {
+                    var offset = table.Position - Point3d.Origin;
+                    if (offset.Length > 1e-6 && Straight(table.Rotation)) result.Table = offset;
+                }
             }
             return result;
+        }
+
+        /// <summary>
+        /// Elevations the user typed into the labels of the cartogram (Быстрые свойства / двойной щелчок):
+        /// проектная и фактическая — для записи в поверхности; правка рабочей не принимается (она всегда
+        /// Hпр − Hф) — в <paramref name="notes"/>.
+        /// </summary>
+        internal static List<LabelEdit> ReadLabelEdits(Database database, Transaction transaction, string cartogramId, List<string> notes)
+        {
+            var edits = new List<LabelEdit>();
+            var tracked = KzmStore.ReadCartogramObjects(database, transaction, cartogramId);
+            if (tracked == null) return edits;
+            foreach (var id in tracked)
+            {
+                if (!id.IsValid || id.IsErased || id.ObjectClass.DxfName != "INSERT") continue;
+                if (!(transaction.GetObject(id, OpenMode.ForRead) is BlockReference block)) continue;
+                if (!IsTagged(block, cartogramId, out _, out var values) || values.Length < 8 || !Equals(values[2].Value, NodeMark)) continue;
+                if (!(values[4].Value is double fact) || !(values[5].Value is double project) || !(values[6].Value is double working) ||
+                    !(values[7].Value is Point3d anchor)) continue;
+                var at = new XY(anchor.X, anchor.Y);
+                var attributes = Sources.Attributes(block, transaction);
+                foreach (var (tag, isProject, before) in new[] { (ProjectTag, true, project), (FactTag, false, fact) })
+                {
+                    if (!attributes.TryGetValue(tag, out var attribute)) continue;
+                    string text = (attribute.TextString ?? string.Empty).Trim();
+                    if (text == ElevationFormat.Format(before, 2)) continue;
+                    if (ElevationFormat.TryParse(text, out double value))
+                        edits.Add(new LabelEdit { At = at, Project = isProject, Value = value, Before = before });
+                    else
+                        notes.Add((isProject ? "проектная" : "фактическая") + " отметка «" + text + "» у точки " + at + " не читается — не учтена");
+                }
+                if (attributes.TryGetValue(WorkingTag, out var workingAttribute))
+                {
+                    string text = (workingAttribute.TextString ?? string.Empty).Trim();
+                    if (text != ElevationFormat.FormatSigned(working, 2))
+                        notes.Add("рабочая отметка у точки " + at + " всегда Hпр − Hф: правка «" + text + "» не принята, меняйте проектную или фактическую");
+                }
+            }
+            return edits;
+        }
+
+        /// <summary>For «устарела»: the number of labels whose text the user changed.</summary>
+        internal static int CountLabelEdits(Database database, Transaction transaction, string cartogramId)
+        {
+            var notes = new List<string>();
+            return ReadLabelEdits(database, transaction, cartogramId, notes).Count + notes.Count;
+        }
+
+        /// <summary>
+        /// Writes the typed elevations into the surfaces: the point of the surface standing at the place (0,01 m)
+        /// gets the new elevation, otherwise a point without a visible label is created there. The triangles of the
+        /// surface then pass through it, so the cartogram shows exactly the typed value.
+        /// </summary>
+        private static List<string> ApplyLabelEdits(Database database, Transaction transaction, CartogramInfo c, List<LabelEdit> edits, KzmSettings settings)
+        {
+            var messages = new List<string>();
+            foreach (var group in edits.GroupBy(e => e.Project))
+            {
+                string surfaceId = group.Key ? c.ProjectSurfaceId : c.FactSurfaceId;
+                var surface = EditServices.ReadSurface(database, transaction, surfaceId);
+                var points = PointBlocks.Read(database, transaction, settings, surface.Id);
+                var nearest = new NearestPoints(points);
+                int number = PointNumbering.Next(points.Select(p => p.Number));
+                var space = (BlockTableRecord)transaction.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(database), OpenMode.ForWrite);
+                Layers.Ensure(database, transaction, surface.Layer);
+                PointBlocks.EnsureRegApp(database, transaction, PointBlocks.AppName);
+                var definition = PointBlocks.EnsureDefinition(database, transaction);
+                if (!surface.Appearance.IsSet) surface.Appearance = EditServices.FromDrawing(database, transaction, surface.Appearance);
+                int changed = 0, created = 0;
+                foreach (var edit in group)
+                {
+                    var existing = nearest.Within(edit.At, KzmSettings.DuplicateTolerance);
+                    if (existing != null)
+                    {
+                        var reference = (BlockReference)transaction.GetObject(existing.Id, OpenMode.ForRead);
+                        if (!Layers.IsUsable(database, transaction, reference.Layer, out string problem))
+                            throw new KzmException("точка " + existing.Handle + " поверхности «" + surface.Name + "»: " + problem + ".");
+                        EditServices.WriteElevation(transaction, reference, existing.Data, edit.Value, settings.Decimals);
+                        changed++;
+                    }
+                    else
+                    {
+                        if (!Layers.IsUsable(database, transaction, surface.Layer, out string problem)) throw new KzmException(problem + ".");
+                        var data = new PointData
+                        {
+                            SurfaceId = surface.Id, Elevation = edit.Value, Source = SourceKind.Node, XyMode = XyMode.Manual,
+                            Number = (number++).ToString(CultureInfo.InvariantCulture), HideLabel = true,
+                        };
+                        PointBlocks.Create(transaction, space, definition, edit.At, surface.Layer, data, surface.Appearance, settings.Decimals);
+                        created++;
+                    }
+                }
+                surface.Revision++;
+                KzmStore.WriteSurface(database, transaction, surface);
+                EditServices.RefreshTriangles(database, transaction, surface, settings);
+                messages.Add("Отметки с картограммы записаны в поверхность «" + surface.Name + "»: " +
+                             string.Join(", ", group.Select(e => ElevationFormat.Format(e.Before, 2) + " → " + ElevationFormat.Format(e.Value, 2))) +
+                             " (изменено точек " + changed + ", новых " + created + ").");
+            }
+            return messages;
         }
 
         /// <summary>Расчёт и построение (пересчёт): старые объекты картограммы заменяются новыми. Одна отмена.</summary>
@@ -233,14 +407,21 @@ namespace Kzm.AutoCAD.Services
             {
                 var c = KzmStore.ReadCartograms(database, transaction).FirstOrDefault(x => x.Id == cartogramId)
                         ?? throw new KzmException("Картограмма не найдена.");
+                // Elevations typed on the cartogram go into the surfaces first, then everything is recalculated.
+                var notes = new List<string>();
+                var edits = ReadLabelEdits(database, transaction, c.Id, notes);
+                var applied = edits.Count > 0 ? ApplyLabelEdits(database, transaction, c, edits, settings) : new List<string>();
                 var computation = Compute(database, transaction, c, settings);
-                var moved = c.KeepMovedLabels ? MovedLabels(database, transaction, c.Id) : new Dictionary<string, Vector3d>();
+                computation.Applied.AddRange(applied);
+                computation.Problems.AddRange(notes);
+                var moved = c.KeepMovedLabels ? ReadMoved(database, transaction, c.Id) : new MovedLabels();
                 Erase(database, transaction, c.Id);
-                var painter = new Painter(database, transaction, computation, moved);
+                var painter = new CartogramPainter(database, transaction, computation, moved);
                 painter.Draw();
                 computation.MovedLabels = painter.Moved;
                 KzmStore.WriteCartogramObjects(database, transaction, c.Id, painter.Created);
                 c.Built = true;
+                c.DrawVersion = CartogramInfo.CurrentDrawVersion;
                 c.BuiltFingerprint = computation.Fingerprint;
                 c.LastFill = computation.Result.TotalFill;
                 c.LastCut = computation.Result.TotalCut;
@@ -256,11 +437,39 @@ namespace Kzm.AutoCAD.Services
             }
         }
 
-        internal static void Delete(Database database, string cartogramId, bool eraseDrawing)
+        /// <summary>What «Удалить картограмму» removes besides the drawing (for the question to the user).</summary>
+        internal static (int Statements, bool Boundary) Extras(Database database, Transaction transaction, CartogramInfo c)
+        {
+            int statements = (KzmStore.ReadCartogramObjects(database, transaction, c.Id + StatementsSuffix) ?? new List<ObjectId>())
+                .Count(id => id.IsValid && !id.IsErased);
+            return (statements, ModuleBoundary(database, transaction, c) != ObjectId.Null);
+        }
+
+        /// <summary>The boundary polyline drawn by points for this cartogram (never a polyline the user drew).</summary>
+        internal static ObjectId ModuleBoundary(Database database, Transaction transaction, CartogramInfo c)
+        {
+            var id = SurfaceModels.FromHandle(database, c.BoundaryHandle);
+            if (id.IsNull || !(transaction.GetObject(id, OpenMode.ForRead) is Entity entity)) return ObjectId.Null;
+            return IsTagged(entity, c.Id, out _, out var values) && values.Length > 2 && Equals(values[2].Value, BoundaryMark) ? id : ObjectId.Null;
+        }
+
+        /// <summary>
+        /// «Удалить картограмму»: её построение, ведомости объёмов, граница, нарисованная по точкам, и параметры.
+        /// Поверхности и их точки не трогаются. Одна отмена.
+        /// </summary>
+        internal static void Delete(Database database, string cartogramId)
         {
             using (var transaction = database.TransactionManager.StartTransaction())
             {
-                if (eraseDrawing) Erase(database, transaction, cartogramId);
+                var c = KzmStore.ReadCartograms(database, transaction).FirstOrDefault(x => x.Id == cartogramId);
+                Erase(database, transaction, cartogramId);
+                foreach (var id in KzmStore.ReadCartogramObjects(database, transaction, cartogramId + StatementsSuffix) ?? new List<ObjectId>())
+                    if (id.IsValid && !id.IsErased && transaction.GetObject(id, OpenMode.ForRead) is Table table) EraseEntity(database, transaction, table);
+                if (c != null)
+                {
+                    var boundary = ModuleBoundary(database, transaction, c);
+                    if (!boundary.IsNull) EraseEntity(database, transaction, (Entity)transaction.GetObject(boundary, OpenMode.ForRead));
+                }
                 KzmStore.DeleteCartogramObjects(database, transaction, cartogramId);
                 KzmStore.DeleteCartogramObjects(database, transaction, cartogramId + StatementsSuffix);
                 KzmStore.DeleteCartogram(database, transaction, cartogramId);
@@ -467,282 +676,5 @@ namespace Kzm.AutoCAD.Services
         internal static ResultBuffer Tag(string cartogramId) => new ResultBuffer(
             new TypedValue((int)DxfCode.ExtendedDataRegAppName, App),
             new TypedValue((int)DxfCode.ExtendedDataAsciiString, cartogramId));
-
-        /// <summary>Draws one computed cartogram; every created object is listed in <see cref="Created"/>.</summary>
-        private sealed class Painter
-        {
-            private readonly Database database;
-            private readonly Transaction transaction;
-            private readonly CartogramComputation computation;
-            private readonly CartogramInfo c;
-            private readonly GridDefinition grid;
-            private readonly CartogramResult result;
-            private readonly BlockTableRecord space;
-            private readonly ObjectId style;
-            private readonly double k;
-            private readonly Dictionary<string, Vector3d> moved;
-
-            internal Painter(Database database, Transaction transaction, CartogramComputation computation, Dictionary<string, Vector3d> moved)
-            {
-                this.database = database;
-                this.transaction = transaction;
-                this.computation = computation;
-                this.moved = moved ?? new Dictionary<string, Vector3d>();
-                c = computation.Info;
-                grid = computation.Grid;
-                result = computation.Result;
-                space = (BlockTableRecord)transaction.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(database), OpenMode.ForWrite);
-                style = database.Textstyle;
-                k = c.UnitsPerMm;
-            }
-
-            internal List<ObjectId> Created { get; } = new List<ObjectId>();
-            internal int Moved { get; private set; }
-
-            private XY W(double u, double v) => grid.ToWorld(u, v);
-
-            private static Point3d P(XY p) => new Point3d(p.X, p.Y, 0);
-
-            private T Add<T>(T entity, string layer) where T : Entity
-            {
-                entity.Layer = layer;
-                entity.XData = Tag(c.Id);
-                Created.Add(space.AppendEntity(entity));
-                transaction.AddNewlyCreatedDBObject(entity, true);
-                return entity;
-            }
-
-            private void Line(double u1, double v1, double u2, double v2, string layer) =>
-                Add(new Line(P(W(u1, v1)), P(W(u2, v2))), layer);
-
-            private void Mark(XY at, string label, double height) =>
-                Created.AddRange(CheckMarks.Add(transaction, space, at, label, c.Id, height));
-
-            /// <summary>
-            /// A text in grid axes. With a <paramref name="key"/> the text remembers where the module put it,
-            /// and a label the user moved before the rebuild is put at the same displacement again.
-            /// </summary>
-            private DBText Text(string value, double u, double v, double height, TextHorizontalMode horizontal, TextVerticalMode vertical,
-                string layer, double extraRotation = 0, string key = null)
-            {
-                if (string.IsNullOrEmpty(value)) return null;
-                var point = P(W(u, v));
-                var text = new DBText
-                {
-                    TextString = value,
-                    Height = height,
-                    TextStyleId = style,
-                    Rotation = grid.Angle + extraRotation,
-                    HorizontalMode = horizontal,
-                    VerticalMode = vertical,
-                    Position = point,
-                };
-                if (horizontal != TextHorizontalMode.TextLeft || vertical != TextVerticalMode.TextBase) text.AlignmentPoint = point;
-                Add(text, layer);
-                text.AdjustAlignment(database);
-                if (key == null) return text;
-                text.XData = new ResultBuffer(
-                    new TypedValue((int)DxfCode.ExtendedDataRegAppName, App),
-                    new TypedValue((int)DxfCode.ExtendedDataAsciiString, c.Id),
-                    new TypedValue((int)DxfCode.ExtendedDataAsciiString, LabelMark),
-                    new TypedValue((int)DxfCode.ExtendedDataAsciiString, key),
-                    new TypedValue((int)DxfCode.ExtendedDataXCoordinate, point));
-                if (moved.TryGetValue(key, out var offset))
-                {
-                    text.TransformBy(Matrix3d.Displacement(offset));
-                    Moved++;
-                }
-                return text;
-            }
-
-            internal void Draw()
-            {
-                foreach (var layer in new[] { Layers.Grid, Layers.Volumes, Layers.Totals, Layers.CutHatch }
-                             .Concat(c.Labels().Select(l => l.Style.Layer)).Distinct(StringComparer.OrdinalIgnoreCase))
-                    Layers.Ensure(database, transaction, layer);
-                Layers.EnsureDashed(database, transaction, Layers.ZeroLine);
-                Layers.Ensure(database, transaction, Layers.Check, 1, false);
-                PointBlocks.EnsureRegApp(database, transaction, App);
-                PointBlocks.EnsureRegApp(database, transaction, CheckMarks.AppName);
-                if (result.Squares.Count == 0) throw new KzmException("Граница не пересекает ни одного квадрата сетки.");
-                using (var meter = Progress.Start("КЗМ: картограмма «" + c.Name + "»", result.Squares.Count * 5))
-                {
-                    DrawGrid();
-                    DrawHatches(meter);
-                    DrawZeroLines();
-                    DrawNodes(meter);
-                    DrawVolumes(meter);
-                    DrawColumnTotals();
-                    DrawRowTotals();
-                }
-            }
-
-            private void DrawGrid()
-            {
-                double s = grid.Step;
-                double u0 = result.IMin * s, u1 = (result.IMax + 1) * s, v0 = result.JMin * s, v1 = (result.JMax + 1) * s;
-                for (int i = result.IMin; i <= result.IMax + 1; i++) Line(i * s, v0, i * s, v1, Layers.Grid);
-                for (int j = result.JMin; j <= result.JMax + 1; j++) Line(u0, j * s, u1, j * s, Layers.Grid);
-                double th = c.TotalsTextMm * k;
-                for (int i = result.IMin; i <= result.IMax; i++)
-                    Text(GridLabels.Label(c.Columns, i - result.IMin + 1), (i + 0.5) * s, v1 + 0.6 * th, th,
-                        TextHorizontalMode.TextCenter, TextVerticalMode.TextBottom, Layers.Grid);
-                for (int j = result.JMin; j <= result.JMax; j++)
-                    Text(GridLabels.Label(c.Rows, result.JMax - j + 1), u0 - 0.8 * th, (j + 0.5) * s, th,
-                        TextHorizontalMode.TextRight, TextVerticalMode.TextVerticalMid, Layers.Grid);
-            }
-
-            /// <summary>
-            /// Три подписи узла по шаблону картограммы (задание п. 4). По умолчанию — как в примере Б.4:
-            /// рабочая — слева вверху, проектная — справа вверху, фактическая — справа внизу.
-            /// </summary>
-            private void DrawNodes(Progress meter)
-            {
-                double h = c.NodeTextMm * k;
-                double g = 0.35 * h;
-                foreach (var node in result.Nodes.Values.Where(n => n.Used))
-                {
-                    meter.Step();
-                    double u = node.I * grid.Step, v = node.J * grid.Step;
-                    if (!node.Working.HasValue)
-                    {
-                        Mark(node.Position, "нет данных", h);
-                        continue;
-                    }
-                    Label(c.WorkingLabel, "W", node, ElevationFormat.FormatSigned(node.Working.Value, 2), u, v, h, g);
-                    Label(c.ProjectLabel, "P", node, ElevationFormat.Format(node.Project.Value, 2), u, v, h, g);
-                    Label(c.FactLabel, "F", node, ElevationFormat.Format(node.Fact.Value, 2), u, v, h, g);
-                }
-            }
-
-            private void Label(NodeLabelStyle label, string role, CartogramNode node, string value, double u, double v, double h, double g)
-            {
-                bool left = label.Corner == LabelCorner.TopLeft || label.Corner == LabelCorner.BottomLeft;
-                bool top = label.Corner == LabelCorner.TopLeft || label.Corner == LabelCorner.TopRight;
-                var text = Text(value, u + (left ? -g : g), v + (top ? g : -g), h,
-                    left ? TextHorizontalMode.TextRight : TextHorizontalMode.TextLeft,
-                    top ? TextVerticalMode.TextBottom : TextVerticalMode.TextTop,
-                    label.Layer, 0, role + ":" + node.I.ToString(CultureInfo.InvariantCulture) + ":" + node.J.ToString(CultureInfo.InvariantCulture));
-                if (text != null && !string.IsNullOrEmpty(label.Color) && label.Color != PointAppearance.ByLayer) text.Color = PointBlocks.ParseColor(label.Color);
-            }
-
-            private void DrawVolumes(Progress meter)
-            {
-                double h = c.VolumeTextMm * k;
-                foreach (var square in result.Squares)
-                {
-                    meter.Step();
-                    var (u, v) = grid.ToLocal(square.LabelPoint);
-                    if (!square.Computed)
-                    {
-                        Mark(square.LabelPoint, "не рассчитан", h);
-                        continue;
-                    }
-                    string fill = Volume(square.Fill, c.VolumeDecimals, true);
-                    string cut = Volume(square.Cut, c.VolumeDecimals, false);
-                    bool hasFill = fill != "0", hasCut = cut != "0";
-                    string key = ":" + square.I.ToString(CultureInfo.InvariantCulture) + ":" + square.J.ToString(CultureInfo.InvariantCulture);
-                    if (hasFill && hasCut)
-                    {
-                        Text(fill, u, v + 0.15 * h, h, TextHorizontalMode.TextCenter, TextVerticalMode.TextBottom, Layers.Volumes, 0, "V+" + key);
-                        Text(cut, u, v - 0.15 * h, h, TextHorizontalMode.TextCenter, TextVerticalMode.TextTop, Layers.Volumes, 0, "V-" + key);
-                    }
-                    else
-                    {
-                        Text(hasCut ? cut : fill, u, v, h, TextHorizontalMode.TextCenter, TextVerticalMode.TextVerticalMid, Layers.Volumes, 0, "V" + key);
-                    }
-                }
-            }
-
-            /// <summary>Линия нулевых работ — штриховая тонкая (СТБ 2073-2010, п. 3.12).</summary>
-            private void DrawZeroLines()
-            {
-                foreach (var line in result.ZeroLines.Where(l => l.Count >= 2))
-                {
-                    var polyline = new Polyline();
-                    for (int i = 0; i < line.Count; i++) polyline.AddVertexAt(i, new Point2d(line[i].X, line[i].Y), 0, 0, 0);
-                    polyline.LinetypeScale = c.Scale / 2000.0;
-                    Add(polyline, Layers.ZeroLine);
-                }
-            }
-
-            /// <summary>Площадь выемок — штриховкой под углом 45° (СТБ 2073-2010, п. 7.1 б).</summary>
-            private void DrawHatches(Progress meter)
-            {
-                foreach (var square in result.Squares.Where(s => s.Computed && s.CutPolygons.Count > 0))
-                {
-                    meter.Step();
-                    var hatch = Add(new Hatch(), Layers.CutHatch);
-                    try
-                    {
-                        hatch.SetHatchPattern(HatchPatternType.PreDefined, "ANSI31");
-                        hatch.PatternScale = k;
-                        hatch.Associative = false;
-                        foreach (var polygon in square.CutPolygons)
-                        {
-                            var points = new Point2dCollection();
-                            var bulges = new DoubleCollection();
-                            foreach (var p in polygon) { points.Add(new Point2d(p.X, p.Y)); bulges.Add(0); }
-                            points.Add(new Point2d(polygon[0].X, polygon[0].Y));
-                            bulges.Add(0);
-                            hatch.AppendLoop(HatchLoopTypes.Default, points, bulges);
-                        }
-                        hatch.EvaluateHatch(true);
-                    }
-                    catch (Autodesk.AutoCAD.Runtime.Exception)
-                    {
-                        Created.Remove(hatch.ObjectId);
-                        hatch.Erase();
-                        computation.Problems.Add("штриховка выемки в квадрате " + GridLabels.Label(c.Columns, square.I - result.IMin + 1) + "/" +
-                                                 GridLabels.Label(c.Rows, result.JMax - square.J + 1) + " не построена");
-                    }
-                }
-            }
-
-            /// <summary>Таблица под сеткой по форме рис. 8 СТБ 2073-2010: насыпь и выемка по столбцам и «Всего».</summary>
-            private void DrawColumnTotals()
-            {
-                double s = grid.Step, rh = 8 * k, th = c.TotalsTextMm * k;
-                double u0 = result.IMin * s, u1 = (result.IMax + 1) * s, top = result.JMin * s;
-                double left = u0 - 25 * k, labelLeft = u0 - 20 * k, right = u1 + 25 * k, totalLeft = u1 + 5 * k;
-                Line(left, top, right, top, Layers.Totals);
-                Line(labelLeft, top - rh, u1, top - rh, Layers.Totals);
-                Line(totalLeft, top - rh, right, top - rh, Layers.Totals);
-                Line(left, top - 2 * rh, right, top - 2 * rh, Layers.Totals);
-                foreach (double u in new[] { left, labelLeft, totalLeft, right }) Line(u, top, u, top - 2 * rh, Layers.Totals);
-                for (int i = result.IMin; i <= result.IMax + 1; i++) Line(i * s, top, i * s, top - 2 * rh, Layers.Totals);
-                Text("Итого, м³", (left + labelLeft) / 2, top - rh, th, TextHorizontalMode.TextCenter, TextVerticalMode.TextVerticalMid, Layers.Totals, Math.PI / 2);
-                Text("Насыпь (+)", labelLeft + 1.5 * k, top - rh / 2, th, TextHorizontalMode.TextLeft, TextVerticalMode.TextVerticalMid, Layers.Totals);
-                Text("Выемка (–)", labelLeft + 1.5 * k, top - 1.5 * rh, th, TextHorizontalMode.TextLeft, TextVerticalMode.TextVerticalMid, Layers.Totals);
-                for (int i = result.IMin; i <= result.IMax; i++)
-                {
-                    result.ColumnTotals.TryGetValue(i, out var total);
-                    Text(Volume(total.Fill, c.VolumeDecimals, true), (i + 0.5) * s, top - rh / 2, th, TextHorizontalMode.TextCenter, TextVerticalMode.TextVerticalMid, Layers.Totals);
-                    Text(Volume(total.Cut, c.VolumeDecimals, false), (i + 0.5) * s, top - 1.5 * rh, th, TextHorizontalMode.TextCenter, TextVerticalMode.TextVerticalMid, Layers.Totals);
-                }
-                Text("Всего, м³", (u1 + totalLeft) / 2, top - rh, th, TextHorizontalMode.TextCenter, TextVerticalMode.TextVerticalMid, Layers.Totals, Math.PI / 2);
-                Text(Volume(result.TotalFill, c.VolumeDecimals, true), (totalLeft + right) / 2, top - rh / 2, th, TextHorizontalMode.TextCenter, TextVerticalMode.TextVerticalMid, Layers.Totals);
-                Text(Volume(result.TotalCut, c.VolumeDecimals, false), (totalLeft + right) / 2, top - 1.5 * rh, th, TextHorizontalMode.TextCenter, TextVerticalMode.TextVerticalMid, Layers.Totals);
-            }
-
-            /// <summary>Итоги по рядам — справа от сетки (задание, п. 5).</summary>
-            private void DrawRowTotals()
-            {
-                double s = grid.Step, hh = 8 * k, th = c.TotalsTextMm * k, w = 20 * k;
-                double u1 = (result.IMax + 1) * s, top = (result.JMax + 1) * s, bottom = result.JMin * s;
-                Line(u1, top + hh, u1 + 2 * w, top + hh, Layers.Totals);
-                Line(u1, top + hh, u1, top, Layers.Totals);
-                foreach (double u in new[] { u1 + w, u1 + 2 * w }) Line(u, top + hh, u, bottom, Layers.Totals);
-                for (int j = result.JMin; j <= result.JMax + 1; j++) Line(u1, j * s, u1 + 2 * w, j * s, Layers.Totals);
-                Text("Насыпь (+)", u1 + w / 2, top + hh / 2, th, TextHorizontalMode.TextCenter, TextVerticalMode.TextVerticalMid, Layers.Totals);
-                Text("Выемка (–)", u1 + 1.5 * w, top + hh / 2, th, TextHorizontalMode.TextCenter, TextVerticalMode.TextVerticalMid, Layers.Totals);
-                for (int j = result.JMin; j <= result.JMax; j++)
-                {
-                    result.RowTotals.TryGetValue(j, out var total);
-                    Text(Volume(total.Fill, c.VolumeDecimals, true), u1 + w / 2, (j + 0.5) * s, th, TextHorizontalMode.TextCenter, TextVerticalMode.TextVerticalMid, Layers.Totals);
-                    Text(Volume(total.Cut, c.VolumeDecimals, false), u1 + 1.5 * w, (j + 0.5) * s, th, TextHorizontalMode.TextCenter, TextVerticalMode.TextVerticalMid, Layers.Totals);
-                }
-            }
-        }
     }
 }

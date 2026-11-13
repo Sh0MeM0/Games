@@ -310,6 +310,206 @@ namespace Kzm.AutoCAD.Services
         internal static List<ObjectId> PointsOf(Database database, StructureLine line) =>
             line.PointHandles.Select(h => SurfaceModels.FromHandle(database, h)).Where(id => !id.IsNull).ToList();
 
+        // ---------- граница работ по точкам ----------
+
+        /// <summary>
+        /// Граница работ по точкам (замечание: у угловых точек границы должны быть отметки).
+        /// Точки указываются по очереди, как полилиния: у существующей точки берётся её отметка, в любом
+        /// другом месте — отметка поверхности-источника по треугольникам; отметку можно заменить.
+        /// Замыкание даёт полилинию границы (слой КЗМ_ГРАНИЦА); её вершины становятся точками проектной
+        /// поверхности, а сама граница — её замкнутой структурной линией. Весь сеанс — одна отмена.
+        /// Returns the handle of the boundary polyline, or null when cancelled.
+        /// </summary>
+        internal static string DrawBoundary(Document document, string cartogramId, string cartogramName, string projectSurfaceId, string sourceSurfaceId,
+            string oldBoundaryHandle, KzmSettings settings)
+        {
+            var database = document.Database;
+            var editor = document.Editor;
+            SurfaceModel source;
+            SurfaceInfo target;
+            List<SurfacePoint> all;
+            using (var transaction = database.TransactionManager.StartOpenCloseTransaction())
+            {
+                var surfaces = KzmStore.ReadSurfaces(database, transaction);
+                target = surfaces.FirstOrDefault(s => s.Id == projectSurfaceId) ?? throw new KzmException("Выберите проектную поверхность картограммы: в неё войдут точки границы.");
+                var sourceInfo = surfaces.FirstOrDefault(s => s.Id == sourceSurfaceId) ?? throw new KzmException("Поверхность, с которой брать отметки, не найдена.");
+                source = SurfaceModels.Build(database, transaction, sourceInfo, settings);
+                all = PointBlocks.Read(database, transaction, settings);
+                transaction.Commit();
+            }
+            var nearest = new NearestPoints(all);
+            var vertices = new List<(XY P, double Z, string TargetHandle)>();
+            var transients = new List<Entity>();
+            var manager = Autodesk.AutoCAD.GraphicsInterface.TransientManager.CurrentTransientManager;
+            var ucs = editor.CurrentUserCoordinateSystem;
+            void Show(Entity entity)
+            {
+                transients.Add(entity);
+                manager.AddTransient(entity, Autodesk.AutoCAD.GraphicsInterface.TransientDrawingMode.DirectShortTerm, 128, new Autodesk.AutoCAD.Geometry.IntegerCollection());
+            }
+            void Hide(Entity entity)
+            {
+                try { manager.EraseTransient(entity, new Autodesk.AutoCAD.Geometry.IntegerCollection()); } catch (System.Exception) { }
+                entity.Dispose();
+                transients.Remove(entity);
+            }
+            editor.WriteMessage("\nКЗМ: граница работ по точкам. Отметки берутся с поверхности «" + source.Surface.Name + "», точки границы войдут в «" + target.Name +
+                                "». Укажите точку (можно привязкой к точке съёмки), затем Enter — принять отметку или введите свою.");
+            try
+            {
+                while (true)
+                {
+                    var options = new PromptPointOptions(vertices.Count == 0 ? "\nПервая точка границы: "
+                        : "\nТочка " + (vertices.Count + 1) + " границы [Замкнуть/Отменить] <Замкнуть>: ") { AllowNone = vertices.Count > 0, AppendKeywordsToMessage = false };
+                    if (vertices.Count > 0)
+                    {
+                        var last = vertices[vertices.Count - 1].P;
+                        options.UseBasePoint = true;
+                        options.BasePoint = new Autodesk.AutoCAD.Geometry.Point3d(last.X, last.Y, 0).TransformBy(ucs.Inverse());
+                        options.Keywords.Add("Close", "Замкнуть", "Замкнуть");
+                        options.Keywords.Add("Undo", "Отменить", "Отменить");
+                    }
+                    var result = editor.GetPoint(options);
+                    if (result.Status == PromptStatus.Keyword && result.StringResult == "Undo")
+                    {
+                        vertices.RemoveAt(vertices.Count - 1);
+                        if (transients.Count > Math.Max(0, vertices.Count - 1)) Hide(transients[transients.Count - 1]);
+                        continue;
+                    }
+                    if ((result.Status == PromptStatus.Keyword && result.StringResult == "Close") || result.Status == PromptStatus.None)
+                    {
+                        if (vertices.Count >= 3) break;
+                        editor.WriteMessage("\nДля замкнутой границы нужно не меньше трёх точек.");
+                        continue;
+                    }
+                    if (result.Status != PromptStatus.OK)
+                    {
+                        editor.WriteMessage("\nКЗМ: граница не создана.");
+                        return null;
+                    }
+                    var world = result.Value.TransformBy(ucs);
+                    var p = new XY(world.X, world.Y);
+                    double? z;
+                    string targetHandle = null, origin;
+                    var snapped = nearest.Within(p, KzmSettings.DuplicateTolerance);
+                    if (snapped != null && snapped.Elevation.IsValid)
+                    {
+                        p = snapped.Position;
+                        z = snapped.Elevation.Value.Value;
+                        if (snapped.Data.SurfaceId == target.Id) targetHandle = snapped.Handle;
+                        origin = "отметка точки " + (string.IsNullOrEmpty(snapped.Number) ? snapped.Handle : snapped.Number);
+                    }
+                    else
+                    {
+                        z = source.Tin.ZAt(p);
+                        origin = "по поверхности «" + source.Surface.Name + "»";
+                    }
+                    bool skip = false;
+                    while (true)
+                    {
+                        string prompt = z.HasValue
+                            ? "\nОтметка точки " + (vertices.Count + 1) + " (" + origin + ") <" + ElevationFormat.Format(z.Value, settings.Decimals) + ">: "
+                            : "\nТочка вне поверхности «" + source.Surface.Name + "» — введите отметку: ";
+                        var answer = editor.GetString(new PromptStringOptions(prompt) { AllowSpaces = false });
+                        if (answer.Status != PromptStatus.OK) { skip = true; break; }
+                        string text = answer.StringResult.Trim();
+                        if (text.Length == 0 && z.HasValue) break;
+                        if (ElevationFormat.TryParse(text, out double typed)) { z = typed; break; }
+                        editor.WriteMessage("\nВведите отметку числом, например 176,45 (Enter — принять предложенную).");
+                    }
+                    if (skip) { editor.WriteMessage("\nТочка не добавлена."); continue; }
+                    if (vertices.Count > 0)
+                    {
+                        var previous = vertices[vertices.Count - 1].P;
+                        Show(new Line(new Autodesk.AutoCAD.Geometry.Point3d(previous.X, previous.Y, 0), new Autodesk.AutoCAD.Geometry.Point3d(p.X, p.Y, 0)) { ColorIndex = 6 });
+                    }
+                    vertices.Add((p, z.Value, targetHandle));
+                }
+            }
+            finally
+            {
+                foreach (var entity in transients.ToList()) Hide(entity);
+            }
+
+            using (var transaction = database.TransactionManager.StartTransaction())
+            {
+                var surface = EditServices.ReadSurface(database, transaction, target.Id);
+                var space = (BlockTableRecord)transaction.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(database), OpenMode.ForWrite);
+                // A boundary drawn before for this cartogram is replaced (its points stay in the surface).
+                var oldId = SurfaceModels.FromHandle(database, oldBoundaryHandle);
+                if (!oldId.IsNull && transaction.GetObject(oldId, OpenMode.ForRead) is Entity old)
+                {
+                    using (var xdata = old.GetXDataForApplication(CartogramService.App))
+                    {
+                        var values = xdata?.AsArray();
+                        if (values != null && values.Length > 2 && Equals(values[1].Value, cartogramId) && Equals(values[2].Value, CartogramService.BoundaryMark))
+                        {
+                            old.UpgradeOpen();
+                            old.Erase();
+                            foreach (var line in KzmStore.ReadLines(database, transaction, target.Id).Where(l => string.Equals(l.SourceHandle, oldBoundaryHandle, StringComparison.OrdinalIgnoreCase)))
+                                KzmStore.DeleteLine(database, transaction, target.Id, line.Id);
+                        }
+                    }
+                }
+                Layers.Ensure(database, transaction, Layers.Boundary, 6);
+                PointBlocks.EnsureRegApp(database, transaction, CartogramService.App);
+                var polyline = new Polyline { Layer = Layers.Boundary, Closed = true };
+                for (int i = 0; i < vertices.Count; i++) polyline.AddVertexAt(i, new Autodesk.AutoCAD.Geometry.Point2d(vertices[i].P.X, vertices[i].P.Y), 0, 0, 0);
+                polyline.XData = new ResultBuffer(
+                    new TypedValue((int)DxfCode.ExtendedDataRegAppName, CartogramService.App),
+                    new TypedValue((int)DxfCode.ExtendedDataAsciiString, cartogramId),
+                    new TypedValue((int)DxfCode.ExtendedDataAsciiString, CartogramService.BoundaryMark));
+                space.AppendEntity(polyline);
+                transaction.AddNewlyCreatedDBObject(polyline, true);
+
+                Layers.Ensure(database, transaction, surface.Layer);
+                if (!Layers.IsUsable(database, transaction, surface.Layer, out string problem)) throw new KzmException(problem + ".");
+                PointBlocks.EnsureRegApp(database, transaction, PointBlocks.AppName);
+                var definition = PointBlocks.EnsureDefinition(database, transaction);
+                if (!surface.Appearance.IsSet) surface.Appearance = EditServices.FromDrawing(database, transaction, surface.Appearance);
+                var existing = PointBlocks.Read(database, transaction, settings, surface.Id);
+                var byHandle = existing.ToDictionary(q => q.Handle, q => q, StringComparer.OrdinalIgnoreCase);
+                int number = PointNumbering.Next(existing.Select(q => q.Number));
+                var boundaryLine = new StructureLine
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    Name = "Граница «" + cartogramName + "»",
+                    Kind = StructureLineKind.Line,
+                    Closed = true,
+                    SourceHandle = polyline.Handle.ToString(),
+                };
+                foreach (var (p, z, targetHandle) in vertices)
+                {
+                    string handle;
+                    if (targetHandle != null && byHandle.TryGetValue(targetHandle, out var point))
+                    {
+                        if (!point.Elevation.IsValid || Math.Abs(point.Elevation.Value.Value - z) > 1e-9)
+                            EditServices.WriteElevation(transaction, (BlockReference)transaction.GetObject(point.Id, OpenMode.ForRead), point.Data, z, settings.Decimals);
+                        handle = point.Handle;
+                    }
+                    else
+                    {
+                        var data = new PointData
+                        {
+                            SurfaceId = surface.Id, Elevation = z, Source = SourceKind.Boundary, XyMode = XyMode.Manual,
+                            SourceHandle = polyline.Handle.ToString(), Number = (number++).ToString(CultureInfo.InvariantCulture),
+                        };
+                        handle = PointBlocks.Create(transaction, space, definition, p, surface.Layer, data, surface.Appearance, settings.Decimals).Handle.ToString();
+                    }
+                    if (boundaryLine.PointHandles.Count == 0 || boundaryLine.PointHandles[boundaryLine.PointHandles.Count - 1] != handle)
+                        boundaryLine.PointHandles.Add(handle);
+                }
+                KzmStore.WriteLine(database, transaction, surface.Id, boundaryLine);
+                surface.Revision++;
+                KzmStore.WriteSurface(database, transaction, surface);
+                EditServices.RefreshTriangles(database, transaction, surface, settings);
+                transaction.Commit();
+                editor.WriteMessage("\nКЗМ: граница из " + vertices.Count + " точек создана; точки и замкнутая структурная линия добавлены в «" + surface.Name +
+                                    "». Отменить — U.");
+                return polyline.Handle.ToString();
+            }
+        }
+
         // ---------- «поменять диагональ» ----------
 
         /// <summary>

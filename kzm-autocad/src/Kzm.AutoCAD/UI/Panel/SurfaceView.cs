@@ -538,6 +538,11 @@ namespace Kzm.AutoCAD.UI.Panel
             var kind = project.Checked ? SurfaceKind.Project : SurfaceKind.Fact;
             if (creating)
             {
+                if (panel.Snapshot.Project == null)
+                {
+                    PanelMessages.Error("сначала создайте или откройте проект.");
+                    return;
+                }
                 var created = new SurfaceInfo
                 {
                     Id = Guid.NewGuid().ToString("N"),
@@ -545,6 +550,7 @@ namespace Kzm.AutoCAD.UI.Panel
                     Kind = kind,
                     Layer = newLayer,
                     Created = DateTime.Now.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture),
+                    ProjectId = panel.Snapshot.Project.Id == ProjectInfo.LegacyId ? null : panel.Snapshot.Project.Id,
                 };
                 PanelActions.Run("новая поверхность", document =>
                 {

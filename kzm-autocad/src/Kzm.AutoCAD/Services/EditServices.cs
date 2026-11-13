@@ -30,6 +30,41 @@ namespace Kzm.AutoCAD.Services
             }
         }
 
+        // ---------- projects (задание: проект с названием, открыть / закрыть / создать) ----------
+
+        internal static void CreateProject(Database database, ProjectInfo project)
+        {
+            using (var transaction = database.TransactionManager.StartTransaction())
+            {
+                KzmStore.WriteProject(database, transaction, project);
+                KzmStore.WriteCurrentProjectId(database, transaction, project.Id);
+                transaction.Commit();
+            }
+        }
+
+        internal static void OpenProject(Database database, string projectId)
+        {
+            using (var transaction = database.TransactionManager.StartTransaction())
+            {
+                if (projectId != null && KzmStore.ReadProjects(database, transaction).All(p => p.Id != projectId))
+                    throw new KzmException("Проект не найден в чертеже.");
+                KzmStore.WriteCurrentProjectId(database, transaction, projectId);
+                transaction.Commit();
+            }
+        }
+
+        internal static void RenameProject(Database database, string projectId, string name)
+        {
+            using (var transaction = database.TransactionManager.StartTransaction())
+            {
+                var project = KzmStore.ReadProjects(database, transaction).FirstOrDefault(p => p.Id == projectId)
+                              ?? throw new KzmException("Проект не найден в чертеже.");
+                project.Name = name;
+                KzmStore.WriteProject(database, transaction, project);
+                transaction.Commit();
+            }
+        }
+
         internal static SurfaceInfo ReadSurface(Database database, Transaction transaction, string surfaceId) =>
             KzmStore.ReadSurfaces(database, transaction).FirstOrDefault(surface => surface.Id == surfaceId)
             ?? throw new KzmException("Поверхность не найдена в чертеже.");

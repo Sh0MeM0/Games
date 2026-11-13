@@ -59,6 +59,8 @@ namespace Kzm.Core
         public string TrianglesFingerprint { get; set; }
         /// <summary>Block reference that shows the triangles (one object instead of thousands of lines).</summary>
         public string TrianglesBlockHandle { get; set; }
+        /// <summary>Проект поверхности (null — данные версий до 0.6, «Проект 1»).</summary>
+        public string ProjectId { get; set; }
         public PointAppearance Appearance { get; set; } = new PointAppearance();
 
         public string Title => "«" + Name + "» (" + SurfaceKinds.Title(Kind) + ", слой " + Layer + ")";
@@ -80,6 +82,10 @@ namespace Kzm.Core
         Point = 5,
         /// <summary>Block with an elevation attribute.</summary>
         Block = 6,
+        /// <summary>Elevation typed into a label of a cartogram node (written into the surface on rebuild).</summary>
+        Node = 7,
+        /// <summary>Vertex of a cartogram boundary drawn by points.</summary>
+        Boundary = 8,
     }
 
     public static class SourceKinds
@@ -94,6 +100,8 @@ namespace Kzm.Core
                 case SourceKind.Plane: return "плоскость";
                 case SourceKind.Point: return "POINT (Z)";
                 case SourceKind.Block: return "блок (атрибут)";
+                case SourceKind.Node: return "отметка на картограмме";
+                case SourceKind.Boundary: return "граница картограммы";
                 default: return "вручную";
             }
         }
@@ -108,6 +116,8 @@ namespace Kzm.Core
                 case SourceKind.Plane: return "PLANE";
                 case SourceKind.Point: return "POINT";
                 case SourceKind.Block: return "BLOCK";
+                case SourceKind.Node: return "NODE";
+                case SourceKind.Boundary: return "BOUND";
                 default: return "MANUAL";
             }
         }
@@ -123,6 +133,8 @@ namespace Kzm.Core
                 case "PLANE": return SourceKind.Plane;
                 case "POINT": return SourceKind.Point;
                 case "BLOCK": return SourceKind.Block;
+                case "NODE": return SourceKind.Node;
+                case "BOUND": return SourceKind.Boundary;
                 default: throw new KzmException("неизвестный источник точки: " + code);
             }
         }
