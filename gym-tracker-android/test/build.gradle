@@ -1,0 +1,68 @@
+// JVM tests for the app. Robolectric runs the real Android activities on the JVM.
+// Robolectric 3.8 (Android 8.1, API 27) is used because it needs only Maven Central;
+// newer Robolectric versions depend on androidx.test from Google Maven.
+// Run ../build.sh first: it produces ../build/gen (R.java).
+plugins {
+    id 'java'
+}
+
+repositories {
+    mavenCentral()
+}
+
+def appDir = file('..')
+def androidJar = new File(appDir, '.sdk/android-compile-34.jar')
+def jdk8 = '/usr/lib/jvm/java-8-openjdk-amd64'
+def roboDeps = new File(appDir, '.sdk/robolectric')
+
+dependencies {
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:3.8'
+    testCompileOnly files(androidJar)
+    // JUnit loads the test class outside Robolectric's sandbox first, so android.* must be visible.
+    testRuntimeOnly files(new File(roboDeps, 'android-all-8.1.0-robolectric-4611349.jar'))
+}
+
+sourceSets {
+    test {
+        java {
+            srcDirs = ['src/test/java', new File(appDir, 'src'), new File(appDir, 'build/gen')]
+        }
+        resources {
+            srcDirs = ['src/test/resources', 'build/generated-config']
+        }
+    }
+}
+
+tasks.register('writeRobolectricConfig') {
+    def out = file('build/generated-config/robolectric.properties')
+    outputs.file(out)
+    outputs.upToDateWhen { false }
+    doLast {
+        out.parentFile.mkdirs()
+        out.text = """sdk=27
+manifest=../AndroidManifest.xml
+packageName=app.gymlog
+"""
+    }
+}
+processTestResources.dependsOn 'writeRobolectricConfig'
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 8
+    options.compilerArgs += ['-proc:none', '-Xlint:-options']
+}
+
+test {
+    executable = "${jdk8}/bin/java"
+    maxHeapSize = '3g'
+    systemProperty 'robolectric.offline', 'true'
+    systemProperty 'robolectric.dependency.dir', roboDeps.absolutePath
+    systemProperty 'screenshots.dir', file('build/screenshots').absolutePath
+    testLogging {
+        events 'passed', 'failed', 'skipped'
+        exceptionFormat 'full'
+        showStandardStreams = true
+    }
+}

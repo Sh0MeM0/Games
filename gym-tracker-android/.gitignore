@@ -1,0 +1,8 @@
+# Downloaded Android platform files (recreated by tools/fetch-sdk.sh)
+.sdk/
+# Build outputs (the finished APK is kept in release/)
+build/
+test/build/
+test/.gradle/
+# Signing key: not published (public repository)
+keystore/
