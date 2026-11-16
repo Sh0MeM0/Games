@@ -1,6 +1,6 @@
-# Печати и подписи 4.0 — portable для Windows
+# Печати и подписи 4.1 — portable для Windows
 
-[**Скачать StampExtractor-Portable-x64-4.0.0.zip**](https://github.com/Sh0MeM0/Games/raw/stamp-extractor/downloads/StampExtractor-Portable-x64-4.0.0.zip)
+[**Скачать StampExtractor-Portable-x64-4.1.0.zip**](https://github.com/Sh0MeM0/Games/raw/claude/admiring-franklin-lc42l2/downloads/StampExtractor-Portable-x64-4.1.0.zip)
 
 Распакуйте архив целиком и запустите `StampExtractor-Portable-x64\StampExtractor.exe`.
 Установка, интернет и права администратора не нужны. Windows 10/11 x64,
@@ -18,4 +18,6 @@
 Модель обучена на синтетических документах и может ошибаться на реальных:
 проверяйте каждый объект перед сохранением.
 
-Предыдущие версии 1.0–3.0 (один EXE на Electron, Git LFS) оставлены в `downloads/`.
+В 4.1 модель дообучена на повёрнутых, наклонённых и снятых под углом страницах
+и разных чернилах. Версия 4.0.0 и версии 1.0–3.0 (один EXE на Electron, Git LFS)
+оставлены в `downloads/`.

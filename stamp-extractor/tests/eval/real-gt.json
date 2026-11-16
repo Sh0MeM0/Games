@@ -1,0 +1,124 @@
+{
+ "source": "https://github.com/Yazangthb/Stamp-recognition (tests/images), commit 79d17ee4263d184a963463fc53dab0c190a5c865",
+ "note": "Boxes annotated by hand for evaluation only; the images are not part of this repository. Files were converted to PNG and renamed repo_<original stem>.png. tests/images/inno.png and tds.jpg could not be decoded and are not used.",
+ "items": [
+  {
+   "file": "repo_1.png",
+   "objects": [
+    {
+     "kind": "stamp",
+     "x": 200,
+     "y": 1052,
+     "w": 196,
+     "h": 200
+    },
+    {
+     "kind": "signature",
+     "x": 128,
+     "y": 1062,
+     "w": 97,
+     "h": 85
+    }
+   ],
+   "width": 1000,
+   "height": 1375
+  },
+  {
+   "file": "repo_5.png",
+   "objects": [
+    {
+     "kind": "stamp",
+     "x": 180,
+     "y": 693,
+     "w": 156,
+     "h": 157
+    },
+    {
+     "kind": "signature",
+     "x": 108,
+     "y": 763,
+     "w": 55,
+     "h": 40
+    }
+   ],
+   "width": 770,
+   "height": 1062
+  },
+  {
+   "file": "repo_no-stamps.png",
+   "objects": [],
+   "width": 1290,
+   "height": 1000
+  },
+  {
+   "file": "repo_stamps1.png",
+   "objects": [
+    {
+     "kind": "stamp",
+     "x": 438,
+     "y": 1172,
+     "w": 192,
+     "h": 192
+    },
+    {
+     "kind": "stamp",
+     "x": 818,
+     "y": 1160,
+     "w": 235,
+     "h": 228
+    }
+   ],
+   "width": 1240,
+   "height": 1754
+  },
+  {
+   "file": "repo_stamps11.png",
+   "objects": [
+    {
+     "kind": "stamp",
+     "x": 172,
+     "y": 28,
+     "w": 132,
+     "h": 140
+    }
+   ],
+   "width": 762,
+   "height": 1000
+  },
+  {
+   "file": "repo_stamps2.png",
+   "objects": [
+    {
+     "kind": "stamp",
+     "x": 428,
+     "y": 1168,
+     "w": 210,
+     "h": 205
+    },
+    {
+     "kind": "stamp",
+     "x": 785,
+     "y": 1250,
+     "w": 200,
+     "h": 198
+    }
+   ],
+   "width": 1240,
+   "height": 1754
+  },
+  {
+   "file": "repo_stamps3.png",
+   "objects": [
+    {
+     "kind": "stamp",
+     "x": 372,
+     "y": 578,
+     "w": 320,
+     "h": 265
+    }
+   ],
+   "width": 720,
+   "height": 900
+  }
+ ]
+}

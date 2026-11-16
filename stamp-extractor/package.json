@@ -1,6 +1,6 @@
 {
   "name": "stamp-extractor",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "private": true,
   "description": "Печати и подписи — выделение печатей и подписей из PDF и изображений локальной моделью",
   "author": "Stamp Extractor",

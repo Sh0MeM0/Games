@@ -2,3 +2,4 @@
 b7dca61606dcacb2a88f8b0a54b0c2bbee7762153a5274ddefe4cb697a494392  StampExtractor-Portable-2.0.0.exe
 0dc271c33ecd5ceb2c45eed7ecae64096dbfaa9738863c01657214eea5a68fac  StampExtractor-Portable-3.0.0.exe
 31626a3cccf1e03bf1122f350e108748993a239cb8ca724470af24b64a8b545b  StampExtractor-Portable-x64-4.0.0.zip
+bcadf08445bb128d04763973591f8c8ca16af8d990eaf0ad09da897e8461e0ff  StampExtractor-Portable-x64-4.1.0.zip

@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/neutralinojs/neutralinojs/main/schemas/neutralino.config.schema.json",
   "applicationId": "org.stampextractor.desktop",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "applicationName": "Печати и подписи",
   "author": "Stamp Extractor",
   "description": "Печати и подписи — выделение из PDF и изображений",

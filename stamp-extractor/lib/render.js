@@ -7,6 +7,7 @@
 import { prepareInk, cropImage, normalizeRect, applyStrokes } from './processing.js';
 import { CLASS_INDEX, CLASSES } from './segmentation.js';
 import { repairStrokes } from './repair.js';
+import { DEFAULT_SENSITIVITY } from './objects.js';
 
 const { print: PRINT, line: LINE, hand: HAND, signature: SIGN, stamp: STAMP } = CLASS_INDEX;
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
@@ -78,7 +79,7 @@ export function renderObject(source, rect, options = {}, strokes = [], context =
   const recoloredMask = new Uint8Array(size);
   if (context?.maps) {
     const probs = cropProbabilities(context.maps, context.scale, region);
-    const s = Math.round(255 * clamp(Number(options.sensitivity ?? 0.5), 0.2, 0.85)), weakLevel = Math.round(s * 0.5);
+    const s = Math.round(255 * clamp(Number(options.sensitivity ?? DEFAULT_SENSITIVITY), 0.2, 0.85)), weakLevel = Math.round(s * 0.5);
     const targets = targetClasses(options), isolate = options.isolate !== false;
     const removeText = options.removeText !== false, removeLines = options.removeLines !== false;
     const strong = new Uint8Array(size), weak = new Uint8Array(size), foreign = new Uint8Array(size);

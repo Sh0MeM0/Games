@@ -116,10 +116,11 @@ function mergeBoxes(boxes, gapOf, canMerge) {
 }
 
 /** Post-processing constants. Chosen on validation sets only (see VALIDATION.md). */
+export const DEFAULT_SENSITIVITY = 0.4;
 export const TUNING = Object.freeze({
   stampMinMean: 0.7, stampMinCount: 70, stampMerge: 1.45,
-  signRx: 11, signRy: 3, signMinMean: 0.58, signMinCount: 40, signHandRatio: 0.55, signPrintRatio: 0.35,
-  signInsideStamp: 0.8, signStampProb: 0.45, stampMinGlyphs: 8
+  signRx: 11, signRy: 3, signMinMean: 0.66, signMinCount: 40, signHandRatio: 0.4, signPrintRatio: 0.35,
+  signInsideStamp: 0.5, signStampProb: 0.45, stampMinGlyphs: 8
 });
 
 /** Letter-like pieces inside a stamp candidate. A seal carries lettering (many
@@ -145,10 +146,32 @@ function meanOver(maps, ink, box, seedCls, cls, threshold) {
   return n ? sum / n / 255 : 0;
 }
 
+/** Writing direction of the page from its ink: lines of text make the row
+ * profile much more uneven than the column profile. Returns
+ * true when lines run vertically (page turned by about 90° or 270°). */
+export function verticalLines(maps, ink) {
+  // All ink cells: text lines dominate a page even where the network is unsure.
+  const { width, height } = maps;
+  const rows = new Float64Array(height), cols = new Float64Array(width); let n = 0;
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const i = y * width + x; if (ink.grid[i]) { rows[y]++; cols[x]++; n++; }
+  }
+  if (n < 400) return false;
+  const unevenness = profile => {
+    let sum = 0, sq = 0, jumps = 0;
+    for (let k = 0; k < profile.length; k++) { sum += profile[k]; sq += profile[k] ** 2; if (k) jumps += Math.abs(profile[k] - profile[k - 1]); }
+    const mean = sum / profile.length; return mean ? jumps / profile.length / mean : 0;
+  };
+  return unevenness(cols) > LINE_RATIO * unevenness(rows);
+}
+// Measured on rotated test pages: upright ≤ 1.0, tilted by 12° ≤ 1.55,
+// turned by 90°/270° mostly ≥ 1.65 (see VALIDATION.md).
+const LINE_RATIO = 1.6;
+
 /** Find stamps and signatures. Coordinates are returned in working pixels. */
 export function detectObjects(work, maps, options = {}) {
   const t = { ...TUNING, ...(options.tuning || {}) };
-  const sensitivity = clamp(Number(options.sensitivity ?? 0.5), 0.2, 0.85);
+  const sensitivity = clamp(Number(options.sensitivity ?? DEFAULT_SENSITIVITY), 0.2, 0.85);
   const strong = Math.round(255 * sensitivity), weak = Math.round(255 * sensitivity * 0.7);
   const ink = options.ink || inkGrid(work, options);
   const scale = Math.max(maps.width, maps.height) / 800; // proposals tuned on ~800 px grids
@@ -166,11 +189,16 @@ export function detectObjects(work, maps, options = {}) {
     loops.push({ ...b, mean: b.mean * 0.8, anyObjectInk: true }); return false;
   });
 
-  let signatures = proposals(maps, ink, SIGN, { threshold: strong, rx: Math.round(t.signRx * scale) + 1, ry: Math.round(t.signRy * scale) + 1,
-    minArea: Math.round(28 * scale * scale), minW: Math.round(12 * scale), minH: Math.round(5 * scale) });
-  signatures = mergeBoxes(signatures, (a, b) => Math.round(Math.max(a.h, b.h) * 0.35) + 2, (a, b) => {
+  // On a page turned by 90°, signatures run vertically: swap the grouping axes.
+  const vertical = verticalLines(maps, ink);
+  const along = Math.round(t.signRx * scale) + 1, across = Math.round(t.signRy * scale) + 1;
+  let signatures = proposals(maps, ink, SIGN, { threshold: strong, rx: vertical ? across : along, ry: vertical ? along : across,
+    minArea: Math.round(28 * scale * scale), minW: Math.round(5 * scale), minH: Math.round(5 * scale) })
+    .filter(b => Math.max(b.w, b.h) >= Math.round(12 * scale));
+  const thick = b => vertical ? b.w : b.h, length = b => vertical ? b.h : b.w;
+  signatures = mergeBoxes(signatures, (a, b) => Math.round(Math.max(thick(a), thick(b)) * 0.35) + 2, (a, b) => {
     const m = unionBox(a, b);
-    return m.h <= Math.max(a.h, b.h) * 1.7 && m.w <= (a.w + b.w) * 1.6;
+    return thick(m) <= Math.max(thick(a), thick(b)) * 1.7 && length(m) <= (length(a) + length(b)) * 1.6;
   }).filter(box => {
     // Reject groups where the network sees mostly handwritten text or print.
     const sig = classMass(maps, ink, box, SIGN, weak), hand = classMass(maps, ink, box, HAND, strong), printed = classMass(maps, ink, box, PRINT, strong);

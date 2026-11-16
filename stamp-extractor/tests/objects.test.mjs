@@ -60,3 +60,14 @@ test('ink filter keeps only objects of the requested colour', () => {
   assert.equal(detectObjects(s.work, s.maps, { mode: 'blue' }).regions.length, 0);
   assert.equal(detectObjects(s.work, s.maps, { mode: 'red' }).regions.length, 1);
 });
+
+test('page orientation: horizontal text lines vs. the same page turned by 90°', async () => {
+  const { verticalLines } = await import('../lib/objects.js');
+  const width = 400, height = 300, grid = new Uint8Array(width * height);
+  for (let line = 0; line < 12; line++) for (let y = 20 + line * 22; y < 28 + line * 22; y++) for (let x = 30; x < 370; x++) if ((x + line * 3) % 7 < 5) grid[y * width + x] = 1;
+  const maps = { width, height, planes: [] };
+  assert.equal(verticalLines(maps, { grid }), false);
+  const turned = new Uint8Array(width * height), maps2 = { width: height, height: width, planes: [] };
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) turned[x * height + (height - 1 - y)] = grid[y * width + x];
+  assert.equal(verticalLines(maps2, { grid: turned }), true);
+});

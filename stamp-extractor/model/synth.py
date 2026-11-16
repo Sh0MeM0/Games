@@ -167,15 +167,56 @@ def ink_color(rng, kind):
     if kind == 'gray':
         v = rng.randint(70, 130)
         return (v, v, v)
+    if kind == 'pencil':  # graphite: grey, slightly warm or cool
+        v = rng.randint(80, 150)
+        return (v + rng.randint(-5, 5), v + rng.randint(-5, 5), v + rng.randint(-3, 10))
+    if kind == 'lightblue':  # faded or diluted stamp pad ink
+        return (rng.randint(80, 150), rng.randint(120, 180), rng.randint(195, 240))
     raise ValueError(kind)
 
 
+PEN_TOOLS = ['ballpoint', 'gel', 'fountain', 'marker', 'pencil', 'fine']
+
+
+def pen_tool(rng):
+    return rng.choices(PEN_TOOLS, weights=[55, 14, 10, 8, 7, 6])[0]
+
+
+def apply_tool(alpha, rng, tool):
+    """Stroke appearance of a writing tool on an antialiased alpha layer."""
+    if tool == 'ballpoint':
+        return pen_texture(alpha, rng, rng.uniform(.2, 1))
+    if tool == 'gel':  # saturated and even
+        return np.clip(alpha * rng.uniform(1.0, 1.3), 0, 1)
+    if tool == 'fountain':  # ink pooling: darker blobs, soft edges
+        nr = np.random.default_rng(rng.randint(0, 2**31))
+        pool = cv2.GaussianBlur(nr.random(alpha.shape, dtype=np.float32), (0, 0), rng.uniform(3, 8))
+        pool = (pool - pool.min()) / (pool.max() - pool.min() + 1e-6)
+        return np.clip(cv2.GaussianBlur(alpha, (0, 0), .5) * (.75 + .5 * pool), 0, 1)
+    if tool == 'marker':  # felt tip: thick, rounded, a little bleed
+        k = rng.choice([2, 3])
+        return np.clip(cv2.GaussianBlur(cv2.dilate(alpha, np.ones((k, k), np.uint8)), (0, 0), .7) * 1.1, 0, 1)
+    if tool == 'pencil':  # grainy graphite with gaps
+        nr = np.random.default_rng(rng.randint(0, 2**31))
+        grain = cv2.GaussianBlur(nr.random(alpha.shape, dtype=np.float32), (0, 0), .7)
+        return np.clip(alpha * (grain > rng.uniform(.35, .5)) * rng.uniform(.55, .85), 0, 1)
+    if tool == 'fine':  # thin liner
+        return cv2.erode(alpha, np.ones((2, 2), np.uint8)) if alpha.max() > 0 and rng.random() < .5 else alpha
+    return alpha
+
+
+def tool_color(rng, tool):
+    if tool == 'pencil':
+        return ink_color(rng, 'pencil')
+    return ink_color(rng, pen_kind(rng))
+
+
 def pen_kind(rng):
-    return rng.choices(['blue', 'black', 'violet', 'blue'], weights=[55, 25, 12, 8])[0]
+    return rng.choices(['blue', 'black', 'violet', 'red', 'green'], weights=[58, 25, 11, 4, 2])[0]
 
 
 def stamp_kind(rng):
-    return rng.choices(['blue', 'violet', 'red', 'black', 'green'], weights=[48, 30, 14, 6, 2])[0]
+    return rng.choices(['blue', 'violet', 'red', 'black', 'green', 'lightblue'], weights=[44, 27, 13, 6, 2, 8])[0]
 
 
 # ---------------------------------------------------------------- printed ---
@@ -366,10 +407,11 @@ def handwriting(canvas: Canvas, rng, xh, x, y, text=None, kind=None):
     patch = render_text_patch(text, path, size, stroke=rng.choice([0, 0, 1]) if size > 24 else 0)
     patch = elastic(patch, rng, .6, max(2, size / 6))
     patch = transform_patch(patch, rng, rng.uniform(-6, 6), rng.uniform(-.35, .15))
-    patch = pen_texture(patch, rng, rng.uniform(.3, 1))
+    tool = pen_tool(rng)
+    patch = apply_tool(patch, rng, tool)
     alpha = np.zeros((canvas.h, canvas.w), np.float32)
     if paste_alpha(alpha, patch, int(x), int(y - patch.shape[0] * .75)):
-        canvas.add(alpha, ink_color(rng, kind or pen_kind(rng)), HAND)
+        canvas.add(alpha, ink_color(rng, kind) if kind else tool_color(rng, tool), HAND)
         return (int(x), int(y - patch.shape[0] * .75), int(x + patch.shape[1]), int(y + patch.shape[0] * .25))
     return None
 
@@ -390,7 +432,7 @@ def smooth_path(points, samples_per_seg=16):
     return np.asarray(out)
 
 
-def draw_polyline(shape, path, width, rng, ss=3, taper=True):
+def draw_polyline(shape, path, width, rng, ss=3, taper=True, nib=None):
     """Antialiased variable-width polyline rendered at ss× supersampling."""
     h, w = shape
     img = np.zeros((h * ss, w * ss), np.uint8)
@@ -401,6 +443,9 @@ def draw_polyline(shape, path, width, rng, ss=3, taper=True):
         pressure = .75 + .25 * math.sin(phase + i * freq * 6.28)
         if taper:
             pressure *= min(1, .35 + 4 * t, .35 + 4 * (1 - t))
+        if nib is not None:  # broad nib: width depends on stroke direction
+            d = path[i + 1] - path[i]
+            pressure *= .35 + .9 * abs(math.sin(math.atan2(d[1], d[0]) - nib))
         wid = max(1, int(round(width * pressure * ss)))
         p, q = path[i] * ss, path[i + 1] * ss
         cv2.line(img, (int(p[0]), int(p[1])), (int(q[0]), int(q[1])), 255, wid, cv2.LINE_AA)
@@ -414,7 +459,9 @@ def signature(canvas: Canvas, rng, xh, cx, cy):
     pad = int(height)
     W, H = int(width + 2 * pad), int(height * 2 + 2 * pad)
     alpha = np.zeros((H, W), np.float32)
-    pen = max(1.0, xh * rng.uniform(.14, .32))
+    tool = pen_tool(rng)
+    pen = max(1.0, xh * rng.uniform(.14, .32) * {'marker': 1.8, 'fine': .7, 'gel': 1.15}.get(tool, 1.0))
+    nib = rng.uniform(0, math.pi) if tool == 'fountain' else None
     style = rng.random()
     x0, base = pad, pad + height
     if style < .22:
@@ -433,7 +480,7 @@ def signature(canvas: Canvas, rng, xh, cx, cy):
             tail_x += height * rng.uniform(.15, .45)
             pts.append((tail_x, base - height * rng.uniform(-.2, .8)))
         pts = [(px + rng.gauss(0, pen * .5), py + rng.gauss(0, pen * .5)) for px, py in pts]
-        alpha = np.maximum(alpha, draw_polyline(alpha.shape, smooth_path(pts, 6), pen, rng))
+        alpha = np.maximum(alpha, draw_polyline(alpha.shape, smooth_path(pts, 6), pen, rng, nib=nib))
         end_x = tail_x
     elif style < .55:
         # Script font word with an exaggerated first capital.
@@ -464,7 +511,7 @@ def signature(canvas: Canvas, rng, xh, cx, cy):
             base += rng.uniform(-.06, .06) * height
         pts = [(px + rng.gauss(0, pen), py + rng.gauss(0, pen)) for px, py in pts]
         path = smooth_path(pts, 10)
-        alpha = np.maximum(alpha, draw_polyline(alpha.shape, path, pen, rng))
+        alpha = np.maximum(alpha, draw_polyline(alpha.shape, path, pen, rng, nib=nib))
         end_x = x
     # Flourish: underline swoosh, crossing stroke or big loop.
     for _ in range(rng.choice([0, 1, 1, 2])):
@@ -482,16 +529,15 @@ def signature(canvas: Canvas, rng, xh, cx, cy):
             pts = [(end_x, base), (end_x + height * .5, base - height * .6), (end_x - width * .5, base + height * .3),
                    (end_x - width * .9, base - height * .1)]
         pts = [(px + rng.gauss(0, pen * 2), py + rng.gauss(0, pen * 2)) for px, py in pts]
-        alpha = np.maximum(alpha, draw_polyline(alpha.shape, smooth_path(pts, 20), pen * rng.uniform(.7, 1.1), rng))
+        alpha = np.maximum(alpha, draw_polyline(alpha.shape, smooth_path(pts, 20), pen * rng.uniform(.7, 1.1), rng, nib=nib))
     # Initials before the signature body.
-    alpha = transform_patch(alpha, rng, rng.uniform(-14, 14), rng.uniform(-.25, .25))
-    alpha = pen_texture(alpha, rng, rng.uniform(.2, 1))
-    if rng.random() < .15:  # gel pen / marker: heavier strokes
-        alpha = cv2.dilate(alpha, np.ones((2, 2), np.uint8))
+    angle = rng.uniform(-15, 15) if rng.random() < .7 else rng.uniform(-40, 40)
+    alpha = transform_patch(alpha, rng, angle, rng.uniform(-.25, .25))
+    alpha = apply_tool(alpha, rng, tool)
     full = np.zeros((canvas.h, canvas.w), np.float32)
     x, y = int(cx - alpha.shape[1] / 2), int(cy - alpha.shape[0] / 2)
     if paste_alpha(full, alpha, x, y):
-        canvas.add(full, ink_color(rng, pen_kind(rng)), SIGN)
+        canvas.add(full, tool_color(rng, tool), SIGN)
         return (x, y, x + alpha.shape[1], y + alpha.shape[0])
     return None
 
@@ -674,6 +720,16 @@ def stamp(canvas: Canvas, rng, xh, cx, cy):
         alpha = np.clip(alpha * rng.uniform(.8, 1.0), 0, 1)
     else:
         alpha = stamp_texture(alpha, rng)
+    r = rng.random()
+    if r < .12:  # over-inked: thick, bleeding strokes
+        alpha = np.clip(cv2.GaussianBlur(cv2.dilate(alpha, np.ones((2, 2), np.uint8)), (0, 0), rng.uniform(.8, 1.5)) * 1.2, 0, 1)
+    elif r < .27:  # faint, under-inked
+        alpha = alpha * rng.uniform(.25, .5)
+    elif r < .35:  # smudged: short motion blur
+        k = np.zeros((9, 9), np.float32); length = rng.randint(3, 9)
+        cv2.line(k, (4 - length // 2, 4), (4 + length // 2, 4), 1.0, 1)
+        k = cv2.warpAffine(k, cv2.getRotationMatrix2D((4, 4), rng.uniform(0, 180), 1), (9, 9)); k /= max(k.sum(), 1e-6)
+        alpha = cv2.filter2D(alpha, -1, k)
     if rng.random() < .12:  # partial impression: one side missing
         h, w = alpha.shape
         gx, gy = np.meshgrid(np.arange(w), np.arange(h))
@@ -736,12 +792,44 @@ def foreign_objects(img, rng):
     return img
 
 
+def rotate_page(img, labels, rng, info):
+    """Tilted scans and photographs, and pages turned by 90/180/270 degrees."""
+    h, w = labels.shape
+    r = rng.random()
+    if r < .30:
+        angle = max(-25, min(25, rng.gauss(0, 9)))
+    elif r < .45:
+        angle = rng.choice([90, 180, 270]) + rng.uniform(-4, 4)
+    else:
+        return img, labels
+    m = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)
+    if rng.random() < .8:
+        fill = tuple(float(v) for v in np.percentile(img.reshape(-1, 3), 90, axis=0))
+    else:  # scanner lid or table around the page
+        v = rng.uniform(20, 90); fill = (v, v, v)
+    img = cv2.warpAffine(img, m, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=fill)
+    labels = cv2.warpAffine(labels, m, (w, h), flags=cv2.INTER_NEAREST, borderValue=0)
+    info['rotation'] = np.vstack([m, [0, 0, 1]])
+    return img, labels
+
+
+def page_curl(img, labels, rng):
+    """Photographed page that is not flat: smooth vertical displacement."""
+    h, w = labels.shape
+    amp = rng.uniform(.005, .03) * h; phase = rng.uniform(0, 6.28); period = rng.uniform(.8, 2.0) * w
+    gx, gy = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
+    my = (gy + amp * np.sin(gx / period * 2 * math.pi + phase)).astype(np.float32)
+    img = cv2.remap(img, gx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    labels = cv2.remap(labels, gx, my, cv2.INTER_NEAREST, borderValue=0)
+    return img, labels
+
+
 def degrade(img, labels, rng, info=None):
     h, w = labels.shape
     mode = rng.random()
     nr = np.random.default_rng(rng.randint(0, 2**31))
     if mode < .3:  # phone photo: perspective, light falloff, colour cast
-        d = min(h, w) * rng.uniform(.0, .08)
+        d = min(h, w) * rng.uniform(.0, .15)
         src = np.float32([[0, 0], [w, 0], [w, h], [0, h]])
         dst = src + np.float32([[rng.uniform(-d, d), rng.uniform(-d, d)] for _ in range(4)])
         m = cv2.getPerspectiveTransform(src, dst)
@@ -749,6 +837,8 @@ def degrade(img, labels, rng, info=None):
             info['homography'] = m
         img = cv2.warpPerspective(img, m, (w, h), borderMode=cv2.BORDER_REPLICATE)
         labels = cv2.warpPerspective(labels, m, (w, h), flags=cv2.INTER_NEAREST, borderValue=0)
+        if rng.random() < .35:
+            img, labels = page_curl(img, labels, rng)
         gx, gy = np.meshgrid(np.linspace(-1, 1, w), np.linspace(-1, 1, h))
         ang = rng.uniform(0, 6.28)
         light = 1 - rng.uniform(.0, .45) * ((gx * math.cos(ang) + gy * math.sin(ang)) * .5 + .5)
@@ -837,11 +927,15 @@ def document(seed: int, size=(640, 640), objects=None):
     if rng.random() < .25:
         img = foreign_objects(img, rng)
     info = {}
+    img, labels = rotate_page(img, labels, rng, info)
     out = degrade(img, labels, rng, info)
     if objects is not None:
         m = info.get('homography')
+        rot = info.get('rotation')
         for kind, (x0, y0, x1, y1) in found:
             pts = np.float32([[x0, y0], [x1, y0], [x1, y1], [x0, y1]])
+            if rot is not None:
+                pts = cv2.perspectiveTransform(pts[None], rot)[0]
             if m is not None:
                 pts = cv2.perspectiveTransform(pts[None], m)[0]
             bx0, by0 = pts.min(0); bx1, by1 = pts.max(0)
