@@ -42,6 +42,8 @@ public class AppTest {
 
     @Before
     public void setUp() {
+        Music.sDisabledForTests = true;
+        Music.resetForTests();
         Db.closeInstance();
         db = Db.get(RuntimeEnvironment.application);
     }

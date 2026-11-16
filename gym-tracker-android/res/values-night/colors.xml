@@ -18,4 +18,10 @@
     <color name="equal">#8E97A8</color>
     <color name="mixed">#FFB23F</color>
     <color name="fresh">#6EA0FF</color>
+    <color name="pict_body">#8C9BFF</color>
+    <color name="pict_ghost">#558C9BFF</color>
+    <color name="pict_equip">#5C6577</color>
+    <color name="pict_weight">#C2C9D6</color>
+    <color name="pict_arrow">#3CCB6C</color>
+    <color name="pict_bg">#232842</color>
 </resources>

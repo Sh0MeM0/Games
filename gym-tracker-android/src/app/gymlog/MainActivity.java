@@ -1,6 +1,5 @@
 package app.gymlog;
 
-import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.DialogInterface;
@@ -31,8 +30,8 @@ import java.time.YearMonth;
 import java.util.List;
 import java.util.Set;
 
-/** Month calendar. Tap a date to open that day's workout. */
-public class MainActivity extends Activity {
+/** Main screen with two tabs: month calendar (tap a date to open that day) and progress by month. */
+public class MainActivity extends BaseActivity {
     static final int REQ_EXPORT = 11;
     static final int REQ_IMPORT = 12;
     private static final int MENU_EXERCISES = 1;
@@ -44,6 +43,13 @@ public class MainActivity extends Activity {
     private TextView monthStats;
     private LinearLayout grid;
     private LinearLayout recentBox;
+    /** 0 = calendar, 1 = progress. */
+    int tab;
+    private TextView tabCalendar;
+    private TextView tabProgress;
+    private View calendarView;
+    private View progressView;
+    LinearLayout progressBox;
 
     @Override
     protected void onCreate(Bundle saved) {
@@ -52,6 +58,7 @@ public class MainActivity extends Activity {
         if (saved != null && saved.getString("month") != null) {
             month = YearMonth.parse(saved.getString("month"));
         }
+        if (saved != null) tab = saved.getInt("tab", 0);
         setTitle(R.string.app_name);
         buildUi();
     }
@@ -66,6 +73,7 @@ public class MainActivity extends Activity {
     protected void onSaveInstanceState(Bundle out) {
         super.onSaveInstanceState(out);
         out.putString("month", month.toString());
+        out.putInt("tab", tab);
     }
 
     private void buildUi() {
@@ -151,11 +159,64 @@ public class MainActivity extends Activity {
 
         recentBox = Ui.vertical(this);
         root.addView(recentBox, Ui.matchWrap());
+        calendarView = scroll;
 
-        setContentView(scroll);
+        ScrollView pscroll = new ScrollView(this);
+        progressBox = Ui.vertical(this);
+        progressBox.setPadding(p, p, p, Ui.dp(this, 24));
+        pscroll.addView(progressBox, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        progressView = pscroll;
+
+        LinearLayout screen = Ui.vertical(this);
+        LinearLayout tabs = Ui.horizontal(this);
+        tabs.setBackground(Ui.rounded(Ui.color(this, R.color.accent_soft), Ui.dp(this, 14)));
+        int tp = Ui.dp(this, 4);
+        tabs.setPadding(tp, tp, tp, tp);
+        tabCalendar = tabButton("Календарь", 0);
+        tabProgress = tabButton("Прогресс", 1);
+        tabs.addView(tabCalendar, Ui.lpWeight(1));
+        tabs.addView(tabProgress, Ui.lpWeight(1));
+        LinearLayout.LayoutParams tlp2 = Ui.matchWrap();
+        tlp2.setMargins(p, Ui.dp(this, 10), p, 0);
+        screen.addView(tabs, tlp2);
+        FrameLayout body = new FrameLayout(this);
+        body.addView(calendarView);
+        body.addView(progressView);
+        screen.addView(body, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        setContentView(screen);
+        showTab(tab);
+    }
+
+    private TextView tabButton(String label, final int index) {
+        TextView t = Ui.text(this, label, 15, R.color.accent, true);
+        t.setGravity(Gravity.CENTER);
+        t.setMinHeight(Ui.dp(this, 40));
+        t.setTag("tab:" + index);
+        t.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                showTab(index);
+            }
+        });
+        return t;
+    }
+
+    void showTab(int index) {
+        tab = index;
+        calendarView.setVisibility(index == 0 ? View.VISIBLE : View.GONE);
+        progressView.setVisibility(index == 1 ? View.VISIBLE : View.GONE);
+        TextView[] all = {tabCalendar, tabProgress};
+        for (int i = 0; i < all.length; i++) {
+            boolean sel = i == index;
+            all[i].setBackground(sel ? Ui.rounded(Ui.color(this, R.color.accent), Ui.dp(this, 11)) : null);
+            all[i].setTextColor(Ui.color(this, sel ? R.color.on_accent : R.color.accent));
+        }
+        if (index == 1) ProgressScreen.fill(this, progressBox);
     }
 
     void refresh() {
+        if (tab == 1) ProgressScreen.fill(this, progressBox);
         monthTitle.setText(Fmt.monthTitle(month.getYear(), month.getMonthValue()));
         LocalDate first = month.atDay(1);
         LocalDate last = month.atEndOfMonth();
@@ -259,6 +320,7 @@ public class MainActivity extends Activity {
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
+        super.onCreateOptionsMenu(menu);
         menu.add(0, MENU_EXERCISES, 0, "Мои тренажёры");
         menu.add(0, MENU_EXPORT, 1, "Сохранить резервную копию");
         menu.add(0, MENU_IMPORT, 2, "Восстановить из копии");

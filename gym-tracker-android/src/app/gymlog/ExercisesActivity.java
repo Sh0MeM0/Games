@@ -1,7 +1,6 @@
 package app.gymlog;
 
 import android.app.ActionBar;
-import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.os.Bundle;
@@ -20,7 +19,7 @@ import android.widget.Toast;
 import java.util.List;
 
 /** List of saved machines: history, rename, delete. */
-public class ExercisesActivity extends Activity {
+public class ExercisesActivity extends BaseActivity {
     private LinearLayout list;
 
     @Override
@@ -66,14 +65,28 @@ public class ExercisesActivity extends Activity {
         }
         for (final Model.Exercise ex : all) {
             LinearLayout item = Ui.card(this);
-            item.addView(Ui.text(this, ex.name, 17, R.color.text, true), Ui.matchWrap());
+            LinearLayout row = Ui.horizontal(this);
+            FrameLayout thumb = Ui.thumbnail(this, ex.catalog, 48);
+            thumb.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    pickPicture(ex);
+                }
+            });
+            row.addView(thumb, Ui.lp(Ui.dp(this, 48), Ui.dp(this, 48)));
+            LinearLayout texts = Ui.vertical(this);
+            LinearLayout.LayoutParams tl = Ui.lpWeight(1);
+            tl.leftMargin = Ui.dp(this, 12);
+            row.addView(texts, tl);
+            item.addView(row, Ui.matchWrap());
+            texts.addView(Ui.text(this, ex.name, 17, R.color.text, true), Ui.matchWrap());
             String info = ex.lastDay == null
                     ? "Ещё не записан ни в один день"
                     : Fmt.workouts(ex.sessions) + " · последняя: " + Fmt.dateLong(ex.lastDay);
             TextView sub = Ui.text(this, info, 14, R.color.text_secondary, false);
             LinearLayout.LayoutParams sl = Ui.matchWrap();
             sl.topMargin = Ui.dp(this, 3);
-            item.addView(sub, sl);
+            texts.addView(sub, sl);
             item.setForeground(Ui.ripple(this, null, Ui.rounded(0xFFFFFFFF, Ui.dp(this, 16))));
             item.setClickable(true);
             item.setOnClickListener(new View.OnClickListener() {
@@ -91,16 +104,28 @@ public class ExercisesActivity extends Activity {
     private void showOptions(final Model.Exercise ex) {
         new AlertDialog.Builder(this)
                 .setTitle(ex.name)
-                .setItems(new String[]{"История", "Переименовать", "Удалить"},
+                .setItems(new String[]{"История", "Описание и техника", "Сменить картинку", "Переименовать",
+                                "Удалить"},
                         new DialogInterface.OnClickListener() {
                             @Override
                             public void onClick(DialogInterface d, int which) {
                                 if (which == 0) Ui.showHistory(ExercisesActivity.this, ex.id, ex.name, null);
-                                else if (which == 1) rename(ex);
+                                else if (which == 1) Ui.openInfo(ExercisesActivity.this, ex.id);
+                                else if (which == 2) pickPicture(ex);
+                                else if (which == 3) rename(ex);
                                 else confirmDelete(ex);
                             }
                         })
                 .show();
+    }
+
+    private void pickPicture(Model.Exercise ex) {
+        Ui.showPicker(this, ex.id, new Runnable() {
+            @Override
+            public void run() {
+                reload();
+            }
+        });
     }
 
     private void rename(final Model.Exercise ex) {

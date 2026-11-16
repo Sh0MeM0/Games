@@ -19,4 +19,10 @@
     <color name="mixed">#E08A00</color>
     <color name="fresh">#3D7BFE</color>
     <color name="icon_bg">#3D5AFE</color>
+    <color name="pict_body">#3D5AFE</color>
+    <color name="pict_ghost">#4D3D5AFE</color>
+    <color name="pict_equip">#A3ACBB</color>
+    <color name="pict_weight">#4A5568</color>
+    <color name="pict_arrow">#1E9E4A</color>
+    <color name="pict_bg">#EEF1FF</color>
 </resources>

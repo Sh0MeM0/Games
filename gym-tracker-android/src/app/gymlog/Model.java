@@ -15,6 +15,10 @@ public final class Model {
         public int sessions;
         /** ISO date (yyyy-MM-dd) of the latest day with this exercise, or null. */
         public String lastDay;
+        /** Key of the matching {@link Catalog} item (picture + technique), or null. */
+        public String catalog;
+        /** True if the user chose the picture by hand (then it is not re-matched on rename). */
+        public boolean catalogManual;
     }
 
     /** One set ("подход"): repetitions and weight. Empty fields are null. */
@@ -43,6 +47,7 @@ public final class Model {
         public String day;
         public long exerciseId;
         public String name;
+        public String catalog;
         public int pos;
         public final List<WSet> sets = new ArrayList<>();
     }
@@ -51,6 +56,8 @@ public final class Model {
     public static final class Session {
         public String day;
         public long entryId;
+        public long exerciseId;
+        public String name;
         public final List<WSet> sets = new ArrayList<>();
     }
 }

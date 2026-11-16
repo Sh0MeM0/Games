@@ -15,6 +15,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -279,5 +280,185 @@ final class Ui {
 
     static void openDay(Activity a, String day) {
         a.startActivity(new Intent(a, DayActivity.class).putExtra(DayActivity.EXTRA_DAY, day));
+    }
+
+    // ---------------------------------------------------------------- pictures & reference
+
+    /** Drawable id of the pictogram for a catalog key, or 0. */
+    static int pictogram(Context c, String key) {
+        if (key == null || Catalog.get(key) == null) return 0;
+        return c.getResources().getIdentifier("ex_" + key, "drawable", c.getPackageName());
+    }
+
+    /** Rounded square with the pictogram (or an "add picture" icon if there is none). */
+    static FrameLayout thumbnail(Context c, String key, int sizeDp) {
+        FrameLayout box = new FrameLayout(c);
+        box.setBackground(rounded(color(c, R.color.pict_bg), dp(c, 12)));
+        ImageView img = new ImageView(c);
+        int res = pictogram(c, key);
+        int pad;
+        if (res != 0) {
+            img.setImageResource(res);
+            pad = dp(c, 2);
+            box.setContentDescription("Картинка тренажёра. Нажмите, чтобы выбрать другую");
+        } else {
+            img.setImageResource(R.drawable.ic_photo_add);
+            img.setImageTintList(ColorStateList.valueOf(color(c, R.color.accent)));
+            pad = dp(c, sizeDp / 4f);
+            box.setContentDescription("Выбрать картинку тренажёра");
+        }
+        img.setPadding(pad, pad, pad, pad);
+        box.addView(img, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        box.setForeground(ripple(c, null, rounded(0xFFFFFFFF, dp(c, 12))));
+        box.setClickable(true);
+        box.setTag("thumb:" + key);
+        return box;
+    }
+
+    static void openInfo(Activity a, long exerciseId) {
+        a.startActivity(new Intent(a, ExerciseInfoActivity.class)
+                .putExtra(ExerciseInfoActivity.EXTRA_EXERCISE, exerciseId));
+    }
+
+    /**
+     * Grid of all catalog pictures, best matches for the name first. Picking one saves it
+     * for the exercise; then {@code onDone} runs.
+     */
+    static AlertDialog showPicker(final Activity a, final long exerciseId, final Runnable onDone) {
+        final Db db = Db.get(a);
+        final Model.Exercise ex = db.exercise(exerciseId);
+        if (ex == null) return null;
+        final List<Catalog.Item> shown = new java.util.ArrayList<>();
+        final List<Catalog.Item> ranked = new java.util.ArrayList<>();
+        for (Matcher.Match m : Matcher.rank(ex.name)) ranked.add(m.item);
+
+        LinearLayout box = vertical(a);
+        int p = dp(a, 16);
+        box.setPadding(p, dp(a, 4), p, 0);
+        final android.widget.EditText search = new android.widget.EditText(a);
+        search.setTag("pickerSearch");
+        search.setHint("Поиск: например, «жим» или «тяга»");
+        search.setSingleLine(true);
+        box.addView(search, matchWrap());
+
+        final android.widget.GridView grid = new android.widget.GridView(a);
+        grid.setTag("pickerGrid");
+        grid.setNumColumns(3);
+        grid.setVerticalSpacing(dp(a, 6));
+        grid.setHorizontalSpacing(dp(a, 6));
+        LinearLayout.LayoutParams glp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(a, 400));
+        glp.topMargin = dp(a, 8);
+        box.addView(grid, glp);
+
+        final android.widget.BaseAdapter adapter = new android.widget.BaseAdapter() {
+            @Override
+            public int getCount() {
+                return shown.size() + 1;
+            }
+
+            @Override
+            public Object getItem(int i) {
+                return i == 0 ? null : shown.get(i - 1);
+            }
+
+            @Override
+            public long getItemId(int i) {
+                return i;
+            }
+
+            @Override
+            public View getView(int i, View convert, ViewGroup parent) {
+                Catalog.Item it = (Catalog.Item) getItem(i);
+                LinearLayout cell = vertical(a);
+                cell.setGravity(Gravity.CENTER_HORIZONTAL);
+                int cp = dp(a, 4);
+                cell.setPadding(cp, cp, cp, cp);
+                boolean current = it == null ? ex.catalog == null : it.key.equals(ex.catalog);
+                cell.setBackground(current
+                        ? rounded(color(a, R.color.accent_soft), dp(a, 12), color(a, R.color.accent), dp(a, 2))
+                        : rounded(0x00000000, dp(a, 12)));
+                FrameLayout th = thumbnail(a, it == null ? null : it.key, 76);
+                th.setClickable(false);
+                th.setForeground(null);
+                if (it == null) {
+                    ((ImageView) th.getChildAt(0)).setImageResource(R.drawable.ic_close);
+                    ((ImageView) th.getChildAt(0)).setImageTintList(
+                            ColorStateList.valueOf(color(a, R.color.text_secondary)));
+                }
+                cell.addView(th, lp(dp(a, 76), dp(a, 76)));
+                TextView t = text(a, it == null ? "Без картинки" : it.title, 12, R.color.text, false);
+                t.setGravity(Gravity.CENTER);
+                t.setMaxLines(3);
+                t.setEllipsize(android.text.TextUtils.TruncateAt.END);
+                LinearLayout.LayoutParams tl = matchWrap();
+                tl.topMargin = dp(a, 3);
+                cell.addView(t, tl);
+                return cell;
+            }
+        };
+        grid.setAdapter(adapter);
+
+        final Runnable filter = new Runnable() {
+            @Override
+            public void run() {
+                String q = search.getText().toString().trim();
+                shown.clear();
+                if (q.isEmpty()) {
+                    shown.addAll(ranked);
+                } else {
+                    String nq = Fmt.normName(q);
+                    for (Matcher.Match m : Matcher.rank(q)) {
+                        if (m.score >= 0.3 || Fmt.normName(m.item.title).contains(nq)) shown.add(m.item);
+                    }
+                }
+                adapter.notifyDataSetChanged();
+            }
+        };
+        filter.run();
+        search.addTextChangedListener(new android.text.TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int st, int c, int af) {}
+            @Override public void onTextChanged(CharSequence s, int st, int b, int c) {}
+            @Override
+            public void afterTextChanged(android.text.Editable s) {
+                filter.run();
+            }
+        });
+
+        final AlertDialog dialog = new AlertDialog.Builder(a)
+                .setTitle("Картинка для «" + ex.name + "»")
+                .setView(box)
+                .setNegativeButton("Отмена", null)
+                .create();
+        grid.setOnItemClickListener(new android.widget.AdapterView.OnItemClickListener() {
+            @Override
+            public void onItemClick(android.widget.AdapterView<?> parent, View view, int pos, long id) {
+                Catalog.Item it = (Catalog.Item) adapter.getItem(pos);
+                db.setCatalog(exerciseId, it == null ? null : it.key);
+                dialog.dismiss();
+                if (onDone != null) onDone.run();
+            }
+        });
+        dialog.show();
+        return dialog;
+    }
+
+    /** Horizontal bar split into green / red / grey parts. */
+    static LinearLayout ratioBar(Context c, Progress.Counts counts, int heightDp) {
+        LinearLayout bar = horizontal(c);
+        GradientDrawable bg = rounded(color(c, R.color.divider), dp(c, heightDp / 2f));
+        bar.setBackground(bg);
+        bar.setClipToOutline(true);
+        int[][] parts = {{counts.up, R.color.up}, {counts.down, R.color.down}, {counts.equal, R.color.equal}};
+        for (int[] part : parts) {
+            if (part[0] <= 0) continue;
+            View v = new View(c);
+            v.setBackgroundColor(color(c, part[1]));
+            bar.addView(v, new LinearLayout.LayoutParams(0, dp(c, heightDp), part[0]));
+        }
+        if (counts.total() == 0) {
+            bar.addView(new View(c), new LinearLayout.LayoutParams(0, dp(c, heightDp), 1));
+        }
+        return bar;
     }
 }

@@ -41,7 +41,7 @@ import java.util.List;
  * One training day: list of machines, and under each one its sets
  * (repetitions + weight) with a comparison to the previous time.
  */
-public class DayActivity extends Activity {
+public class DayActivity extends BaseActivity {
     public static final String EXTRA_DAY = "day";
     private static final int MENU_PREV = 1;
     private static final int MENU_NEXT = 2;
@@ -136,6 +136,7 @@ public class DayActivity extends Activity {
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
+        super.onCreateOptionsMenu(menu);
         MenuItem prev = menu.add(0, MENU_PREV, 0, "Предыдущий день");
         prev.setIcon(tinted(R.drawable.ic_chevron_left));
         prev.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
@@ -198,8 +199,24 @@ public class DayActivity extends Activity {
 
         final ListView lv = new ListView(this);
         lv.setTag("savedList");
-        final ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
-                android.R.layout.simple_list_item_1, names);
+        final ArrayAdapter<String> adapter = new ArrayAdapter<String>(this,
+                android.R.layout.simple_list_item_1, names) {
+            @Override
+            public View getView(int position, View convert, ViewGroup parent) {
+                LinearLayout row = Ui.horizontal(DayActivity.this);
+                int rp = Ui.dp(DayActivity.this, 6);
+                row.setPadding(0, rp, 0, rp);
+                FrameLayout th = Ui.thumbnail(DayActivity.this, shown.get(position).catalog, 40);
+                th.setClickable(false);
+                th.setForeground(null);
+                row.addView(th, Ui.lp(Ui.dp(DayActivity.this, 40), Ui.dp(DayActivity.this, 40)));
+                TextView t = Ui.text(DayActivity.this, shown.get(position).name, 16, R.color.text, false);
+                LinearLayout.LayoutParams tl = Ui.lpWeight(1);
+                tl.leftMargin = Ui.dp(DayActivity.this, 12);
+                row.addView(t, tl);
+                return row;
+            }
+        };
         lv.setAdapter(adapter);
         if (!saved.isEmpty()) {
             TextView label = Ui.text(this, "или выберите из сохранённых:", 14,
@@ -333,6 +350,18 @@ public class DayActivity extends Activity {
             view.setTag("card:" + e.name);
 
             LinearLayout header = Ui.horizontal(a);
+            // Picture from the reference: tap to pick another one.
+            FrameLayout thumb = Ui.thumbnail(a, e.catalog, 52);
+            thumb.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    pickPicture();
+                }
+            });
+            LinearLayout.LayoutParams thl = Ui.lp(Ui.dp(a, 52), Ui.dp(a, 52));
+            thl.rightMargin = Ui.dp(a, 10);
+            header.addView(thumb, thl);
+            LinearLayout titles = Ui.vertical(a);
             TextView name = Ui.text(a, e.name, 19, R.color.text, true);
             name.setOnClickListener(new View.OnClickListener() {
                 @Override
@@ -340,7 +369,20 @@ public class DayActivity extends Activity {
                     focusFirstEmpty();
                 }
             });
-            header.addView(name, Ui.lpWeight(1));
+            titles.addView(name, Ui.matchWrap());
+            if (e.catalog != null) {
+                TextView info = Ui.text(a, "Техника и описание ›", 13, R.color.accent, false);
+                info.setTag("infoLink");
+                info.setPadding(0, Ui.dp(a, 2), 0, Ui.dp(a, 2));
+                info.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        Ui.openInfo(DayActivity.this, entry.exerciseId);
+                    }
+                });
+                titles.addView(info, Ui.matchWrap());
+            }
+            header.addView(titles, Ui.lpWeight(1));
             headerIndicator = new FrameLayout(a);
             headerIndicator.setTag("headerIndicator");
             header.addView(headerIndicator, Ui.lp(ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -440,19 +482,31 @@ public class DayActivity extends Activity {
         private void showMenu(View anchor) {
             PopupMenu pm = new PopupMenu(DayActivity.this, anchor);
             pm.getMenu().add(0, 1, 0, "История тренажёра");
-            pm.getMenu().add(0, 2, 1, "Убрать из этого дня");
+            pm.getMenu().add(0, 3, 1, "Описание и техника");
+            pm.getMenu().add(0, 4, 2, "Сменить картинку");
+            pm.getMenu().add(0, 2, 3, "Убрать из этого дня");
             pm.setOnMenuItemClickListener(new PopupMenu.OnMenuItemClickListener() {
                 @Override
                 public boolean onMenuItemClick(MenuItem item) {
-                    if (item.getItemId() == 1) {
-                        Ui.showHistory(DayActivity.this, entry.exerciseId, entry.name, day);
-                    } else {
-                        confirmRemove();
+                    switch (item.getItemId()) {
+                        case 1: Ui.showHistory(DayActivity.this, entry.exerciseId, entry.name, day); break;
+                        case 3: Ui.openInfo(DayActivity.this, entry.exerciseId); break;
+                        case 4: pickPicture(); break;
+                        default: confirmRemove(); break;
                     }
                     return true;
                 }
             });
             pm.show();
+        }
+
+        void pickPicture() {
+            Ui.showPicker(DayActivity.this, entry.exerciseId, new Runnable() {
+                @Override
+                public void run() {
+                    reload();
+                }
+            });
         }
 
         private void confirmRemove() {
