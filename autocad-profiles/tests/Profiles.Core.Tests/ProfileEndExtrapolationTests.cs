@@ -71,7 +71,7 @@ public sealed class ProfileEndExtrapolationTests
         var plan = ProfileEngine.Build(project);
         foreach (string layer in new[] { "PROF_EXISTING", "PROF_PROJECT" })
         {
-            var line = Assert.Single(plan.Entities.OfType<DrawPolyline>().Where(entity => entity.Layer == layer));
+            var line = Assert.Single(plan.Entities.OfType<DrawPolyline>(), entity => entity.Layer == layer);
             Assert.Equal(3, line.Points.Count);
             Assert.Equal(50, line.Points.Last().X - line.Points.First().X, 8);
         }
