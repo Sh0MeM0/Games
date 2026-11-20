@@ -19,6 +19,8 @@ public final class Model {
         public String catalog;
         /** True if the user chose the picture by hand (then it is not re-matched on rename). */
         public boolean catalogManual;
+        /** Null = decided by the reference, otherwise Db.WEIGHT_NORMAL / Db.WEIGHT_EXTRA. */
+        public Integer weightMode;
     }
 
     /** One set ("подход"): repetitions and weight. Empty fields are null. */
@@ -48,6 +50,8 @@ public final class Model {
         public long exerciseId;
         public String name;
         public String catalog;
+        /** Own body weight exercise: the weight column is the additional weight. */
+        public boolean extra;
         public int pos;
         public final List<WSet> sets = new ArrayList<>();
     }
@@ -58,6 +62,7 @@ public final class Model {
         public long entryId;
         public long exerciseId;
         public String name;
+        public boolean extra;
         public final List<WSet> sets = new ArrayList<>();
     }
 }

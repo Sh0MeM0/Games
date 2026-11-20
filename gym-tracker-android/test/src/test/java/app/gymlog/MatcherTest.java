@@ -2,6 +2,7 @@ package app.gymlog;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
 
@@ -11,12 +12,12 @@ public class MatcherTest {
             {"Жим лёжа", "bench_press"},
             {"жим лежа", "bench_press"},
             {"Жим штанги лёжа", "bench_press"},
-            {"жим лёжа в смите", "bench_press"},
+            {"жим лёжа в смите", "smith_bench"},
             {"Bench press", "bench_press"},
             {"Жим гантелей лёжа", "dumbbell_press"},
             {"жим гантелей", "dumbbell_press"},
             {"Жим на наклонной скамье", "incline_press"},
-            {"жим гантелей на наклонной", "incline_press"},
+            {"жим гантелей на наклонной", "incline_db_press"},
             {"Разводка гантелей", "dumbbell_fly"},
             {"Бабочка", "pec_deck"},
             {"Пек-дек", "pec_deck"},
@@ -34,7 +35,7 @@ public class MatcherTest {
             {"Тяга горизонтального блока", "seated_row"},
             {"тяга нижнего блока", "seated_row"},
             {"Тяга штанги в наклоне", "bent_over_row"},
-            {"Тяга Т-грифа", "bent_over_row"},
+            {"Тяга Т-грифа", "tbar_row"},
             {"Тяга гантели одной рукой", "one_arm_row"},
             {"Подтягивания", "pullups"},
             {"Турник", "pullups"},
@@ -47,7 +48,7 @@ public class MatcherTest {
             {"Приседания", "squat"},
             {"Присед", "squat"},
             {"Приседания со штангой", "squat"},
-            {"приседания в смите", "squat"},
+            {"приседания в смите", "smith_squat"},
             {"Жим ногами", "leg_press"},
             {"Платформа", "leg_press"},
             {"Разгибание ног", "leg_extension"},
@@ -55,10 +56,9 @@ public class MatcherTest {
             {"Сгибание ног", "leg_curl"},
             {"сгибание ног лёжа", "leg_curl"},
             {"Выпады", "lunges"},
-            {"Болгарские выпады", "lunges"},
+            {"Болгарские выпады", "bulgarian_split_squat"},
             {"Гакк", "hack_squat"},
             {"Гакк-приседания", "hack_squat"},
-            {"Икры", "calf_raise"},
             {"Подъём на носки", "calf_raise"},
             {"Сведение ног", "hip_adduction"},
             {"Разведение ног", "hip_abduction"},
@@ -67,7 +67,7 @@ public class MatcherTest {
             {"Армейский жим", "overhead_press"},
             {"Жим штанги стоя", "overhead_press"},
             {"Жим гантелей сидя", "db_shoulder_press"},
-            {"Жим Арнольда", "db_shoulder_press"},
+            {"Жим Арнольда", "arnold_press"},
             {"Махи в стороны", "lateral_raise"},
             {"Махи гантелями", "lateral_raise"},
             {"Тяга к подбородку", "upright_row"},
@@ -76,18 +76,55 @@ public class MatcherTest {
             {"Шраги", "shrugs"},
             {"Бицепс со штангой", "barbell_curl"},
             {"Подъём штанги на бицепс", "barbell_curl"},
-            {"Молотки", "dumbbell_curl"},
+            {"Молотки", "hammer_curl"},
             {"Бицепс с гантелями", "dumbbell_curl"},
             {"Французский жим", "french_press"},
             {"Трицепс на блоке", "triceps_pushdown"},
             {"Разгибание рук на блоке", "triceps_pushdown"},
-            {"Пресс", "crunches"},
             {"Скручивания", "crunches"},
             {"Подъём ног в висе", "hanging_leg_raise"},
             {"Планка", "plank"},
             {"Беговая дорожка", "treadmill"},
             {"Велотренажёр", "exercise_bike"},
             {"Гребной тренажёр", "rowing_machine"},
+            // variants added in 1.2
+            {"Шраги со штангой", "barbell_shrugs"},
+            {"Шраги с гантелями", "shrugs"},
+            {"Шраги в смите", "smith_shrugs"},
+            {"Тяга нижнего блока одной рукой", "one_arm_cable_row"},
+            {"Тяга нижнего блока широким хватом", "wide_seated_row"},
+            {"Рычажная тяга", "machine_row"},
+            {"Тяга с упором в грудь", "chest_supported_row"},
+            {"Тяга верхнего блока узким хватом", "close_grip_pulldown"},
+            {"Тяга верхнего блока обратным хватом", "reverse_grip_pulldown"},
+            {"Пуловер в блоке", "straight_arm_pulldown"},
+            {"Пуловер", "db_pullover"},
+            {"Разгибание на блоке обратным хватом", "reverse_pushdown"},
+            {"Трицепс канат", "rope_pushdown"},
+            {"Разгибание из-за головы на блоке", "overhead_cable_ext"},
+            {"Французский жим с гантелей", "db_overhead_ext"},
+            {"Кикбэк", "db_kickback"},
+            {"Обратные отжимания", "bench_dips"},
+            {"Трицепс в тренажёре", "triceps_machine"},
+            {"Жим узким хватом", "close_grip_bench"},
+            {"Скамья Скотта", "preacher_curl"},
+            {"Бицепс на блоке", "cable_curl"},
+            {"Концентрированные сгибания", "concentration_curl"},
+            {"Махи в сторону на блоке", "cable_lateral_raise"},
+            {"Разведение в наклоне", "bent_over_lateral"},
+            {"Тяга к лицу", "face_pull"},
+            {"Жим на плечи в тренажёре", "machine_shoulder_press"},
+            {"Подъём ног лёжа", "lying_leg_raise"},
+            {"Скручивания на блоке", "cable_crunch"},
+            {"Фронтальный присед", "front_squat"},
+            {"Гоблет", "goblet_squat"},
+            {"Сгибание ног сидя", "seated_leg_curl"},
+            {"Подъём на носки сидя", "seated_calf_raise"},
+            {"Отведение ноги назад", "cable_kickback"},
+            {"Сведение через нижние блоки", "low_cable_fly"},
+            {"Подтягивания обратным хватом", "chinups"},
+            {"Становая сумо", "sumo_deadlift"},
+            {"Эллипс", "elliptical"},
     };
 
     @Test
@@ -103,6 +140,22 @@ public class MatcherTest {
             }
         }
         assertEquals("", wrong.toString());
+    }
+
+    @Test
+    public void muscleGroupsAreRecognised() {
+        assertEquals("chest", Matcher.groupOf("грудь"));
+        assertEquals("chest", Matcher.groupOf("Упражнения на грудь"));
+        assertEquals("back", Matcher.groupOf("на спину"));
+        assertEquals("triceps", Matcher.groupOf("Трицепс"));
+        assertEquals("abs", Matcher.groupOf("Пресс"));
+        assertNull(Matcher.groupOf("Трицепс на блоке"));
+        assertNull(Matcher.groupOf("Жим ногами"));
+        assertNull(Matcher.best("грудь"));
+        assertEquals(Catalog.inGroup("chest").size(), Matcher.suggest("грудь", 5).size());
+        for (Catalog.Item it : Matcher.suggest("грудь", 5)) assertTrue(it.key, it.inGroup("chest"));
+        assertTrue(Catalog.inGroup("triceps").size() >= 10);
+        assertTrue(Matcher.suggest("шраги", 20).size() >= 3);
     }
 
     @Test

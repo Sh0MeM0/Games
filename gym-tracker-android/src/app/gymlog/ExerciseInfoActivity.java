@@ -79,6 +79,11 @@ public class ExerciseInfoActivity extends BaseActivity {
 
         section("Что это", item.about);
         section("Какие мышцы работают", Fmt.capitalize(item.muscles) + ".");
+        if (Db.isExtra(ex.catalog, ex.weightMode)) {
+            section("Как записывать", "Здесь работает собственный вес, поэтому графа веса — «Доп. вес»: "
+                    + "пишите только утяжеление (например, 10 — это +10 кг) или оставляйте пустым. "
+                    + "Переключить можно в меню ⋮ у тренажёра на экране дня.");
+        }
         StringBuilder tech = new StringBuilder();
         for (int i = 0; i < item.technique.length; i++) {
             if (i > 0) tech.append("\n\n");

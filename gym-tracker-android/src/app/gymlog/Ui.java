@@ -257,6 +257,8 @@ final class Ui {
 
     static void showHistory(final Activity a, long exerciseId, String name, final String currentDay) {
         final List<Model.Session> h = Db.get(a).history(exerciseId);
+        Model.Exercise ex = Db.get(a).exercise(exerciseId);
+        final boolean extra = ex != null && Db.isExtra(ex.catalog, ex.weightMode);
         AlertDialog.Builder b = new AlertDialog.Builder(a).setTitle("История: " + name)
                 .setPositiveButton("Закрыть", null);
         if (h.isEmpty()) {
@@ -265,7 +267,7 @@ final class Ui {
             String[] items = new String[h.size()];
             for (int i = 0; i < h.size(); i++) {
                 Model.Session s = h.get(i);
-                items[i] = Fmt.dateLong(s.day) + "\n" + Fmt.joinSets(s.sets);
+                items[i] = Fmt.dateLong(s.day) + "\n" + Fmt.joinSets(s.sets, extra);
             }
             b.setItems(items, new android.content.DialogInterface.OnClickListener() {
                 @Override
@@ -286,8 +288,9 @@ final class Ui {
 
     /** Drawable id of the pictogram for a catalog key, or 0. */
     static int pictogram(Context c, String key) {
-        if (key == null || Catalog.get(key) == null) return 0;
-        return c.getResources().getIdentifier("ex_" + key, "drawable", c.getPackageName());
+        Catalog.Item it = Catalog.get(key);
+        if (it == null) return 0;
+        return c.getResources().getIdentifier("ex_" + it.pict(), "drawable", c.getPackageName());
     }
 
     /** Rounded square with the pictogram (or an "add picture" icon if there is none). */

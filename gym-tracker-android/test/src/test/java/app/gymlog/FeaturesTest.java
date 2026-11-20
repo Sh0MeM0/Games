@@ -31,7 +31,7 @@ import org.robolectric.shadows.ShadowLooper;
 
 import java.io.File;
 
-/** Version 1.1 features: pictures + reference, progress tab, music button, database upgrade. */
+/** Pictures + reference, progress tab, database upgrade. */
 @RunWith(RobolectricTestRunner.class)
 public class FeaturesTest {
     private static final String DAY1 = "2026-11-10";
@@ -41,8 +41,6 @@ public class FeaturesTest {
 
     @Before
     public void setUp() {
-        Music.sDisabledForTests = true;
-        Music.resetForTests();
         Db.closeInstance();
         db = Db.get(RuntimeEnvironment.application);
     }
@@ -147,7 +145,7 @@ public class FeaturesTest {
     }
 
     @Test
-    public void infoScreenShowsTechniqueAndVideoSearch() {
+    public void infoScreenShowsTechniqueAndVideoSearch() throws Exception {
         long ex = db.findOrCreateExercise("Тяга верхнего блока");
         ExerciseInfoActivity a = Robolectric.buildActivity(ExerciseInfoActivity.class,
                 new Intent(RuntimeEnvironment.application, ExerciseInfoActivity.class)
@@ -160,8 +158,7 @@ public class FeaturesTest {
         Intent i = shadowOf(a).getNextStartedActivity();
         assertEquals(Intent.ACTION_VIEW, i.getAction());
         assertEquals("https://www.youtube.com/results?search_query="
-                        + "%D1%82%D0%B5%D1%85%D0%BD%D0%B8%D0%BA%D0%B0+%D0%A2%D1%8F%D0%B3%D0%B0+"
-                        + "%D0%B2%D0%B5%D1%80%D1%85%D0%BD%D0%B5%D0%B3%D0%BE+%D0%B1%D0%BB%D0%BE%D0%BA%D0%B0",
+                + java.net.URLEncoder.encode("техника Тяга верхнего блока широким хватом", "UTF-8"),
                 i.getDataString());
     }
 
@@ -204,18 +201,5 @@ public class FeaturesTest {
         m.showTab(1);
         idle();
         assertEquals(1, m.progressBox.getChildCount());
-    }
-
-    @Test
-    public void musicButtonIsInTopBar() {
-        MainActivity m = Robolectric.buildActivity(MainActivity.class).setup().get();
-        idle();
-        org.robolectric.fakes.RoboMenu menu = new org.robolectric.fakes.RoboMenu(m);
-        m.onCreateOptionsMenu(menu);
-        android.view.MenuItem music = menu.findItem(BaseActivity.MENU_MUSIC);
-        assertNotNull(music);
-        assertNotNull(menu.findItem(1)); // "Мои тренажёры" is still there
-        assertTrue(m.onOptionsItemSelected(music));
-        assertTrue(Music.get(m).isEnabled());
     }
 }

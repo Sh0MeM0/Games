@@ -39,7 +39,7 @@ public final class Db extends SQLiteOpenHelper {
     }
 
     private Db(Context ctx) {
-        super(ctx, "gymlog.db", null, 2);
+        super(ctx, "gymlog.db", null, 3);
     }
 
     @Override
@@ -51,7 +51,7 @@ public final class Db extends SQLiteOpenHelper {
     public void onCreate(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE exercise (id INTEGER PRIMARY KEY AUTOINCREMENT,"
                 + " name TEXT NOT NULL, norm TEXT NOT NULL UNIQUE,"
-                + " catalog TEXT, catalog_manual INTEGER NOT NULL DEFAULT 0)");
+                + " catalog TEXT, catalog_manual INTEGER NOT NULL DEFAULT 0, weight_mode INTEGER)");
         db.execSQL("CREATE TABLE entry (id INTEGER PRIMARY KEY AUTOINCREMENT,"
                 + " day TEXT NOT NULL,"
                 + " exercise_id INTEGER NOT NULL REFERENCES exercise(id) ON DELETE CASCADE,"
@@ -82,6 +82,27 @@ public final class Db extends SQLiteOpenHelper {
                 c.close();
             }
         }
+        if (oldVersion < 3) {
+            // v3: weight mode (NULL = from the reference, 1 = normal weight, 2 = own weight + additional weight)
+            db.execSQL("ALTER TABLE exercise ADD COLUMN weight_mode INTEGER");
+        }
+    }
+
+    public static final int WEIGHT_NORMAL = 1;
+    public static final int WEIGHT_EXTRA = 2;
+
+    /** True if the weight column means "additional weight" (own body weight exercises). */
+    public static boolean isExtra(String catalog, Integer weightMode) {
+        if (weightMode != null) return weightMode == WEIGHT_EXTRA;
+        Catalog.Item it = Catalog.get(catalog);
+        return it != null && it.bodyweight();
+    }
+
+    /** {@link #WEIGHT_NORMAL}, {@link #WEIGHT_EXTRA} or null (decide by the reference). */
+    public void setWeightMode(long exerciseId, Integer mode) {
+        ContentValues v = new ContentValues();
+        if (mode == null) v.putNull("weight_mode"); else v.put("weight_mode", mode);
+        getWritableDatabase().update("exercise", v, "id = ?", new String[]{Long.toString(exerciseId)});
     }
 
     // ---------------------------------------------------------------- exercises
@@ -89,7 +110,7 @@ public final class Db extends SQLiteOpenHelper {
     public List<Model.Exercise> exercises() {
         List<Model.Exercise> out = new ArrayList<>();
         Cursor c = getReadableDatabase().rawQuery(
-                "SELECT x.id, x.name, COUNT(e.id), MAX(e.day), x.catalog, x.catalog_manual FROM exercise x"
+                "SELECT x.id, x.name, COUNT(e.id), MAX(e.day), x.catalog, x.catalog_manual, x.weight_mode FROM exercise x"
                         + " LEFT JOIN entry e ON e.exercise_id = x.id GROUP BY x.id", null);
         try {
             while (c.moveToNext()) {
@@ -100,6 +121,7 @@ public final class Db extends SQLiteOpenHelper {
                 ex.lastDay = c.isNull(3) ? null : c.getString(3);
                 ex.catalog = c.isNull(4) ? null : c.getString(4);
                 ex.catalogManual = c.getInt(5) != 0;
+                ex.weightMode = c.isNull(6) ? null : c.getInt(6);
                 out.add(ex);
             }
         } finally {
@@ -134,7 +156,7 @@ public final class Db extends SQLiteOpenHelper {
 
     private Model.Exercise queryExercise(String where, String arg) {
         Cursor c = getReadableDatabase().rawQuery(
-                "SELECT id, name, catalog, catalog_manual FROM exercise WHERE " + where, new String[]{arg});
+                "SELECT id, name, catalog, catalog_manual, weight_mode FROM exercise WHERE " + where, new String[]{arg});
         try {
             if (!c.moveToFirst()) return null;
             Model.Exercise ex = new Model.Exercise();
@@ -142,6 +164,7 @@ public final class Db extends SQLiteOpenHelper {
             ex.name = c.getString(1);
             ex.catalog = c.isNull(2) ? null : c.getString(2);
             ex.catalogManual = c.getInt(3) != 0;
+            ex.weightMode = c.isNull(4) ? null : c.getInt(4);
             return ex;
         } finally {
             c.close();
@@ -254,7 +277,7 @@ public final class Db extends SQLiteOpenHelper {
     public List<Model.Entry> dayEntries(String day) {
         List<Model.Entry> out = new ArrayList<>();
         Cursor c = getReadableDatabase().rawQuery(
-                "SELECT e.id, e.exercise_id, x.name, e.pos, x.catalog FROM entry e"
+                "SELECT e.id, e.exercise_id, x.name, e.pos, x.catalog, x.weight_mode FROM entry e"
                         + " JOIN exercise x ON x.id = e.exercise_id"
                         + " WHERE e.day = ? ORDER BY e.pos, e.id", new String[]{day});
         try {
@@ -265,6 +288,7 @@ public final class Db extends SQLiteOpenHelper {
                 e.name = c.getString(2);
                 e.pos = c.getInt(3);
                 e.catalog = c.isNull(4) ? null : c.getString(4);
+                e.extra = isExtra(e.catalog, c.isNull(5) ? null : c.getInt(5));
                 e.day = day;
                 out.add(e);
             }
@@ -373,7 +397,8 @@ public final class Db extends SQLiteOpenHelper {
     public List<Model.Session> allSessions() {
         List<Model.Session> out = new ArrayList<>();
         Cursor c = getReadableDatabase().rawQuery(
-                "SELECT e.id, e.day, e.exercise_id, x.name, s.id, s.pos, s.reps, s.weight FROM entry e"
+                "SELECT e.id, e.day, e.exercise_id, x.name, s.id, s.pos, s.reps, s.weight, x.catalog, x.weight_mode"
+                        + " FROM entry e"
                         + " JOIN exercise x ON x.id = e.exercise_id JOIN wset s ON s.entry_id = e.id"
                         + " WHERE s.reps IS NOT NULL ORDER BY e.exercise_id, e.day, s.pos, s.id", null);
         try {
@@ -386,6 +411,7 @@ public final class Db extends SQLiteOpenHelper {
                     cur.day = c.getString(1);
                     cur.exerciseId = c.getLong(2);
                     cur.name = c.getString(3);
+                    cur.extra = isExtra(c.isNull(8) ? null : c.getString(8), c.isNull(9) ? null : c.getInt(9));
                     out.add(cur);
                 }
                 Model.WSet s = new Model.WSet();
@@ -444,10 +470,10 @@ public final class Db extends SQLiteOpenHelper {
     public JSONObject exportJson() throws JSONException {
         JSONObject root = new JSONObject();
         root.put("app", "gymlog");
-        root.put("version", 2);
+        root.put("version", 3);
         JSONArray exs = new JSONArray();
         SQLiteDatabase db = getReadableDatabase();
-        Cursor c = db.rawQuery("SELECT id, name, catalog, catalog_manual FROM exercise ORDER BY id", null);
+        Cursor c = db.rawQuery("SELECT id, name, catalog, catalog_manual, weight_mode FROM exercise ORDER BY id", null);
         try {
             while (c.moveToNext()) {
                 JSONObject o = new JSONObject();
@@ -455,6 +481,7 @@ public final class Db extends SQLiteOpenHelper {
                 o.put("name", c.getString(1));
                 if (!c.isNull(2)) o.put("catalog", c.getString(2));
                 o.put("catalogManual", c.getInt(3) != 0);
+                if (!c.isNull(4)) o.put("weightMode", c.getInt(4));
                 exs.put(o);
             }
         } finally {
@@ -520,6 +547,7 @@ public final class Db extends SQLiteOpenHelper {
                     String key = o.isNull("catalog") ? null : o.optString("catalog", null);
                     setCatalog(newId, Catalog.get(key) == null ? null : key);
                 }
+                if (o.has("weightMode") && !o.isNull("weightMode")) setWeightMode(newId, o.getInt("weightMode"));
             }
             JSONArray entries = root.getJSONArray("entries");
             for (int i = 0; i < entries.length(); i++) {

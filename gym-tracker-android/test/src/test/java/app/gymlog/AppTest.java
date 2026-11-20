@@ -42,8 +42,6 @@ public class AppTest {
 
     @Before
     public void setUp() {
-        Music.sDisabledForTests = true;
-        Music.resetForTests();
         Db.closeInstance();
         db = Db.get(RuntimeEnvironment.application);
     }
@@ -183,10 +181,11 @@ public class AppTest {
         DayActivity d2 = openDay(DAY2);
         dlg = d2.showAddDialog();
         idle();
-        ListView lv = (ListView) findByTag(dlg.getWindow().getDecorView(), "savedList");
-        assertEquals(1, lv.getAdapter().getCount());
-        assertEquals("Жим лёжа", lv.getAdapter().getItem(0));
-        lv.performItemClick(null, 0, 0);
+        ListView lv = (ListView) findByTag(dlg.getWindow().getDecorView(), "addList");
+        assertEquals(2, lv.getAdapter().getCount());
+        assertEquals("Ваши тренажёры", lv.getAdapter().getItem(0));
+        assertEquals("Жим лёжа", ((Model.Exercise) lv.getAdapter().getItem(1)).name);
+        lv.performItemClick(null, 1, 1);
         idle();
         card = d2.cards.get(0);
         assertEquals(2, card.rows.size());

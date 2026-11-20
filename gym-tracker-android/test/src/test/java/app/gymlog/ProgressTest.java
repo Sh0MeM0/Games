@@ -68,4 +68,18 @@ public class ProgressTest {
         assertNull(oct.exercises.get(0).change);
         assertEquals("Ноябрь 2026", Progress.monthTitle(nov.key));
     }
+
+    @Test
+    public void additionalWeightLabel() {
+        List<Model.Session> all = new ArrayList<>();
+        Model.Session a = s(3, "Подтягивания", "2026-11-03", 8, 5);
+        Model.Session b = s(3, "Подтягивания", "2026-11-10", 8, 10);
+        a.extra = true;
+        b.extra = true;
+        all.add(a);
+        all.add(b);
+        Progress.Result r = Progress.compute(all);
+        assertEquals("макс. доп. вес 5 → 10 кг (+100%)", r.months.get(0).exercises.get(0).change);
+        assertEquals(1, r.months.get(0).counts.up);
+    }
 }

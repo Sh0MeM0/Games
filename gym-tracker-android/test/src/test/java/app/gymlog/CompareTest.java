@@ -148,4 +148,22 @@ public class CompareTest {
         assertEquals("10 × 50 кг", Fmt.setShort(s(10, 50.0)));
         assertEquals("12 повт.", Fmt.setShort(s(12, null)));
     }
+
+    @Test
+    public void additionalWeightForOwnBodyWeightExercises() {
+        Compare.Result r = Compare.compareSet("Скручивания", TODAY, 0, s(20, 10.0), prev(s(20, null)), true);
+        assertEquals(Compare.Status.UP, r.status);
+        assertTrue(r.message, r.message.contains("20 повторений, доп. вес +10 кг"));
+        assertTrue(r.message, r.message.contains("Доп. вес больше на 10 кг: 12 ноября 2026 было без доп. веса."));
+        Compare.Result d = Compare.compareSet("Скручивания", TODAY, 0, s(18, null), prev(s(20, null)), true);
+        assertEquals(Compare.Status.DOWN, d.status);
+        assertTrue(d.message, d.message.contains("Без доп. веса, как и в прошлый раз."));
+        assertEquals("20 повт. +10 кг", Fmt.setShort(s(20, 10.0), true));
+        assertEquals("20 повт.", Fmt.setShort(s(20, null), true));
+        assertEquals(Double.valueOf(10), Fmt.parseWeight("+10"));
+        Compare.Result sum = Compare.compareExercise("Скручивания", TODAY,
+                java.util.Arrays.asList(s(20, 5.0)), prev(s(20, null)), true);
+        assertTrue(sum.message, sum.message.contains("Максимальный доп. вес: +5 кг (было без доп. веса)"));
+        assertTrue(sum.message, !sum.message.contains("Объём"));
+    }
 }

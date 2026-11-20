@@ -40,8 +40,7 @@ public final class Matcher {
 
     static {
         for (String s : new String[]{"на", "в", "во", "с", "со", "для", "из", "за", "к", "ко", "по", "и",
-                "от", "до", "под", "над", "а", "the", "on", "with", "of", "a", "тренажер", "тренажере",
-                "тренажера", "машине", "упражнение", "кг"}) {
+                "от", "до", "под", "над", "а", "the", "on", "with", "of", "a", "машине", "упражнение", "кг"}) {
             STOP.add(s);
         }
     }
@@ -142,7 +141,52 @@ public final class Matcher {
 
     /** The automatic choice for this name, or null if nothing matches well enough. */
     public static Catalog.Item best(String name) {
+        if (groupOf(name) != null) return null; // "грудь" is a muscle group, not one exercise
         List<Match> r = rank(name);
         return !r.isEmpty() && r.get(0).score >= THRESHOLD ? r.get(0).item : null;
+    }
+
+    private static final Set<String> GROUP_FILLER = new HashSet<>(java.util.Arrays.asList(
+            "упражнен", "мышц", "трениров", "качат", "кача", "все", "вс"));
+
+    /**
+     * Muscle group key if the text only names a group ("грудь", "на спину", "упражнения на трицепс"),
+     * otherwise null.
+     */
+    public static String groupOf(String text) {
+        if (text == null) return null;
+        String found = null;
+        int words = 0;
+        for (String t : tokens(text)) {
+            if (GROUP_FILLER.contains(t)) continue;
+            words++;
+            String g = null;
+            for (Catalog.Group gr : Catalog.GROUPS) {
+                for (String w : gr.words) {
+                    for (String wt : tokens(w)) {
+                        if (similarity(t, wt) >= 0.9) g = gr.key;
+                    }
+                }
+            }
+            if (g == null || (found != null && !found.equals(g))) return null;
+            found = g;
+        }
+        return words == 0 ? null : found;
+    }
+
+    /**
+     * Reference exercises to suggest while the user types: the whole group for "грудь",
+     * otherwise everything that matches reasonably well (best first).
+     */
+    public static List<Catalog.Item> suggest(String text, int limit) {
+        List<Catalog.Item> out = new ArrayList<>();
+        String g = groupOf(text);
+        if (g != null) return Catalog.inGroup(g);
+        if (text == null || tokens(text).isEmpty()) return out;
+        for (Match m : rank(text)) {
+            if (m.score < 0.4 || out.size() >= limit) break;
+            out.add(m.item);
+        }
+        return out;
     }
 }

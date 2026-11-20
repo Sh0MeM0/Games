@@ -542,6 +542,390 @@ def _(p):
     p.side('body', (52, 72), -105, (150, -10), (-10, 20), foot=-80)
 
 
+# ====================================================================== variants (v1.2)
+def rails(p, x1, x2):
+    """Smith machine guide rails."""
+    p.line((x1, 6), (x1, G), 2, 'equip'); p.line((x2, 6), (x2, G), 2, 'equip')
+    p.line((x1, 6), (x2, 6), 2, 'equip')
+
+
+def wc(c):
+    return 'ghost' if c == 'ghost' else 'weight'
+
+
+@ex('smith_bench')
+def _(p):
+    rails(p, 30, 46)
+    p.ground(); p.bench(14, 70, 63)
+    for c, arm in (('ghost', (20, -100)), ('body', (-82, -90))):
+        j = p.side(c, (58, 59), 180, arm, (28, 92))
+        p.barbell(j['hand'], wc(c))
+
+
+@ex('incline_db_press')
+def _(p):
+    p.ground()
+    p.rect(50, 70, 30, 4.5, 'equip')
+    p.line((63, 74), (63, G), 2.5, 'equip')
+    p.line((52, 70), (25, 46), 6, 'equip')
+    p.line((30, 52), (30, G), 2.5, 'equip')
+    for c, arm in (('ghost', (35, -95)), ('body', (-80, -88))):
+        j = p.side(c, (58, 66), 213, arm, (0, 95))
+        p.dumbbell(j['hand'], wc(c))
+
+
+@ex('decline_press')
+def _(p):
+    p.ground()
+    p.line((70, 62), (22, 76), 6, 'equip')
+    p.line((46, 70), (46, G), 2.5, 'equip')
+    p.circle((80, 66), 3.5, 'equip')
+    for c, arm in (('ghost', (60, -95)), ('body', (-85, -90))):
+        j = p.side(c, (60, 57), 165, arm, (-35, 80))
+        p.barbell(j['hand'], wc(c))
+
+
+@ex('low_cable_fly')
+def _(p):
+    p.ground()
+    p.line((8, 6), (8, G), 3, 'equip'); p.line((92, 6), (92, G), 3, 'equip')
+    p.circle((10, 84), 2.5, 'weight'); p.circle((90, 84), 2.5, 'weight')
+    p.front('ghost', 50, 54, (125, 120), (95, 90))
+    j = p.front('body', 50, 54, (60, -10), (95, 90))
+    p.line((10, 84), j['handl'], 1.4, 'weight'); p.line((90, 84), j['handr'], 1.4, 'weight')
+
+
+@ex('db_pullover')
+def _(p):
+    p.ground(); p.bench(14, 70, 63)
+    j = p.side('ghost', (58, 59), 180, (195, 192), (28, 92))
+    p.dumbbell(j['hand'], 'ghost')
+    j = p.side('body', (58, 59), 180, (-95, -95), (28, 92))
+    p.dumbbell(j['hand'])
+
+
+@ex('close_grip_pulldown')
+def _(p):
+    p.ground()
+    p.line((50, 4), (50, 10), 1.4, 'weight')
+    p.rect(40, 64, 20, 5, 'equip')
+    p.rect(30, 56, 40, 4, 'equip')
+    for c, arm in (('ghost', (-80, -85)), ('body', (115, -70))):
+        j = p.front(c, 50, 64, arm, (85, 80))
+        y = (j['handl'][1] + j['handr'][1]) / 2
+        cc = wc(c)
+        p.poly([j['handl'], (50, y - 6), j['handr']], 2.4, cc)
+        p.line((50, 10 if c == 'ghost' else 4), (50, y - 6), 1.4, cc)
+
+
+@ex('straight_arm_pulldown')
+def _(p):
+    p.ground()
+    p.line((88, 4), (88, G), 3.5, 'equip'); p.circle((84, 8), 2.5, 'weight')
+    for c, arm in (('ghost', (-45, -45)), ('body', (75, 75))):
+        j = p.side(c, (44, 54), -75, arm, (95, 85))
+        p.line(j['hand'], (84, 8), 1.4, wc(c))
+        p.line(P(j['hand'], -90, 3), P(j['hand'], 90, 3), 3, wc(c))
+
+
+@ex('machine_row')
+def _(p):
+    p.ground()
+    p.rect(18, 66, 26, 5, 'equip'); p.line((30, 71), (30, G), 3, 'equip')
+    p.rect(54, 34, 5, 22, 'equip', 2)
+    p.line((86, 14), (86, G), 3, 'equip')
+    for c, arm in (('ghost', (5, 0)), ('body', (165, 15))):
+        j = p.side(c, (30, 62), -88, arm, (0, 90))
+        p.line(j['hand'], (86, 30), 2.5, wc(c))
+
+
+@ex('chest_supported_row')
+def _(p):
+    p.ground()
+    p.line((30, 72), (64, 44), 5, 'equip')
+    p.line((42, 64), (42, G), 2.5, 'equip')
+    for c, arm in (('ghost', (90, 90)), ('body', (205, 100))):
+        j = p.side(c, (34, 62), -38, arm, (100, 75))
+        p.dumbbell(j['hand'], wc(c))
+
+
+@ex('tbar_row')
+def _(p):
+    p.ground()
+    for c, arm in (('ghost', (90, 90)), ('body', (195, 95))):
+        j = p.side(c, (40, 52), -25, arm, (110, 75))
+        p.line((88, G - 1), j['hand'], 2.6, wc(c))
+        p.barbell(P(j['hand'], -10, 7), wc(c))
+
+
+@ex('sumo_deadlift')
+def _(p):
+    p.ground()
+    j = p.front('ghost', 50, 66, (100, 85), (125, 75))
+    p.line((16, j['handl'][1]), (84, j['handr'][1]), 2.5, 'ghost')
+    j = p.front('body', 50, 54, (100, 85), (118, 64))
+    y = j['handl'][1]
+    p.line((14, y), (86, y), 2.5, 'weight')
+    p.rect(8, y - 9, 6, 18, 'weight', 1.5); p.rect(86, y - 9, 6, 18, 'weight', 1.5)
+
+
+@ex('machine_shoulder_press')
+def _(p):
+    p.ground()
+    p.rect(36, 62, 28, 5, 'equip'); p.line((50, 67), (50, G), 3, 'equip')
+    p.rect(42, 18, 16, 44, 'equip', 3)
+    p.line((14, 4), (14, G), 3, 'equip'); p.line((86, 4), (86, G), 3, 'equip')
+    for c, arm in (('ghost', (180, -90)), ('body', (-110, -95))):
+        j = p.front(c, 50, 60, arm, (98, 92))
+        cc = wc(c)
+        p.line(j['handl'], (14, j['handl'][1] + 4), 2.2, cc); p.line(j['handr'], (86, j['handr'][1] + 4), 2.2, cc)
+
+
+@ex('cable_lateral_raise')
+def _(p):
+    p.ground()
+    p.line((8, 6), (8, G), 3, 'equip'); p.circle((11, 86), 2.5, 'weight')
+    p.front('ghost', 52, 54, (95, 90), (95, 90))
+    j = p.front('body', 52, 54, (95, 90), (95, 90), arm_r=(-5, 0))
+    p.line((11, 86), j['handr'], 1.4, 'weight')
+
+
+@ex('front_raise')
+def _(p):
+    p.ground()
+    j = p.side('ghost', (44, 52), -90, (88, 88), (90, 90))
+    p.dumbbell(j['hand'], 'ghost')
+    j = p.side('body', (44, 52), -90, (-2, -2), (90, 90))
+    p.dumbbell(j['hand'])
+
+
+@ex('face_pull')
+def _(p):
+    p.ground()
+    p.line((88, 4), (88, G), 3.5, 'equip'); p.circle((85, 22), 2.5, 'weight')
+    for c, arm in (('ghost', (-8, -5)), ('body', (195, -30))):
+        j = p.side(c, (40, 52), -90, arm, (90, 90))
+        p.line(j['hand'], (85, 22), 1.4, wc(c))
+
+
+@ex('barbell_shrugs')
+def _(p):
+    p.ground()
+    j = p.front('body', 50, 54, (95, 90), (95, 90), shoulder_dy=-3)
+    y = j['handl'][1]
+    p.line((14, y), (86, y), 2.5, 'weight')
+    p.rect(8, y - 8, 6, 16, 'weight', 1.5); p.rect(86, y - 8, 6, 16, 'weight', 1.5)
+    p.arrow((30, 34), (30, 22)); p.arrow((70, 34), (70, 22))
+
+
+@ex('smith_shrugs')
+def _(p):
+    rails(p, 10, 90)
+    p.ground()
+    j = p.front('body', 50, 54, (95, 90), (95, 90), shoulder_dy=-3)
+    y = j['handl'][1]
+    p.line((10, y), (90, y), 2.8, 'weight')
+    p.arrow((30, 34), (30, 22)); p.arrow((70, 34), (70, 22))
+
+
+@ex('preacher_curl')
+def _(p):
+    p.ground()
+    p.rect(16, 66, 26, 5, 'equip'); p.line((28, 71), (28, G), 3, 'equip')
+    p.line((44, 38), (62, 60), 6, 'equip'); p.line((56, 60), (56, G), 3, 'equip')
+    for c, fa in (('ghost', 50), ('body', -60)):
+        j = p.side(c, (28, 62), -88, (45, fa), (0, 90))
+        p.barbell(j['hand'], wc(c))
+
+
+@ex('hammer_curl')
+def _(p):
+    p.ground()
+    for c, fa in (('ghost', 90), ('body', -60)):
+        j = p.side(c, (48, 52), -90, (92, fa), (90, 90))
+        x, y = j['hand']
+        p.rect(x - 2.5, y - 6, 5, 12, wc(c), 2)
+
+
+@ex('concentration_curl')
+def _(p):
+    p.ground(); p.bench(10, 44, 66)
+    for c, fa in (('ghost', 92), ('body', -95)):
+        j = p.side(c, (28, 62), -55, (85, fa), (0, 95))
+        p.dumbbell(j['hand'], wc(c))
+
+
+@ex('cable_curl')
+def _(p):
+    p.ground()
+    p.line((88, 6), (88, G), 3.5, 'equip'); p.circle((85, 84), 2.5, 'weight')
+    for c, fa in (('ghost', 90), ('body', -55)):
+        j = p.side(c, (46, 52), -90, (95, fa), (90, 90))
+        p.line(j['hand'], (85, 84), 1.4, wc(c))
+        p.line(P(j['hand'], -90, 3), P(j['hand'], 90, 3), 3, wc(c))
+
+
+@ex('wrist_curl')
+def _(p):
+    p.ground(); p.bench(14, 50, 66)
+    p.side('body', (30, 62), -60, (70, -5), (0, 95))
+    j = p.side('body', (30, 62), -60, (70, -5), (0, 95))
+    p.barbell(P(j['hand'], -30, 4))
+    p.arrow((78, 70), (78, 56))
+
+
+@ex('rope_pushdown')
+def _(p):
+    p.ground()
+    p.line((86, 6), (86, G), 3.5, 'equip'); p.circle((82, 10), 2.5, 'weight')
+    for c, arm in (('ghost', (95, -40)), ('body', (95, 82))):
+        j = p.side(c, (50, 52), -86, arm, (90, 90))
+        p.line(j['hand'], (82, 10), 1.4, wc(c))
+        p.poly([P(j['hand'], -60, 5), j['hand'], P(j['hand'], 200, 4)], 2.6, wc(c))
+
+
+@ex('one_arm_pushdown')
+def _(p):
+    p.ground()
+    p.line((86, 6), (86, G), 3.5, 'equip'); p.circle((82, 10), 2.5, 'weight')
+    for c, arm in (('ghost', (95, -40)), ('body', (95, 82))):
+        j = p.side(c, (50, 52), -86, arm, (90, 90))
+        p.line(j['hand'], (82, 10), 1.4, wc(c))
+        p.circle(j['hand'], 3, wc(c))
+
+
+@ex('overhead_cable_ext')
+def _(p):
+    p.ground()
+    p.line((10, 30), (10, G), 3.5, 'equip'); p.circle((13, 64), 2.5, 'weight')
+    for c, fa in (('ghost', 150), ('body', -45)):
+        j = p.side(c, (50, 52), -80, (-60, fa), (95, 85))
+        p.line(j['hand'], (13, 64), 1.4, wc(c))
+
+
+@ex('db_overhead_ext')
+def _(p):
+    p.ground()
+    p.rect(20, 66, 26, 5, 'equip'); p.line((18, 66), (16, 30), 6, 'equip'); p.line((32, 71), (32, G), 3, 'equip')
+    for c, fa in (('ghost', 120), ('body', -88)):
+        j = p.side(c, (28, 62), -88, (-80, fa), (0, 90))
+        p.dumbbell(j['hand'], wc(c))
+
+
+@ex('db_kickback')
+def _(p):
+    p.ground(); p.bench(26, 86, 71)
+    j = p.side('body', (40, 50), -20, (165, 100), (90, 180), arm2=(92, 88), leg2=(92, 89), foot=0, foot2=0)
+    p.dumbbell(j['hand'], 'ghost')
+    e = j['elbow']
+    h = P(e, 170, FARM)
+    p.line(e, h, 4.4, 'body'); p.dumbbell(h)
+
+
+@ex('bench_dips')
+def _(p):
+    p.ground(); p.rect(6, 60, 26, 5, 'equip'); p.line((12, 65), (12, G), 3, 'equip'); p.line((26, 65), (26, G), 3, 'equip')
+    p.side('ghost', (40, 72), -88, (160, 70), (0, 66), foot=-45)
+    p.side('body', (40, 60), -88, (113, 113), (47, 47), foot=-45)
+
+@ex('triceps_machine')
+def _(p):
+    p.ground()
+    p.rect(20, 66, 26, 5, 'equip'); p.line((18, 66), (16, 28), 6, 'equip'); p.line((32, 71), (32, G), 3, 'equip')
+    p.line((62, 14), (62, G), 3, 'equip')
+    for c, arm in (('ghost', (100, -45)), ('body', (95, 85))):
+        j = p.side(c, (30, 62), -88, arm, (0, 90))
+        p.line(j['hand'], (62, j['hand'][1] - 4), 2.5, wc(c))
+
+
+@ex('front_squat')
+def _(p):
+    p.ground()
+    j = p.side('ghost', (48, 50), -88, (10, 200), (90, 90))
+    p.barbell(P(j['shoulder'], 0, 5), 'ghost')
+    j = p.side('body', (34, 68), -68, (15, 200), (0, 110))
+    p.barbell(P(j['shoulder'], 0, 5))
+
+
+@ex('smith_squat')
+def _(p):
+    rails(p, 26, 42)
+    p.ground()
+    j = p.side('ghost', (40, 50), -88, (160, 60), (85, 95))
+    p.barbell(P(j['shoulder'], 180, 2), 'ghost')
+    j = p.side('body', (28, 68), -62, (165, 40), (0, 110))
+    p.barbell(P(j['shoulder'], 160, 2))
+
+
+@ex('goblet_squat')
+def _(p):
+    p.ground()
+    j = p.side('ghost', (48, 50), -88, (70, -90), (90, 90))
+    p.dumbbell(j['hand'], 'ghost')
+    j = p.side('body', (34, 68), -62, (70, -70), (0, 110))
+    p.dumbbell(j['hand'])
+
+
+@ex('bulgarian_split_squat')
+def _(p):
+    p.ground(); p.rect(4, 70, 24, 5, 'equip'); p.line((10, 75), (10, G), 3, 'equip'); p.line((22, 75), (22, G), 3, 'equip')
+    j = p.side('body', (46, 66), -85, (92, 90), (5, 95), leg2=(120, 220), foot2=-40)
+    p.dumbbell(j['hand'])
+    p.arrow((78, 50), (78, 64))
+
+@ex('seated_leg_curl')
+def _(p):
+    p.ground()
+    p.rect(18, 62, 30, 5, 'equip'); p.line((16, 62), (14, 26), 6, 'equip'); p.line((32, 67), (32, G), 3, 'equip')
+    for c, sh in (('ghost', 0), ('body', 100)):
+        j = p.side(c, (28, 58), -92, (60, 20), (0, sh), foot=sh - 90)
+        p.circle(P(j['ankle'], sh + 90, 4), 3.5, wc(c))
+
+
+@ex('seated_calf_raise')
+def _(p):
+    p.ground()
+    p.rect(18, 62, 28, 5, 'equip'); p.line((30, 67), (30, G), 3, 'equip')
+    p.rect(58, 84, 14, 6, 'equip', 1)
+    p.side('ghost', (32, 58), -88, (70, 0), (0, 90), foot=-5)
+    j = p.side('body', (32, 56), -88, (70, 0), (-6, 90), foot=40)
+    p.rect(j['knee'][0] - 7, j['knee'][1] - 8, 14, 5, 'weight', 2)
+    p.arrow((84, 74), (84, 60))
+
+
+@ex('cable_kickback')
+def _(p):
+    p.ground()
+    p.line((88, 6), (88, G), 3.5, 'equip'); p.circle((85, 86), 2.5, 'weight')
+    p.side('body', (50, 52), -84, (5, 0), (90, 90))
+    p.side('ghost', (50, 52), -84, (5, 0), (92, 92))
+    j = p.side('body', (50, 52), -84, (5, 0), (125, 120), foot=60)
+    p.line(j['ankle'], (85, 86), 1.4, 'weight')
+
+
+@ex('cable_crunch')
+def _(p):
+    p.ground()
+    p.line((82, 4), (82, G), 3.5, 'equip'); p.circle((78, 8), 2.5, 'weight')
+    for c, torso, arm in (('ghost', -80, (-30, -150)), ('body', -15, (20, -130))):
+        j = p.side(c, (36, 69), torso, arm, (90, 180), foot=0)
+        p.line(j['hand'], (78, 8), 1.4, wc(c))
+
+
+@ex('lying_leg_raise')
+def _(p):
+    p.ground()
+    p.side('ghost', (52, 86), 180, (0, 0), (-3, 0), foot=-90)
+    p.side('body', (52, 86), 180, (0, 0), (-88, -88), foot=0)
+
+
+@ex('elliptical')
+def _(p):
+    p.rect(10, 84, 72, 5, 'equip', 2)
+    p.line((76, 84), (82, 30), 3, 'equip'); p.circle((80, 76), 7, 'equip')
+    p.line((30, 72), (60, 82), 3, 'weight')
+    p.side('body', (44, 46), -82, (-10, -40), (70, 100), arm2=(30, -20), leg2=(105, 95), foot=0, foot2=0)
+
 # ====================================================================== output
 
 def fit(pic, lo=3.0, hi=97.0):
@@ -632,12 +1016,15 @@ def to_svg(pic):
 def main():
     drawable = os.path.join(ROOT, 'res', 'drawable')
     cells = []
+    only = sys.argv[2].split(',') if len(sys.argv) > 2 else None
     for key, fn in EX.items():
         pic = Pic()
         fn(pic)
         fit(pic)
         with open(os.path.join(drawable, 'ex_%s.xml' % key), 'w', encoding='utf-8') as f:
             f.write(to_vector(pic))
+        if only and key not in only:
+            continue
         cells.append('<div style="display:inline-block;margin:4px;text-align:center;font:11px sans-serif;'
                      'background:#E4E9FF;border-radius:10px;padding:4px">%s<br>%s</div>' % (to_svg(pic), key))
     if len(sys.argv) > 1:

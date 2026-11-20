@@ -96,11 +96,41 @@ public final class Fmt {
     }
 
     public static String joinSets(List<Model.WSet> sets) {
+        return joinSets(sets, false);
+    }
+
+    // ------------------------------------------------ own body weight + additional weight
+    // For exercises like crunches, pull-ups or dips the weight column means "additional weight".
+
+    /** "+10 кг" / "без доп. веса" (extra) or "50 кг" / "без веса". */
+    public static String weight(Double w, boolean extra) {
+        if (!extra) return weight(w);
+        if (w == null || Math.abs(w) < 1e-9) return "без доп. веса";
+        return "+" + num(w) + " кг";
+    }
+
+    /** "15 повт. +10 кг" / "15 повт." (extra) or the usual "10 × 50 кг". */
+    public static String setShort(Model.WSet s, boolean extra) {
+        if (!extra) return setShort(s);
+        if (s == null || s.reps == null) return "—";
+        if (s.weight == null || Math.abs(s.weight) < 1e-9) return s.reps + " повт.";
+        return s.reps + " повт. +" + num(s.weight) + " кг";
+    }
+
+    /** "15 повторений, доп. вес +10 кг" / "15 повторений, без доп. веса". */
+    public static String setLong(Model.WSet s, boolean extra) {
+        if (!extra) return setLong(s);
+        if (s == null || s.reps == null) return "не заполнено";
+        return reps(s.reps) + ", " + (s.weight == null || Math.abs(s.weight) < 1e-9
+                ? "без доп. веса" : "доп. вес +" + num(s.weight) + " кг");
+    }
+
+    public static String joinSets(List<Model.WSet> sets, boolean extra) {
         StringBuilder sb = new StringBuilder();
         for (Model.WSet s : sets) {
             if (!s.filled()) continue;
             if (sb.length() > 0) sb.append("  ·  ");
-            sb.append(setShort(s));
+            sb.append(setShort(s, extra));
         }
         return sb.length() == 0 ? "—" : sb.toString();
     }
@@ -120,6 +150,7 @@ public final class Fmt {
     public static Double parseWeight(String s) {
         if (s == null) return null;
         s = s.trim().replace(',', '.');
+        if (s.startsWith("+")) s = s.substring(1).trim();
         if (s.isEmpty() || !s.matches("[0-9]*\\.?[0-9]*") || s.equals(".")) return null;
         try {
             double v = Double.parseDouble(s);

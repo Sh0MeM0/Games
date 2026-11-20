@@ -3,12 +3,16 @@ package app.gymlog;
 import android.app.ActionBar;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ActivityNotFoundException;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.res.ColorStateList;
+import android.graphics.Rect;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.InputFilter;
 import android.text.InputType;
+import android.text.TextUtils;
 import android.text.TextWatcher;
 import android.text.method.DigitsKeyListener;
 import android.view.Gravity;
@@ -17,15 +21,18 @@ import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.AdapterView;
-import android.widget.ArrayAdapter;
+import android.widget.BaseAdapter;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.PopupMenu;
@@ -35,32 +42,51 @@ import android.widget.Toast;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
- * One training day: list of machines, and under each one its sets
- * (repetitions + weight) with a comparison to the previous time.
+ * One training day: the machines are shown collapsed (name + short summary); tapping one
+ * opens its sets (repetitions + weight) with the comparison to the previous time.
  */
 public class DayActivity extends BaseActivity {
     public static final String EXTRA_DAY = "day";
     private static final int MENU_PREV = 1;
     private static final int MENU_NEXT = 2;
+    private static final int MENU_EXPAND_ALL = 3;
+    private static final int MENU_COLLAPSE_ALL = 4;
 
     String day;
     private ScrollView scroll;
     private LinearLayout list;
     private TextView emptyView;
+    View bottomBar;
     final List<EntryCard> cards = new ArrayList<>();
+    /** Entries that are opened (expanded). Everything else is shown collapsed. */
+    final Set<Long> expanded = new HashSet<>();
 
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
         day = getIntent().getStringExtra(EXTRA_DAY);
         if (day == null) day = LocalDate.now().toString();
+        if (saved != null && saved.getLongArray("expanded") != null) {
+            for (long id : saved.getLongArray("expanded")) expanded.add(id);
+        }
         ActionBar ab = getActionBar();
         if (ab != null) ab.setDisplayHomeAsUpEnabled(true);
         buildUi();
         reload();
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle out) {
+        super.onSaveInstanceState(out);
+        long[] ids = new long[expanded.size()];
+        int i = 0;
+        for (long id : expanded) ids[i++] = id;
+        out.putLongArray("expanded", ids);
     }
 
     @Override
@@ -70,26 +96,35 @@ public class DayActivity extends BaseActivity {
     }
 
     private void buildUi() {
+        final LinearLayout root = Ui.vertical(this);
+
         scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         LinearLayout content = Ui.vertical(this);
         int p = Ui.dp(this, 12);
-        content.setPadding(p, p, p, Ui.dp(this, 28));
+        content.setPadding(p, p, p, p);
         scroll.addView(content, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
 
         list = Ui.vertical(this);
         content.addView(list, Ui.matchWrap());
 
         emptyView = Ui.text(this, "В этот день ещё ничего не записано.\n\n"
-                + "Нажмите «Добавить тренажёр», введите его название или выберите из сохранённых, "
-                + "а затем запишите подходы: повторения и вес.", 15, R.color.text_secondary, false);
+                + "Нажмите «Добавить тренажёр» внизу: введите название тренажёра или группу мышц "
+                + "(например, «грудь») и выберите упражнение, а затем запишите подходы.",
+                15, R.color.text_secondary, false);
         emptyView.setLineSpacing(0, 1.15f);
         emptyView.setGravity(Gravity.CENTER);
         int ep = Ui.dp(this, 18);
         emptyView.setPadding(ep, Ui.dp(this, 36), ep, Ui.dp(this, 24));
         content.addView(emptyView, Ui.matchWrap());
 
+        // The "add" button is pinned to the bottom: no need to scroll down to it.
+        LinearLayout bar = Ui.vertical(this);
+        bar.setBackgroundColor(Ui.color(this, R.color.card));
+        bar.setElevation(Ui.dp(this, 8));
+        bar.setPadding(p, Ui.dp(this, 8), p, Ui.dp(this, 8));
         Button add = Ui.primaryButton(this, "+  Добавить тренажёр");
         add.setTag("addExercise");
         add.setOnClickListener(new View.OnClickListener() {
@@ -98,11 +133,24 @@ public class DayActivity extends BaseActivity {
                 showAddDialog();
             }
         });
-        LinearLayout.LayoutParams alp = Ui.matchWrap();
-        alp.topMargin = Ui.dp(this, 4);
-        content.addView(add, alp);
+        bar.addView(add, Ui.matchWrap());
+        root.addView(bar, Ui.matchWrap());
+        bottomBar = bar;
 
-        setContentView(scroll);
+        // Hide the bottom button while the keyboard is open: more room for the sets.
+        root.getViewTreeObserver().addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
+            @Override
+            public void onGlobalLayout() {
+                Rect r = new Rect();
+                root.getWindowVisibleDisplayFrame(r);
+                int screen = root.getRootView().getHeight();
+                // Unknown sizes (r is empty) -> keep the button visible.
+                boolean keyboard = screen > 0 && r.height() > 0 && screen - r.bottom > screen * 0.15;
+                int vis = keyboard ? View.GONE : View.VISIBLE;
+                if (bottomBar.getVisibility() != vis) bottomBar.setVisibility(vis);
+            }
+        });
+        setContentView(root);
     }
 
     void reload() {
@@ -121,7 +169,7 @@ public class DayActivity extends BaseActivity {
             EntryCard card = new EntryCard(e);
             cards.add(card);
             LinearLayout.LayoutParams lp = Ui.matchWrap();
-            lp.bottomMargin = Ui.dp(this, 12);
+            lp.bottomMargin = Ui.dp(this, 10);
             list.addView(card.view, lp);
         }
         emptyView.setVisibility(cards.isEmpty() ? View.VISIBLE : View.GONE);
@@ -129,6 +177,7 @@ public class DayActivity extends BaseActivity {
 
     private void switchDay(String newDay) {
         day = newDay;
+        expanded.clear();
         setIntent(new Intent(getIntent()).putExtra(EXTRA_DAY, day));
         reload();
         scroll.scrollTo(0, 0);
@@ -136,36 +185,31 @@ public class DayActivity extends BaseActivity {
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
-        super.onCreateOptionsMenu(menu);
         MenuItem prev = menu.add(0, MENU_PREV, 0, "Предыдущий день");
-        prev.setIcon(tinted(R.drawable.ic_chevron_left));
+        prev.setIcon(whiteIcon(R.drawable.ic_chevron_left));
         prev.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
         MenuItem next = menu.add(0, MENU_NEXT, 1, "Следующий день");
-        next.setIcon(tinted(R.drawable.ic_chevron_right));
+        next.setIcon(whiteIcon(R.drawable.ic_chevron_right));
         next.setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS);
+        menu.add(0, MENU_EXPAND_ALL, 2, "Развернуть все");
+        menu.add(0, MENU_COLLAPSE_ALL, 3, "Свернуть все");
         return true;
-    }
-
-    private android.graphics.drawable.Drawable tinted(int res) {
-        android.graphics.drawable.Drawable d = getDrawable(res);
-        if (d != null) {
-            d = d.mutate();
-            d.setTint(0xFFFFFFFF);
-        }
-        return d;
     }
 
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         switch (item.getItemId()) {
-            case android.R.id.home:
-                finish();
-                return true;
             case MENU_PREV:
                 switchDay(Fmt.parseDay(day).minusDays(1).toString());
                 return true;
             case MENU_NEXT:
                 switchDay(Fmt.parseDay(day).plusDays(1).toString());
+                return true;
+            case MENU_EXPAND_ALL:
+                for (EntryCard c : cards) c.setExpanded(true);
+                return true;
+            case MENU_COLLAPSE_ALL:
+                for (EntryCard c : cards) c.setExpanded(false);
                 return true;
             default:
                 return super.onOptionsItemSelected(item);
@@ -174,15 +218,101 @@ public class DayActivity extends BaseActivity {
 
     // ---------------------------------------------------------------- add exercise
 
+    /** Rows of the list in the "add" dialog: section titles, saved machines, reference exercises. */
+    static final class AddAdapter extends BaseAdapter {
+        final Activity a;
+        final List<Object> rows = new ArrayList<>();
+
+        AddAdapter(Activity a) {
+            this.a = a;
+        }
+
+        @Override
+        public int getCount() {
+            return rows.size();
+        }
+
+        @Override
+        public Object getItem(int i) {
+            return rows.get(i);
+        }
+
+        @Override
+        public long getItemId(int i) {
+            return i;
+        }
+
+        @Override
+        public boolean isEnabled(int i) {
+            return !(rows.get(i) instanceof String);
+        }
+
+        @Override
+        public boolean areAllItemsEnabled() {
+            return false;
+        }
+
+        @Override
+        public View getView(int i, View convert, ViewGroup parent) {
+            Object o = rows.get(i);
+            if (o instanceof String) {
+                TextView h = Ui.text(a, (String) o, 13, R.color.text_secondary, true);
+                h.setPadding(0, Ui.dp(a, 12), 0, Ui.dp(a, 4));
+                return h;
+            }
+            LinearLayout row = Ui.horizontal(a);
+            int rp = Ui.dp(a, 6);
+            row.setPadding(0, rp, 0, rp);
+            String catalogKey = o instanceof Model.Exercise ? ((Model.Exercise) o).catalog : ((Catalog.Item) o).key;
+            FrameLayout th = Ui.thumbnail(a, catalogKey, 48);
+            th.setClickable(false);
+            th.setForeground(null);
+            row.addView(th, Ui.lp(Ui.dp(a, 48), Ui.dp(a, 48)));
+            LinearLayout texts = Ui.vertical(a);
+            LinearLayout.LayoutParams tl = Ui.lpWeight(1);
+            tl.leftMargin = Ui.dp(a, 12);
+            row.addView(texts, tl);
+            if (o instanceof Model.Exercise) {
+                texts.addView(Ui.text(a, ((Model.Exercise) o).name, 16, R.color.text, false), Ui.matchWrap());
+            } else {
+                final Catalog.Item it = (Catalog.Item) o;
+                texts.addView(Ui.text(a, it.title, 15, R.color.text, false), Ui.matchWrap());
+                TextView m = Ui.text(a, it.muscles, 12, R.color.text_secondary, false);
+                m.setMaxLines(1);
+                m.setEllipsize(TextUtils.TruncateAt.END);
+                texts.addView(m, Ui.matchWrap());
+                ImageButton video = Ui.iconButton(a, R.drawable.ic_play, R.color.down, "Видео с техникой");
+                video.setFocusable(false);
+                video.setTag("video:" + it.key);
+                video.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View v) {
+                        openVideo(a, it);
+                    }
+                });
+                row.addView(video, Ui.lp(Ui.dp(a, 44), Ui.dp(a, 44)));
+            }
+            return row;
+        }
+    }
+
+    static void openVideo(Activity a, Catalog.Item it) {
+        try {
+            a.startActivity(new Intent(Intent.ACTION_VIEW, ExerciseInfoActivity.videoSearchUri(it)));
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(a, "Не найдено приложение для открытия ссылки", Toast.LENGTH_LONG).show();
+        }
+    }
+
     AlertDialog showAddDialog() {
         final Db db = Db.get(this);
+        final List<Model.Exercise> all = db.exercises();
         final List<Model.Exercise> saved = new ArrayList<>();
-        for (Model.Exercise ex : db.exercises()) {
+        final Set<String> usedKeys = new HashSet<>();
+        for (Model.Exercise ex : all) {
+            if (ex.catalog != null) usedKeys.add(ex.catalog);
             if (!db.hasEntry(day, ex.id)) saved.add(ex);
         }
-        final List<Model.Exercise> shown = new ArrayList<>(saved);
-        final List<String> names = new ArrayList<>();
-        for (Model.Exercise ex : shown) names.add(ex.name);
 
         LinearLayout box = Ui.vertical(this);
         int p = Ui.dp(this, 20);
@@ -190,43 +320,83 @@ public class DayActivity extends BaseActivity {
 
         final EditText input = new EditText(this);
         input.setTag("exerciseName");
-        input.setHint("Название тренажёра");
+        input.setHint("Тренажёр или группа мышц: грудь, спина…");
         input.setSingleLine(true);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         input.setImeOptions(EditorInfo.IME_ACTION_DONE);
         input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(60)});
         box.addView(input, Ui.matchWrap());
 
+        // Muscle group chips: tap to see all exercises of the group.
+        HorizontalScrollView chipsScroll = new HorizontalScrollView(this);
+        chipsScroll.setHorizontalScrollBarEnabled(false);
+        LinearLayout chips = Ui.horizontal(this);
+        for (final Catalog.Group g : Catalog.GROUPS) {
+            TextView chip = Ui.text(this, g.title, 14, R.color.accent, true);
+            chip.setTag("chip:" + g.key);
+            int cp = Ui.dp(this, 12);
+            chip.setPadding(cp, Ui.dp(this, 6), cp, Ui.dp(this, 6));
+            chip.setBackground(Ui.ripple(this, Ui.rounded(Ui.color(this, R.color.accent_soft), Ui.dp(this, 16)),
+                    Ui.rounded(0xFFFFFFFF, Ui.dp(this, 16))));
+            chip.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    input.setText(g.title);
+                    input.setSelection(input.getText().length());
+                }
+            });
+            LinearLayout.LayoutParams cl = Ui.lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            cl.rightMargin = Ui.dp(this, 6);
+            chips.addView(chip, cl);
+        }
+        chipsScroll.addView(chips);
+        LinearLayout.LayoutParams csl = Ui.matchWrap();
+        csl.topMargin = Ui.dp(this, 8);
+        box.addView(chipsScroll, csl);
+
         final ListView lv = new ListView(this);
-        lv.setTag("savedList");
-        final ArrayAdapter<String> adapter = new ArrayAdapter<String>(this,
-                android.R.layout.simple_list_item_1, names) {
+        lv.setTag("addList");
+        lv.setDivider(null);
+        final AddAdapter adapter = new AddAdapter(this);
+        lv.setAdapter(adapter);
+        box.addView(lv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 320)));
+
+        final Runnable filter = new Runnable() {
             @Override
-            public View getView(int position, View convert, ViewGroup parent) {
-                LinearLayout row = Ui.horizontal(DayActivity.this);
-                int rp = Ui.dp(DayActivity.this, 6);
-                row.setPadding(0, rp, 0, rp);
-                FrameLayout th = Ui.thumbnail(DayActivity.this, shown.get(position).catalog, 40);
-                th.setClickable(false);
-                th.setForeground(null);
-                row.addView(th, Ui.lp(Ui.dp(DayActivity.this, 40), Ui.dp(DayActivity.this, 40)));
-                TextView t = Ui.text(DayActivity.this, shown.get(position).name, 16, R.color.text, false);
-                LinearLayout.LayoutParams tl = Ui.lpWeight(1);
-                tl.leftMargin = Ui.dp(DayActivity.this, 12);
-                row.addView(t, tl);
-                return row;
+            public void run() {
+                String text = input.getText().toString();
+                String q = Fmt.normName(text);
+                String group = Matcher.groupOf(text);
+                adapter.rows.clear();
+                List<Model.Exercise> mine = new ArrayList<>();
+                for (Model.Exercise ex : saved) {
+                    Catalog.Item it = Catalog.get(ex.catalog);
+                    if (q.isEmpty() || Fmt.normName(ex.name).contains(q)
+                            || (group != null && it != null && it.inGroup(group))) {
+                        mine.add(ex);
+                    }
+                }
+                if (!mine.isEmpty()) {
+                    adapter.rows.add(q.isEmpty() ? "Ваши тренажёры" : "Ваши тренажёры — подходят");
+                    adapter.rows.addAll(mine);
+                }
+                List<Catalog.Item> ref = new ArrayList<>();
+                for (Catalog.Item it : Matcher.suggest(text, 15)) {
+                    if (!usedKeys.contains(it.key)) ref.add(it);
+                }
+                if (!ref.isEmpty()) {
+                    Catalog.Group g = Catalog.group(group);
+                    adapter.rows.add(g != null ? "Справочник: " + g.title.toLowerCase(new java.util.Locale("ru"))
+                            + " (" + ref.size() + ")" : "Из справочника");
+                    adapter.rows.addAll(ref);
+                }
+                if (adapter.rows.isEmpty() && q.isEmpty()) {
+                    adapter.rows.add("Введите название или нажмите на группу мышц выше");
+                }
+                adapter.notifyDataSetChanged();
             }
         };
-        lv.setAdapter(adapter);
-        if (!saved.isEmpty()) {
-            TextView label = Ui.text(this, "или выберите из сохранённых:", 14,
-                    R.color.text_secondary, false);
-            LinearLayout.LayoutParams llp = Ui.matchWrap();
-            llp.topMargin = Ui.dp(this, 14);
-            box.addView(label, llp);
-            int h = Math.min(saved.size() * Ui.dp(this, 48), Ui.dp(this, 264));
-            box.addView(lv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, h));
-        }
+        filter.run();
 
         final AlertDialog dialog = new AlertDialog.Builder(this)
                 .setTitle("Добавить тренажёр")
@@ -240,23 +410,23 @@ public class DayActivity extends BaseActivity {
             @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
             @Override
             public void afterTextChanged(Editable s) {
-                String q = Fmt.normName(s.toString());
-                shown.clear();
-                names.clear();
-                for (Model.Exercise ex : saved) {
-                    if (q.isEmpty() || Fmt.normName(ex.name).contains(q)) {
-                        shown.add(ex);
-                        names.add(ex.name);
-                    }
-                }
-                adapter.notifyDataSetChanged();
+                filter.run();
             }
         });
         lv.setOnItemClickListener(new AdapterView.OnItemClickListener() {
             @Override
             public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
-                dialog.dismiss();
-                addExercise(shown.get(position).id);
+                Object o = adapter.getItem(position);
+                if (o instanceof Model.Exercise) {
+                    dialog.dismiss();
+                    addExercise(((Model.Exercise) o).id);
+                } else if (o instanceof Catalog.Item) {
+                    Catalog.Item it = (Catalog.Item) o;
+                    long exId = db.findOrCreateExercise(it.title);
+                    db.setCatalog(exId, it.key);
+                    dialog.dismiss();
+                    addExercise(exId);
+                }
             }
         });
         final Runnable submit = new Runnable() {
@@ -265,6 +435,10 @@ public class DayActivity extends BaseActivity {
                 String name = Fmt.cleanName(input.getText().toString());
                 if (name.isEmpty()) {
                     input.setError("Введите название");
+                    return;
+                }
+                if (Matcher.groupOf(name) != null) {
+                    input.setError("Это группа мышц — выберите упражнение из списка ниже");
                     return;
                 }
                 dialog.dismiss();
@@ -305,7 +479,8 @@ public class DayActivity extends BaseActivity {
         }
         Model.Session prev = db.previousSession(exerciseId, day);
         int sets = prev == null ? 1 : Math.max(1, Math.min(prev.sets.size(), 12));
-        db.addEntry(day, exerciseId, sets);
+        long entryId = db.addEntry(day, exerciseId, sets);
+        expanded.add(entryId);
         reload();
         for (final EntryCard c : cards) {
             if (c.entry.exerciseId == exerciseId) {
@@ -339,54 +514,79 @@ public class DayActivity extends BaseActivity {
         final Model.Session prev;
         final LinearLayout view;
         final FrameLayout headerIndicator;
+        final TextView summary;
+        final TextView infoLink;
+        final ImageView chevron;
+        /** Everything under the header: previous result, sets, "+ Подход". */
+        final LinearLayout body;
         final LinearLayout setsBox;
         final List<SetRow> rows = new ArrayList<>();
+        boolean expandedNow;
 
         EntryCard(Model.Entry e) {
             entry = e;
             prev = Db.get(DayActivity.this).previousSession(e.exerciseId, day);
             final Activity a = DayActivity.this;
             view = Ui.card(a);
+            int cp = Ui.dp(a, 10);
+            view.setPadding(cp, cp, Ui.dp(a, 4), cp);
             view.setTag("card:" + e.name);
 
             LinearLayout header = Ui.horizontal(a);
             // Picture from the reference: tap to pick another one.
-            FrameLayout thumb = Ui.thumbnail(a, e.catalog, 52);
+            FrameLayout thumb = Ui.thumbnail(a, e.catalog, 48);
             thumb.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
                     pickPicture();
                 }
             });
-            LinearLayout.LayoutParams thl = Ui.lp(Ui.dp(a, 52), Ui.dp(a, 52));
+            LinearLayout.LayoutParams thl = Ui.lp(Ui.dp(a, 48), Ui.dp(a, 48));
             thl.rightMargin = Ui.dp(a, 10);
             header.addView(thumb, thl);
+
             LinearLayout titles = Ui.vertical(a);
-            TextView name = Ui.text(a, e.name, 19, R.color.text, true);
-            name.setOnClickListener(new View.OnClickListener() {
+            titles.setTag("cardHeader");
+            TextView name = Ui.text(a, e.name, 18, R.color.text, true);
+            titles.addView(name, Ui.matchWrap());
+            summary = Ui.text(a, "", 13, R.color.text_secondary, false);
+            summary.setTag("summary");
+            summary.setMaxLines(2);
+            summary.setEllipsize(TextUtils.TruncateAt.END);
+            titles.addView(summary, Ui.matchWrap());
+            infoLink = Ui.text(a, "Техника и описание ›", 13, R.color.accent, false);
+            infoLink.setTag("infoLink");
+            infoLink.setPadding(0, Ui.dp(a, 2), 0, Ui.dp(a, 2));
+            infoLink.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-                    focusFirstEmpty();
+                    Ui.openInfo(DayActivity.this, entry.exerciseId);
                 }
             });
-            titles.addView(name, Ui.matchWrap());
-            if (e.catalog != null) {
-                TextView info = Ui.text(a, "Техника и описание ›", 13, R.color.accent, false);
-                info.setTag("infoLink");
-                info.setPadding(0, Ui.dp(a, 2), 0, Ui.dp(a, 2));
-                info.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        Ui.openInfo(DayActivity.this, entry.exerciseId);
-                    }
-                });
-                titles.addView(info, Ui.matchWrap());
-            }
+            titles.addView(infoLink, Ui.matchWrap());
+            View.OnClickListener toggle = new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    setExpanded(!expandedNow);
+                }
+            };
+            titles.setOnClickListener(toggle);
             header.addView(titles, Ui.lpWeight(1));
+
             headerIndicator = new FrameLayout(a);
             headerIndicator.setTag("headerIndicator");
             header.addView(headerIndicator, Ui.lp(ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT));
+            chevron = new ImageView(a);
+            chevron.setImageResource(R.drawable.ic_expand);
+            chevron.setImageTintList(ColorStateList.valueOf(Ui.color(a, R.color.text_secondary)));
+            chevron.setContentDescription("Развернуть или свернуть");
+            int chp = Ui.dp(a, 6);
+            chevron.setPadding(chp, chp, chp, chp);
+            Ui.selectableBorderless(chevron);
+            chevron.setOnClickListener(toggle);
+            chevron.setTag("chevron");
+            header.addView(chevron, Ui.lp(Ui.dp(a, 36), Ui.dp(a, 36)));
             final ImageButton more = Ui.iconButton(a, R.drawable.ic_more, R.color.text_secondary, "Ещё");
             more.setOnClickListener(new View.OnClickListener() {
                 @Override
@@ -394,18 +594,23 @@ public class DayActivity extends BaseActivity {
                     showMenu(more);
                 }
             });
-            header.addView(more, Ui.lp(Ui.dp(a, 40), Ui.dp(a, 40)));
+            header.addView(more, Ui.lp(Ui.dp(a, 36), Ui.dp(a, 40)));
             view.addView(header, Ui.matchWrap());
+
+            body = Ui.vertical(a);
+            body.setTag("body");
+            body.setPadding(0, 0, Ui.dp(a, 6), 0);
+            view.addView(body, Ui.matchWrap());
 
             String prevText = prev == null
                     ? "Первая тренировка на этом тренажёре"
-                    : "Прошлый раз, " + Fmt.dateLong(prev.day) + ":\n" + Fmt.joinSets(prev.sets);
+                    : "Прошлый раз, " + Fmt.dateLong(prev.day) + ":\n" + Fmt.joinSets(prev.sets, e.extra);
             TextView prevLine = Ui.text(a, prevText, 13, R.color.text_secondary, false);
             prevLine.setLineSpacing(0, 1.1f);
             LinearLayout.LayoutParams plp = Ui.matchWrap();
-            plp.topMargin = Ui.dp(a, 2);
+            plp.topMargin = Ui.dp(a, 8);
             plp.bottomMargin = Ui.dp(a, 10);
-            view.addView(prevLine, plp);
+            body.addView(prevLine, plp);
 
             LinearLayout cols = Ui.horizontal(a);
             cols.addView(Ui.text(a, "", 12, R.color.text_secondary, false),
@@ -413,14 +618,15 @@ public class DayActivity extends BaseActivity {
             TextView c1 = Ui.text(a, "Повторения", 12, R.color.text_secondary, false);
             c1.setGravity(Gravity.CENTER);
             cols.addView(c1, Ui.lpWeight(1));
-            TextView c2 = Ui.text(a, "Вес, кг", 12, R.color.text_secondary, false);
+            TextView c2 = Ui.text(a, e.extra ? "Доп. вес, кг" : "Вес, кг", 12, R.color.text_secondary, false);
+            c2.setTag("weightColumn");
             c2.setGravity(Gravity.CENTER);
             cols.addView(c2, Ui.lpWeight(1));
             cols.addView(new View(a), Ui.lp(Ui.dp(a, 52 + 36), 1));
-            view.addView(cols, Ui.matchWrap());
+            body.addView(cols, Ui.matchWrap());
 
             setsBox = Ui.vertical(a);
-            view.addView(setsBox, Ui.matchWrap());
+            body.addView(setsBox, Ui.matchWrap());
             for (Model.WSet s : e.sets) addRow(s);
 
             Button addSet = Ui.softButton(a, "+  Подход");
@@ -438,9 +644,39 @@ public class DayActivity extends BaseActivity {
             });
             LinearLayout.LayoutParams blp = Ui.matchWrap();
             blp.topMargin = Ui.dp(a, 8);
-            view.addView(addSet, blp);
+            body.addView(addSet, blp);
 
+            applyExpanded(expanded.contains(e.id));
             refreshAll();
+        }
+
+        void setExpanded(boolean open) {
+            if (open) expanded.add(entry.id); else expanded.remove(entry.id);
+            applyExpanded(open);
+        }
+
+        private void applyExpanded(boolean open) {
+            expandedNow = open;
+            body.setVisibility(open ? View.VISIBLE : View.GONE);
+            summary.setVisibility(open ? View.GONE : View.VISIBLE);
+            infoLink.setVisibility(open && entry.catalog != null ? View.VISIBLE : View.GONE);
+            chevron.setRotation(open ? 180 : 0);
+            if (!open) {
+                View f = getCurrentFocus();
+                if (f != null && isDescendant(body, f)) {
+                    f.clearFocus();
+                    InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+                    if (imm != null) imm.hideSoftInputFromWindow(f.getWindowToken(), 0);
+                }
+            }
+        }
+
+        private boolean isDescendant(View parent, View v) {
+            while (v != null) {
+                if (v == parent) return true;
+                v = v.getParent() instanceof View ? (View) v.getParent() : null;
+            }
+            return false;
         }
 
         SetRow addRow(Model.WSet s) {
@@ -461,18 +697,23 @@ public class DayActivity extends BaseActivity {
         void refreshAll() {
             for (int i = 0; i < rows.size(); i++) rows.get(i).refresh(i);
             headerIndicator.removeAllViews();
-            Compare.Result r = Compare.compareExercise(entry.name, day, entry.sets, prev);
+            Compare.Result r = Compare.compareExercise(entry.name, day, entry.sets, prev, entry.extra);
             headerIndicator.setTag(r.status.name());
             headerIndicator.addView(Ui.indicator(DayActivity.this, r));
+            int filled = 0;
+            for (Model.WSet s : entry.sets) if (s.filled()) filled++;
+            summary.setText(filled == 0 ? "Подходы не записаны — нажмите, чтобы записать"
+                    : Fmt.setsCount(filled) + ":  " + Fmt.joinSets(entry.sets, entry.extra));
         }
 
         void focusFirstEmpty() {
+            if (!expandedNow) setExpanded(true);
             for (SetRow r : rows) {
                 if (r.reps.getText().length() == 0) {
                     showKeyboard(r.reps);
                     return;
                 }
-                if (r.weight.getText().length() == 0 && r.set.weight == null) {
+                if (!entry.extra && r.weight.getText().length() == 0 && r.set.weight == null) {
                     showKeyboard(r.weight);
                     return;
                 }
@@ -484,7 +725,9 @@ public class DayActivity extends BaseActivity {
             pm.getMenu().add(0, 1, 0, "История тренажёра");
             pm.getMenu().add(0, 3, 1, "Описание и техника");
             pm.getMenu().add(0, 4, 2, "Сменить картинку");
-            pm.getMenu().add(0, 2, 3, "Убрать из этого дня");
+            pm.getMenu().add(0, 5, 3, entry.extra ? "Вес: обычный (не дополнительный)"
+                    : "Вес: дополнительный (свой вес + кг)");
+            pm.getMenu().add(0, 2, 4, "Убрать из этого дня");
             pm.setOnMenuItemClickListener(new PopupMenu.OnMenuItemClickListener() {
                 @Override
                 public boolean onMenuItemClick(MenuItem item) {
@@ -492,12 +735,22 @@ public class DayActivity extends BaseActivity {
                         case 1: Ui.showHistory(DayActivity.this, entry.exerciseId, entry.name, day); break;
                         case 3: Ui.openInfo(DayActivity.this, entry.exerciseId); break;
                         case 4: pickPicture(); break;
+                        case 5: toggleWeightMode(); break;
                         default: confirmRemove(); break;
                     }
                     return true;
                 }
             });
             pm.show();
+        }
+
+        void toggleWeightMode() {
+            Db.get(DayActivity.this).setWeightMode(entry.exerciseId, entry.extra ? Db.WEIGHT_NORMAL : Db.WEIGHT_EXTRA);
+            Toast.makeText(DayActivity.this, entry.extra
+                    ? "Теперь вес считается обычным"
+                    : "Теперь вес — дополнительный: пишите только утяжеление (например, 10) или оставляйте пустым",
+                    Toast.LENGTH_LONG).show();
+            reload();
         }
 
         void pickPicture() {
@@ -519,6 +772,7 @@ public class DayActivity extends BaseActivity {
                         @Override
                         public void onClick(DialogInterface d, int which) {
                             Db.get(DayActivity.this).deleteEntry(entry.id);
+                            expanded.remove(entry.id);
                             reload();
                         }
                     })
@@ -606,7 +860,7 @@ public class DayActivity extends BaseActivity {
             e.setSelectAllOnFocus(true);
             e.setImeOptions(EditorInfo.IME_ACTION_NEXT | EditorInfo.IME_FLAG_NO_EXTRACT_UI);
             if (decimal) {
-                e.setKeyListener(DigitsKeyListener.getInstance("0123456789.,"));
+                e.setKeyListener(DigitsKeyListener.getInstance("0123456789.,+"));
                 e.setRawInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
                 e.setFilters(new InputFilter[]{new InputFilter.LengthFilter(7)});
             } else {
@@ -627,11 +881,16 @@ public class DayActivity extends BaseActivity {
             label.setText(String.valueOf(index + 1));
             Model.WSet p = card.prev != null && index < card.prev.sets.size()
                     ? card.prev.sets.get(index) : null;
+            boolean extra = card.entry.extra;
             // Hints show what was done last time in this set.
             reps.setHint(p != null ? String.valueOf(p.reps) : "повт.");
-            weight.setHint(p != null && p.weight != null && p.weight > 0 ? Fmt.num(p.weight) : "кг");
+            if (p != null && p.weight != null && p.weight > 0) {
+                weight.setHint((extra ? "+" : "") + Fmt.num(p.weight));
+            } else {
+                weight.setHint(extra ? "+0" : "кг");
+            }
             indicatorBox.removeAllViews();
-            Compare.Result r = Compare.compareSet(card.entry.name, day, index, set, card.prev);
+            Compare.Result r = Compare.compareSet(card.entry.name, day, index, set, card.prev, extra);
             indicatorBox.setTag(r.status.name());
             indicatorBox.addView(Ui.indicator(DayActivity.this, r), new FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
@@ -644,7 +903,7 @@ public class DayActivity extends BaseActivity {
             }
             new AlertDialog.Builder(DayActivity.this)
                     .setTitle("Удалить подход " + label.getText() + "?")
-                    .setMessage(Fmt.setLong(set))
+                    .setMessage(Fmt.setLong(set, card.entry.extra))
                     .setNegativeButton("Отмена", null)
                     .setPositiveButton("Удалить", new DialogInterface.OnClickListener() {
                         @Override

@@ -46,6 +46,17 @@ public final class Compare {
 
     public static Result compareSet(String name, String curDay, int index, Model.WSet cur,
                                     Model.Session prev) {
+        return compareSet(name, curDay, index, cur, prev, false);
+    }
+
+    /**
+     * @param extra true for own-body-weight exercises (crunches, pull-ups...): the weight column
+     *              is the additional weight.
+     */
+    public static Result compareSet(String name, String curDay, int index, Model.WSet cur,
+                                    Model.Session prev, boolean extra) {
+        final String bigW = extra ? "Доп. вес" : "Вес";
+        final String smallW = extra ? "доп. вес" : "вес";
         if (cur == null || !cur.filled()) return NONE_RESULT;
         String setName = "Подход " + (index + 1);
         if (prev == null) {
@@ -73,27 +84,27 @@ public final class Compare {
 
         StringBuilder m = new StringBuilder();
         m.append("Этот раз (").append(Fmt.dateLong(curDay)).append("):\n")
-                .append(Fmt.setLong(cur)).append("\n\n");
+                .append(Fmt.setLong(cur, extra)).append("\n\n");
         m.append("Прошлый раз (").append(prevDate).append("):\n")
-                .append(Fmt.setLong(p)).append("\n\n");
+                .append(Fmt.setLong(p, extra)).append("\n\n");
 
         StringBuilder sh = new StringBuilder();
         if (st == Status.EQUAL) {
-            m.append("Вес и количество повторений такие же, как ").append(prevDate).append('.');
+            m.append(bigW).append(" и количество повторений такие же, как ").append(prevDate).append('.');
             sh.append("без изменений");
         } else {
             if (dw > EPS) {
-                m.append("Вес больше на ").append(Fmt.num(dw)).append(" кг: ").append(prevDate)
-                        .append(" было ").append(Fmt.weight(p.weight)).append('.');
-                sh.append("вес +").append(Fmt.num(dw)).append(" кг");
+                m.append(bigW).append(" больше на ").append(Fmt.num(dw)).append(" кг: ").append(prevDate)
+                        .append(" было ").append(Fmt.weight(p.weight, extra)).append('.');
+                sh.append(smallW).append(" +").append(Fmt.num(dw)).append(" кг");
             } else if (dw < -EPS) {
-                m.append("Вес меньше на ").append(Fmt.num(-dw)).append(" кг: ").append(prevDate)
-                        .append(" вес был больше — ").append(Fmt.weight(p.weight)).append('.');
-                sh.append("вес −").append(Fmt.num(-dw)).append(" кг");
+                m.append(bigW).append(" меньше на ").append(Fmt.num(-dw)).append(" кг: ").append(prevDate)
+                        .append(' ').append(smallW).append(" был больше — ").append(Fmt.weight(p.weight, extra)).append('.');
+                sh.append(smallW).append(" −").append(Fmt.num(-dw)).append(" кг");
             } else if (w(cur.weight) > EPS) {
-                m.append("Вес тот же (").append(Fmt.weight(cur.weight)).append(").");
+                m.append(bigW).append(" тот же (").append(Fmt.weight(cur.weight, extra)).append(").");
             } else {
-                m.append("Без веса, как и в прошлый раз.");
+                m.append(extra ? "Без доп. веса, как и в прошлый раз." : "Без веса, как и в прошлый раз.");
             }
             m.append('\n');
             if (dr > 0) {
@@ -110,9 +121,11 @@ public final class Compare {
                 m.append("Повторений столько же (").append(cur.reps).append(").");
             }
             if (dw > EPS && dr < 0) {
-                m.append("\n\nСтрелка вверх, потому что вырос вес — вес важнее количества повторений.");
+                m.append("\n\nСтрелка вверх, потому что вырос ").append(smallW).append(" — ").append(smallW)
+                        .append(" важнее количества повторений.");
             } else if (dw < -EPS && dr > 0) {
-                m.append("\n\nСтрелка вниз, потому что вес снизился, хотя повторений стало больше.");
+                m.append("\n\nСтрелка вниз, потому что ").append(smallW)
+                        .append(" снизился, хотя повторений стало больше.");
             }
         }
         String title;
@@ -126,6 +139,11 @@ public final class Compare {
 
     public static Result compareExercise(String name, String curDay, List<Model.WSet> cur,
                                          Model.Session prev) {
+        return compareExercise(name, curDay, cur, prev, false);
+    }
+
+    public static Result compareExercise(String name, String curDay, List<Model.WSet> cur,
+                                         Model.Session prev, boolean extra) {
         int filled = 0, up = 0, down = 0, eq = 0;
         double best = 0, volume = 0;
         int totalReps = 0;
@@ -138,7 +156,7 @@ public final class Compare {
             totalReps += s.reps;
             volume += w(s.weight) * s.reps;
             if (prev == null) continue;
-            Result r = compareSet(name, curDay, i, s, prev);
+            Result r = compareSet(name, curDay, i, s, prev, extra);
             lines.append("Подход ").append(i + 1).append(": ");
             switch (r.status) {
                 case UP: up++; lines.append("лучше (").append(r.shortText).append(')'); break;
@@ -175,10 +193,10 @@ public final class Compare {
         m.append("Сравнение с прошлым разом (").append(Fmt.dateLong(prev.day)).append("):\n\n");
         m.append(lines).append('\n');
         m.append("Подходов: ").append(filled).append(" (было ").append(prev.sets.size()).append(")\n");
-        m.append("Максимальный вес: ").append(Fmt.weight(best))
-                .append(" (было ").append(Fmt.weight(pBest)).append(")\n");
+        m.append(extra ? "Максимальный доп. вес: " : "Максимальный вес: ").append(Fmt.weight(best, extra))
+                .append(" (было ").append(Fmt.weight(pBest, extra)).append(")\n");
         m.append("Всего повторений: ").append(totalReps).append(" (было ").append(pReps).append(')');
-        if (volume > EPS || pVolume > EPS) {
+        if (!extra && (volume > EPS || pVolume > EPS)) {
             m.append("\nОбъём (вес × повторения): ").append(Fmt.num(volume))
                     .append(" кг (было ").append(Fmt.num(pVolume)).append(" кг)");
         }

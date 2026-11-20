@@ -118,7 +118,7 @@ public final class Progress {
                 em.days.add(cur.day);
                 if (prev == null) continue;
                 for (int j = 0; j < cur.sets.size(); j++) {
-                    Compare.Status st = Compare.compareSet(cur.name, cur.day, j, cur.sets.get(j), prev).status;
+                    Compare.Status st = Compare.compareSet(cur.name, cur.day, j, cur.sets.get(j), prev, cur.extra).status;
                     em.counts.add(st);
                 }
             }
@@ -172,7 +172,7 @@ public final class Progress {
         double b = bestWeight(base), e = bestWeight(last);
         if (b > 0 && e > 0) {
             em.changePercent = (e - b) / b * 100.0;
-            em.change = "макс. вес " + Fmt.num(b) + " → " + Fmt.num(e) + " кг (" + signedPercent(em.changePercent) + ")";
+            em.change = (last.extra ? "макс. доп. вес " : "макс. вес ") + Fmt.num(b) + " → " + Fmt.num(e) + " кг (" + signedPercent(em.changePercent) + ")";
         } else {
             int br = bestReps(base), er = bestReps(last);
             if (br <= 0) return;
