@@ -89,6 +89,10 @@ namespace Profiles.Core
         private static readonly TimeSpan HistoryInterval = TimeSpan.FromMinutes(3);
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
         private readonly Func<DateTime> clock;
+        // Size, time and hash of project files this instance wrote or verified:
+        // an unchanged file is not read and hashed again on every autosave.
+        private readonly Dictionary<string, Tuple<long, DateTime, string>> verified =
+            new Dictionary<string, Tuple<long, DateTime, string>>(StringComparer.OrdinalIgnoreCase);
 
         public ProjectLibrary(string root, Func<DateTime> clock = null)
         {
@@ -182,6 +186,7 @@ namespace Profiles.Core
                 bool otherDrawing = previous != null && path != null && previous.SourcePath != null && !SamePath(previous.SourcePath, path);
                 if (previous != null) Archive(previous, checkpoint || otherDrawing);
                 WriteAtomic(ProjectFilePath(id), json + Environment.NewLine);
+                Remember(id, hash);
                 var entry = previous?.Copy() ?? new LibraryEntry { ProjectId = id };
                 entry.Name = project.Name;
                 entry.Hash = hash;
@@ -540,11 +545,17 @@ namespace Profiles.Core
             var entry = File.Exists(meta) ? TryReadMeta(meta) : null;
             if (entry != null && !string.Equals(entry.ProjectId, projectId, StringComparison.OrdinalIgnoreCase)) entry = null;
             if (entry != null && !verify) return entry;
+            if (entry != null && verified.TryGetValue(projectId, out var known) && known.Item3 == entry.Hash)
+            {
+                var info = new FileInfo(file);
+                if (info.Exists && info.Length == known.Item1 && info.LastWriteTimeUtc == known.Item2) return entry;
+            }
             string json;
             try { json = File.ReadAllText(file, Utf8).TrimEnd('\r', '\n'); }
             catch (Exception error) when (error is IOException || error is UnauthorizedAccessException || error is DecoderFallbackException)
             { throw Failure("не удалось прочитать " + file, error); }
             string hash = Hash(json);
+            Remember(projectId, hash);
             if (entry != null && entry.Hash == hash) return entry;
             // The JSON was written but its sidecar is missing or older (an
             // interrupted save, another AutoCAD): the file content is the truth.
@@ -559,6 +570,16 @@ namespace Profiles.Core
             repaired.ProfileCount = 1 + project.AdditionalProfiles.Count;
             repaired.PointCount = Points(project);
             return repaired;
+        }
+
+        private void Remember(string projectId, string hash)
+        {
+            try
+            {
+                var info = new FileInfo(ProjectFilePath(projectId));
+                if (info.Exists) verified[projectId] = Tuple.Create(info.Length, info.LastWriteTimeUtc, hash);
+            }
+            catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { verified.Remove(projectId); }
         }
 
         private LibraryEntry TryReadMeta(string path)

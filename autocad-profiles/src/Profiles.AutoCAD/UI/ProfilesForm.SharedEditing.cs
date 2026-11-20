@@ -217,22 +217,33 @@ namespace Profiles.AutoCAD
 
         private static void SetLongitudinalRow(DataGridViewRow row, LongitudinalPoint point)
         {
-            row.Cells["Station"].Value = point.Station;
-            row.Cells["Ground"].Value = point.Ground;
-            row.Cells["LeftBank"].Value = point.LeftBank;
-            row.Cells["RightBank"].Value = point.RightBank;
-            row.Cells["ExistingBottom"].Value = point.ExistingBottom;
-            row.Cells["Water"].Value = point.Water;
-            row.Cells["ProjectBottom"].Value = point.ProjectBottom;
-            row.Cells["BottomWidth"].Value = point.BottomWidth;
-            row.Cells["LeftSlope"].Value = point.LeftSlope;
-            row.Cells["RightSlope"].Value = point.RightSlope;
-            row.Cells["ProjectGround"].Value = point.ProjectGround;
-            row.Cells["PipeInvert"].Value = point.PipeInvert;
-            row.Cells["PipeDescription"].Value = point.PipeDescription;
-            row.Cells["Foundation"].Value = point.Foundation;
-            row.Cells["PointName"].Value = point.PointName;
-            row.Cells["PeatDepth"].Value = point.PeatDepth;
+            SetCell(row, "Station", point.Station);
+            SetCell(row, "Ground", point.Ground);
+            SetCell(row, "LeftBank", point.LeftBank);
+            SetCell(row, "RightBank", point.RightBank);
+            SetCell(row, "ExistingBottom", point.ExistingBottom);
+            SetCell(row, "Water", point.Water);
+            SetCell(row, "ProjectBottom", point.ProjectBottom);
+            SetCell(row, "BottomWidth", point.BottomWidth);
+            SetCell(row, "LeftSlope", point.LeftSlope);
+            SetCell(row, "RightSlope", point.RightSlope);
+            SetCell(row, "ProjectGround", point.ProjectGround);
+            SetCell(row, "PipeInvert", point.PipeInvert);
+            SetCell(row, "PipeDescription", point.PipeDescription);
+            SetCell(row, "Foundation", point.Foundation);
+            SetCell(row, "PointName", point.PointName);
+            SetCell(row, "PeatDepth", point.PeatDepth);
+        }
+
+        /// <summary>
+        /// Writes only a changed value. Every shared commit re-applies the whole
+        /// profile; rewriting thousands of equal cells raised as many change events
+        /// and repaints on a long profile. The resulting cell values are the same.
+        /// </summary>
+        private static void SetCell(DataGridViewRow row, string column, object value)
+        {
+            var cell = row.Cells[column];
+            if (!Equals(cell.Value, value)) cell.Value = value;
         }
 
         private static List<LongitudinalPoint> CopyLongitudinal(IEnumerable<LongitudinalPoint> points)
