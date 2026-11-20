@@ -457,9 +457,11 @@ namespace Profiles.AutoCAD
             else if (libraryError != null)
                 SetStatus((inDrawing ? "Данные сохранены в DWG. " : "") + libraryError, true);
             else if (inDrawing)
-                SetStatus("Сохранено в DWG" + (librarySaved ? " и в автосохранении" : "") + ". После работы сохраните сам чертёж AutoCAD (Ctrl+S).");
+                SetStatus("Сохранено в DWG" + (librarySaved ? " и в автосохранении" : "") + " в " + DateTime.Now.ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) +
+                    ". После работы сохраните сам чертёж AutoCAD (Ctrl+S).");
             else if (librarySaved)
-                SetStatus("Сохранено в автосохранении. В этот чертёж проект запишется после первого изменения или построения.");
+                SetStatus("Сохранено в автосохранении в " + DateTime.Now.ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) +
+                    ". В этот чертёж проект запишется после первого изменения или построения.");
             else if (autoSaveJson.Checked && currentFile != null)
                 SetStatus("Автосохранено в JSON: " + Path.GetFileName(currentFile));
             else if (explicitSave)

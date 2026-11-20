@@ -30,6 +30,8 @@ internal static class AutosaveWorkflowTests
         Check("a failing DWG write does not block switching and nothing is lost", DrawingFailureDoesNotBlock);
         Check("earlier versions and deleted projects are restored", VersionsAndDeleted);
         Check("exported JSON stays linked and autosaved in the next editor session", JsonLinkPersists);
+        Check("the versions window lists versions with their drawing and opens the chosen one", VersionsWindow);
+        Check("the work type dialog offers the existing tab first and keeps data on every choice", TypeDialog);
     }
 
     private sealed class FakeDrawing
@@ -424,6 +426,92 @@ internal static class AutosaveWorkflowTests
                 Require(Save(form), "edit not saved");
                 Require(ProjectFile.Load(file).Longitudinal[0].ExistingBottom == 77, "linked JSON not updated in the next session");
             }
+        }
+    }
+
+    private static void VersionsWindow()
+    {
+        using (var session = new Session())
+        {
+            var drawing = new FakeDrawing();
+            using (var form = session.Open(drawing, @"C:\Чертежи\Окно.dwg"))
+            using (var timer = new Timer { Interval = 100 })
+            {
+                Call(form, "NewProjectNamed", "Окно версий");
+                EnterStations(form, 101, 100);
+                Require(Save(form), "not saved");
+                string id = ReadProject(form).ProjectId;
+                session.Library.Checkpoint(id);
+                var grid = Field<DataGridView>(form, "longGrid");
+                grid.Rows[0].Cells["ExistingBottom"].Value = "55";
+                Call(form, "SetDirty");
+                Require(Save(form), "edit not saved");
+                bool seen = false;
+                timer.Tick += (s, e) =>
+                {
+                    var dialog = Application.OpenForms.Cast<System.Windows.Forms.Form>().FirstOrDefault(f => f.Text.StartsWith("Версии проекта"));
+                    if (dialog == null) return;
+                    timer.Stop();
+                    var lists = Descendants(dialog).OfType<ListView>().ToList();
+                    Require(lists.Count == 2, "versions window has no lists");
+                    // Last autosave, the checkpoint with two stations, and the blank project as first created.
+                    Require(lists[0].Items.Count == 3, "expected three versions, got " + lists[0].Items.Count);
+                    Require(lists[0].Items[0].Text.StartsWith("Последняя") && lists[0].Items[1].SubItems[1].Text == "Окно.dwg", "version rows lack time or drawing");
+                    lists[0].Items[1].Selected = true;
+                    seen = true;
+                    Descendants(dialog).OfType<Button>().Single(button => button.Text == "Открыть выбранную версию").PerformClick();
+                };
+                timer.Start();
+                Call(form, "ShowVersions");
+                Require(seen, "versions window was not shown");
+                Require(ReadProject(form).Longitudinal[0].ExistingBottom == 101, "chosen version not opened from the window");
+            }
+        }
+    }
+
+    private static void TypeDialog()
+    {
+        using (var session = new Session())
+        {
+            var drawing = new FakeDrawing();
+            using (var form = session.Open(drawing, @"C:\Чертежи\Типы.dwg"))
+            using (var timer = new Timer { Interval = 100 })
+            {
+                Call(form, "NewProjectNamed", "Диалог");
+                EnterStations(form, 101, 100);
+                Choose(form, "CreateNew");
+                SwitchTemplate(form, ProfileTemplate.NewChannel);
+                EnterStations(form, 90);
+                typeof(ProfilesForm).GetProperty("ChooseTemplateSwitch", Private).SetValue(form, null);
+                var texts = new List<string>();
+                timer.Tick += (s, e) =>
+                {
+                    var dialog = Application.OpenForms.Cast<System.Windows.Forms.Form>().FirstOrDefault(f => f.Text.StartsWith("Тип профиля:"));
+                    if (dialog == null) return;
+                    timer.Stop();
+                    var buttons = Descendants(dialog).OfType<Button>().ToList();
+                    texts.AddRange(buttons.Select(button => button.Text));
+                    Require(dialog.AcceptButton == buttons[0], "existing tab is not the default choice");
+                    buttons[0].PerformClick();
+                };
+                timer.Start();
+                SwitchTemplate(form, ProfileTemplate.Reconstruction);
+                Require(texts.Count == 4, "dialog buttons: " + string.Join(" | ", texts));
+                Require(texts[0].StartsWith("Перейти к вкладке «Профиль 1»") && texts[1].StartsWith("Сменить тип") &&
+                        texts[2].StartsWith("Создать новую") && texts[3] == "Отмена", "unexpected choices: " + string.Join(" | ", texts));
+                var back = ReadProject(form);
+                Require(back.Template == ProfileTemplate.Reconstruction && back.Longitudinal.Count == 2, "dialog choice did not open the original data");
+                Require(Tabs(form).Count == 2, "dialog choice created a tab");
+            }
+        }
+    }
+
+    private static IEnumerable<Control> Descendants(Control parent)
+    {
+        foreach (Control child in parent.Controls)
+        {
+            yield return child;
+            foreach (var nested in Descendants(child)) yield return nested;
         }
     }
 
