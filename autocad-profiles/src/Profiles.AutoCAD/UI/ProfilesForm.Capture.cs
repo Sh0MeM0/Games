@@ -42,7 +42,7 @@ namespace Profiles.AutoCAD
                 var draft = ProjectFile.Clone(ReadProject());
                 var options = UI.DrawingCaptureOptionsDialog.ShowOptions(this, kind, CaptureOptions);
                 if (options == null) return;
-                PersistProject(draft, true);
+                PersistProject(draft, true, forceDrawing: true);
                 Project = draft;
                 CaptureRequest = new DrawingCaptureRequest
                 {

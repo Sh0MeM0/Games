@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Windows.Forms;
@@ -83,15 +84,39 @@ namespace Profiles.AutoCAD
                 // Always reread DWG state so reopening after UNDO cannot revive a
                 // stale session cache or another document's project.
                 var catalog = DrawingProjectStore.Read(document.Database);
-                var previous = catalog.Projects.FirstOrDefault(project =>
-                    string.Equals(project.ProjectId, catalog.LastActiveProjectId, StringComparison.OrdinalIgnoreCase))
-                    ?? catalog.Projects.FirstOrDefault();
                 Action<ProfileProject> saveDraft = project =>
                 {
                     // WinForms callbacks run inside AutoCAD's modal loop. Take an
                     // explicit document lock for each short DB write; never hold
                     // a transaction open while the user edits or picks a point.
                     using (document.LockDocument()) DrawingProjectStore.Save(document.Database, project);
+                };
+                Action<ProfileProject, string> saveSerialized = (project, json) =>
+                {
+                    using (document.LockDocument()) DrawingProjectStore.Save(document.Database, project, json);
+                };
+                // Every project is also kept in the per-user autosave library, so
+                // work survives switching drawings, UNDO and an unsaved DWG.
+                var autosave = OpenAutosave(document, catalog, saveSerialized);
+                var available = autosave?.Sync.DrawingProjects ?? catalog.Projects;
+                var previous = available.FirstOrDefault(project =>
+                    string.Equals(project.ProjectId, catalog.LastActiveProjectId, StringComparison.OrdinalIgnoreCase))
+                    ?? available.FirstOrDefault();
+                if (previous == null && autosave != null && autosave.Sync.LibraryOnly.Count > 0)
+                {
+                    // A drawing without projects continues the most recent work.
+                    try { previous = autosave.Library.Load(autosave.Sync.LibraryOnly[0].ProjectId); }
+                    catch (ProfileValidationException exception) { editor.WriteMessage("\nПрофиля: " + exception.Message); }
+                }
+                Action<ProfileProject> remember = project =>
+                {
+                    if (autosave == null) return;
+                    try
+                    {
+                        string key = autosave.DrawingKey();
+                        autosave.Library.Save(project, null, key, autosave.DrawingName);
+                    }
+                    catch (ProfileValidationException exception) { editor.WriteMessage("\nПрофиля: " + exception.Message); }
                 };
                 Action<string> deleteProject = projectId =>
                 {
@@ -109,7 +134,7 @@ namespace Profiles.AutoCAD
                     DrawingPlan plan;
                     bool rebuildExisting, allSections, allProfiles;
                     DialogResult dialogResult;
-                    using (var form = new ProfilesForm(kind, active, catalog.Projects, saveDraft, selectedSectionId, deleteProject))
+                    using (var form = new ProfilesForm(kind, active, available, saveDraft, selectedSectionId, deleteProject, autosave))
                     {
                         form.CaptureOptions = captureOptions.Clone();
                         if (session != null) form.RestoreEditorSession(session, selectedSectionId);
@@ -147,13 +172,16 @@ namespace Profiles.AutoCAD
                                 {
                                     saveDraft(active);
                                     captureSaved = true;
+                                    remember(active);
                                     editor.WriteMessage("\nНабранные данные сохранены в проекте чертежа. Для записи на диск сохраните DWG (Ctrl+S).");
                                 }
                                 catch (System.Exception exception)
                                 {
                                     // Keep the accepted points in the reopened
                                     // form even if the DWG is temporarily read-only.
-                                    editor.WriteMessage("\nДанные перенесены в окно, но пока не сохранены в DWG: " + exception.Message);
+                                    remember(active);
+                                    editor.WriteMessage("\nДанные перенесены в окно, но пока не сохранены в DWG: " + exception.Message +
+                                        (autosave != null ? " Они сохранены в автосохранении." : ""));
                                 }
                             }
                         }
@@ -174,6 +202,7 @@ namespace Profiles.AutoCAD
                     // Keep accepted numeric input in the DWG even if insertion is
                     // cancelled. The user still saves the DWG normally for disk.
                     saveDraft(project);
+                    remember(project);
 
                     Autodesk.AutoCAD.Geometry.Point3d? insertionPoint = null;
                     if (!rebuildExisting)
@@ -219,6 +248,36 @@ namespace Profiles.AutoCAD
                 AcadApplication.ShowAlertDialog("Профиля\n\n" + exception.Message +
                     "\n\nПодробности — в командной строке AutoCAD.");
             }
+        }
+
+        private static ProfilesAutosave OpenAutosave(Document document, DrawingProjectCatalog catalog, Action<ProfileProject, string> saveSerialized)
+        {
+            try
+            {
+                var library = new ProjectLibrary(ProjectLibrary.DefaultRoot());
+                string drawingName = SafeFileName(document.Name);
+                string drawingKey = DrawingProjectStore.TryDrawingId(document.Database);
+                var sync = library.Synchronize(catalog.Projects, drawingKey, drawingName);
+                foreach (string message in sync.Messages)
+                    document.Editor.WriteMessage("\nПрофиля: " + message);
+                return new ProfilesAutosave(library, sync, drawingName, () =>
+                {
+                    using (document.LockDocument()) return DrawingProjectStore.TryDrawingId(document.Database);
+                }, saveSerialized);
+            }
+            catch (System.Exception exception) when (exception is ProfileValidationException || exception is IOException ||
+                                                      exception is UnauthorizedAccessException || exception is ArgumentException)
+            {
+                // The editor works with the DWG alone; nothing already stored is changed.
+                document.Editor.WriteMessage("\nПрофиля: автосохранение недоступно (" + exception.Message + "). Данные сохраняются только в DWG.");
+                return null;
+            }
+        }
+
+        private static string SafeFileName(string path)
+        {
+            try { return string.IsNullOrEmpty(path) ? null : Path.GetFileName(path); }
+            catch (ArgumentException) { return path; }
         }
     }
 }

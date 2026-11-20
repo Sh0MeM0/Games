@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -35,6 +36,11 @@ namespace Profiles.AutoCAD
         private const int MaximumProjects = 128;
         private const int ChunkSize = 127;
         private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
+        // Records already fully validated in this session, by key and stored SHA-256.
+        // Autosave runs after every pause in typing; re-parsing every other project
+        // and output of the DWG each time made the editor stall on large drawings.
+        // A changed record has a different stored hash and is validated again.
+        private static readonly ConditionalWeakTable<Database, HashSet<string>> Validated = new ConditionalWeakTable<Database, HashSet<string>>();
 
         private sealed class StoreHeader
         {
@@ -74,6 +80,8 @@ namespace Profiles.AutoCAD
                 if (!string.Equals(entry.Key, project.ProjectId, StringComparison.OrdinalIgnoreCase))
                     throw Invalid("идентификатор проекта не совпадает с ключом записи " + entry.Key);
                 result.Projects.Add(project);
+                string stored = StoredHash(entry.Value, transaction);
+                if (stored != null) ValidatedRecords(database).Add("P:" + entry.Key + ":" + stored);
             }
             var ids = new HashSet<string>(result.Projects.Select(project => project.ProjectId), StringComparer.OrdinalIgnoreCase);
             result.LastActiveProjectId = ReadActive(root, transaction, ids);
@@ -81,14 +89,41 @@ namespace Profiles.AutoCAD
             return result;
         }
 
-        internal static void Save(Database database, ProfileProject project)
+        internal static void Save(Database database, ProfileProject project, string serialized = null)
         {
             // Validate and encode before entering a write transaction.
-            string json = ProjectFile.Serialize(project);
+            string json = serialized ?? ProjectFile.Serialize(project);
             using (var transaction = database.TransactionManager.StartTransaction())
             {
                 Save(database, transaction, project, json);
                 transaction.Commit();
+            }
+        }
+
+        /// <summary>Identifier of this drawing's project catalog, or null while the drawing has none.</summary>
+        internal static string TryDrawingId(Database database)
+        {
+            using (var transaction = database.TransactionManager.StartTransaction())
+            {
+                var root = Root(database, transaction, false);
+                string id = root == null ? null : Header(root, transaction).DrawingId;
+                transaction.Commit();
+                return id;
+            }
+        }
+
+        private static HashSet<string> ValidatedRecords(Database database) => Validated.GetValue(database, key => new HashSet<string>(StringComparer.Ordinal));
+
+        /// <summary>The SHA-256 stored in a record header, without reading its data blocks.</summary>
+        private static string StoredHash(ObjectId id, Transaction transaction)
+        {
+            var record = transaction.GetObject(id, OpenMode.ForRead) as Xrecord;
+            if (record == null) return null;
+            using (var data = record.Data)
+            {
+                if (data == null) return null;
+                var values = data.AsArray();
+                return values.Length >= 3 && values[1].TypeCode == (int)DxfCode.Text ? values[1].Value as string : null;
             }
         }
 
@@ -104,10 +139,21 @@ namespace Profiles.AutoCAD
                 throw Invalid("достигнут предел 128 проектов; используйте другой чертёж");
             long total = Utf8.GetByteCount(json);
             var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var validated = ValidatedRecords(database);
             foreach (DBDictionaryEntry entry in projects)
             {
                 // Validate every retained project, including the version about to
-                // be replaced. Corrupt/unknown data must not be overwritten.
+                // be replaced. Corrupt/unknown data must not be overwritten. A
+                // record validated earlier with the same stored hash is unchanged.
+                string stored = StoredHash(entry.Value, transaction);
+                string cacheKey = "P:" + entry.Key + ":" + stored;
+                if (stored != null && validated.Contains(cacheKey))
+                {
+                    ids.Add(entry.Key);
+                    if (!string.Equals(entry.Key, project.ProjectId, StringComparison.OrdinalIgnoreCase))
+                        total += PayloadLength(entry.Value, transaction);
+                    continue;
+                }
                 string previousJson = ReadPayload(entry.Value, transaction, "проект " + entry.Key);
                 ProfileProject previous;
                 try { previous = ProjectFile.Deserialize(previousJson); }
@@ -115,6 +161,7 @@ namespace Profiles.AutoCAD
                 if (!string.Equals(previous.ProjectId, entry.Key, StringComparison.OrdinalIgnoreCase))
                     throw Invalid("идентификатор сохранённого проекта не соответствует записи");
                 ids.Add(previous.ProjectId);
+                if (stored != null) validated.Add(cacheKey);
                 if (!string.Equals(entry.Key, project.ProjectId, StringComparison.OrdinalIgnoreCase))
                     total += Utf8.GetByteCount(previousJson);
             }
@@ -123,6 +170,19 @@ namespace Profiles.AutoCAD
             ValidateOutputs(root, transaction, header, ids);
             WritePayload(projects, project.ProjectId, json, transaction);
             WritePayload(root, ActiveName, project.ProjectId, transaction);
+            // The record just written holds the JSON validated by Serialize.
+            validated.Add("P:" + project.ProjectId + ":" + Hash(Utf8.GetBytes(json)));
+        }
+
+        /// <summary>Declared payload length from a record header.</summary>
+        private static long PayloadLength(ObjectId id, Transaction transaction)
+        {
+            var record = transaction.GetObject(id, OpenMode.ForRead) as Xrecord;
+            using (var data = record?.Data)
+            {
+                var values = data?.AsArray();
+                return values != null && values.Length >= 3 && values[2].Value is int length ? length : 0;
+            }
         }
 
         /// <summary>
@@ -139,6 +199,7 @@ namespace Profiles.AutoCAD
                 // Validate the whole catalog first: corrupt data is never rewritten.
                 var catalog = Read(database, transaction);
                 RemoveRecord(Child(root, ProjectsName, transaction), projectId, transaction);
+                ValidatedRecords(database).RemoveWhere(key => key.StartsWith("P:" + projectId + ":", StringComparison.OrdinalIgnoreCase));
                 var outputs = Child(root, OutputsName, transaction);
                 var stale = new List<string>();
                 foreach (DBDictionaryEntry entry in outputs)
@@ -256,16 +317,28 @@ namespace Profiles.AutoCAD
             // retained legacy records; the byte limit also bounds stale records.
             if (outputs.Count > MaximumProjects * 302) throw Invalid("слишком много записей построений");
             long total = 0;
+            var validated = ValidatedRecords(root.Database);
             foreach (DBDictionaryEntry entry in outputs)
             {
+                ParseOutputKey(entry.Key, out string projectId, out ProfileKind kind, out string profileId, out string sectionId);
+                string stored = StoredHash(entry.Value, transaction);
+                // The cache key includes the catalog identity the output was checked against.
+                string cacheKey = "O:" + entry.Key + ":" + stored + ":" + header.DrawingId;
+                if (stored != null && validated.Contains(cacheKey))
+                {
+                    total += PayloadLength(entry.Value, transaction);
+                    if (total > MaximumCatalogBytes) throw Invalid("каталог построений превышает 64 МБ");
+                    if (!projectIds.Contains(projectId)) throw Invalid("сведения о построении не соответствуют каталогу проектов");
+                    continue;
+                }
                 string json = ReadPayload(entry.Value, transaction, "построение " + entry.Key);
                 total += Utf8.GetByteCount(json);
                 if (total > MaximumCatalogBytes) throw Invalid("каталог построений превышает 64 МБ");
                 var output = Decode<StoredProfileOutput>(json);
-                ParseOutputKey(entry.Key, out string projectId, out ProfileKind kind, out string profileId, out string sectionId);
                 ValidateOutput(output, projectId, kind, profileId, sectionId);
                 if (!projectIds.Contains(projectId) || output.DrawingId != header.DrawingId)
                     throw Invalid("сведения о построении не соответствуют каталогу проектов");
+                if (stored != null) validated.Add(cacheKey);
                 // Fingerprint is checked only before replacing this output. A DWG
                 // copy with a new fingerprint may still open/export its projects.
             }

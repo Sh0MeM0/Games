@@ -60,10 +60,11 @@ namespace Profiles.AutoCAD
         public ProfilesForm(ProfileKind kind, ProfileProject initialProject) : this(kind, initialProject, null, null) { }
 
         public ProfilesForm(ProfileKind kind, ProfileProject initialProject, IReadOnlyList<ProfileProject> availableProjects, Action<ProfileProject> saveProjectToDrawing,
-            string selectedSectionId = null, Action<string> deleteProjectFromDrawing = null)
+            string selectedSectionId = null, Action<string> deleteProjectFromDrawing = null, ProfilesAutosave autosave = null)
         {
             this.saveProjectToDrawing = saveProjectToDrawing;
             this.deleteProjectFromDrawing = deleteProjectFromDrawing;
+            this.autosave = autosave;
             Text = "Профиля — данные и построение";
             StartPosition = FormStartPosition.CenterParent;
             MinimumSize = new Size(Px(1060), Px(700));
@@ -117,6 +118,7 @@ namespace Profiles.AutoCAD
                 Longitudinal = new List<LongitudinalPoint>(),
                 Sections = new List<CrossSection> { NewSection(1) }
             });
+            if (initialProject == null) transientProjectId = currentProjectId;
             if (initialProject != null)
             {
                 loading = true;
@@ -125,9 +127,16 @@ namespace Profiles.AutoCAD
                 tabs.SelectedTab = kind == ProfileKind.Longitudinal ? longPage : crossPage;
                 UpdateModeCaption();
                 loading = false;
-                SetStatus(saveProjectToDrawing == null
-                    ? "Восстановлены последние данные. Для хранения между сеансами экспортируйте JSON."
-                    : "Восстановлены данные проекта из DWG. После закрытия окна сохраните сам чертёж AutoCAD.");
+                if (autosave != null && autosave.Sync.Messages.Count > 0)
+                    SetStatus(autosave.Sync.Messages[0] + (autosave.Sync.Messages.Count > 1 ? " Ещё сообщений: " + (autosave.Sync.Messages.Count - 1) + " — в командной строке." : ""), true);
+                else if (autosave != null && libraryOnly.ContainsKey(initialProject.ProjectId))
+                    SetStatus("Открыт последний проект из автосохранения" +
+                        (string.IsNullOrEmpty(libraryOnly[initialProject.ProjectId].SourceDrawing) ? "" : " (чертёж «" + libraryOnly[initialProject.ProjectId].SourceDrawing + "»)") +
+                        ". В этот чертёж он запишется после первого изменения или построения; другой проект — в списке «Проект».");
+                else
+                    SetStatus(saveProjectToDrawing == null
+                        ? (autosave != null ? "Восстановлены последние данные из автосохранения." : "Восстановлены последние данные. Для хранения между сеансами экспортируйте JSON.")
+                        : "Восстановлены данные проекта из DWG. Изменения сохраняются автоматически в DWG" + (autosave != null ? " и в автосохранении" : "") + "; после работы сохраните сам чертёж.");
             }
             RestoreSectionSelection(selectedSectionId);
         }
@@ -328,8 +337,9 @@ namespace Profiles.AutoCAD
                 "Факт и берега — чёрный/белый; проект — красный; вода — синий.\n" +
                 "Результат — редактируемые объекты AutoCAD.\n" +
                 "После закрытия окна кнопкой «Построить» укажите точку вставки в текущей системе координат.\n\n" +
-                "Данные проектов сохраняются внутри DWG автоматически после корректного ввода.\n" +
-                "После закрытия окна сохраните сам чертёж AutoCAD, чтобы данные остались после перезапуска.\n" +
+                "Данные проектов сохраняются автоматически после корректного ввода: в DWG и в автосохранение\n" +
+                "%APPDATA%\\Sh0MeM0\\Profiles. Проекты доступны в любом чертеже; прежние версии — кнопка «Версии…».\n" +
+                "После работы сохраните сам чертёж AutoCAD, чтобы данные были и в файле DWG.\n" +
                 "JSON можно импортировать/экспортировать; автозапись JSON включается отдельно.\n" +
                 "Площади земляных работ рассчитываются по измеренным поперечникам. Проверяйте полноту съёмки и проектные границы.");
             explanation.MaximumSize = new Size(Px(950), 0);
@@ -823,6 +833,7 @@ namespace Profiles.AutoCAD
             RefreshProjectPicker();
             RestoreJsonSelection();
             RecalculateDerivedValues();
+            RememberProfileTemplate();
             UpdateTitle();
         }
 
@@ -855,7 +866,7 @@ namespace Profiles.AutoCAD
                     string.Join(Environment.NewLine, plan.Warnings.Take(12)) +
                     (plan.Warnings.Count > 12 ? "\n\nЕщё замечаний: " + (plan.Warnings.Count - 12) + ". Полный список находится на вкладке «Предпросмотр»." : "") + "\n\nПродолжить построение?",
                     "Замечания к профилю", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-                PersistProject(project, true);
+                PersistProject(project, true, forceDrawing: true);
                 Project = project;
                 Plan = plan;
                 RebuildExisting = rebuild;

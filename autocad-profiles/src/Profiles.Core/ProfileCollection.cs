@@ -9,11 +9,76 @@ namespace Profiles.Core
     /// The active profile uses the project's existing fields; the remaining profiles
     /// are stored exactly once, in their original tab order.
     /// </summary>
+    /// <summary>Read-only description of one profile tab; nothing is cloned.</summary>
+    public sealed class ProfileSummary
+    {
+        public string ProfileId { get; internal set; }
+        public string Name { get; internal set; }
+        public ProfileTemplate Template { get; internal set; }
+        public bool HasData { get; internal set; }
+        public int Index { get; internal set; }
+    }
+
     public static class ProfileCollection
     {
         public static List<ProfileData> Enumerate(ProfileProject source)
         {
             return Snapshots(ProjectFile.Clone(source));
+        }
+
+        /// <summary>Tab order, names, types and whether each tab holds input. The source is not modified or copied.</summary>
+        public static List<ProfileSummary> Describe(ProfileProject source)
+        {
+            if (source == null) return new List<ProfileSummary>();
+            var additional = source.AdditionalProfiles ?? new List<ProfileData>();
+            int active = Math.Max(0, Math.Min(source.ActiveProfileIndex, additional.Count));
+            var result = additional.Select(profile => new ProfileSummary
+            {
+                ProfileId = profile.ProfileId, Name = profile.Name, Template = profile.Template,
+                HasData = HasData(profile.Longitudinal, profile.Sections)
+            }).ToList();
+            result.Insert(active, new ProfileSummary
+            {
+                ProfileId = source.ProfileId, Name = source.ProfileName, Template = source.Template,
+                HasData = HasData(source.Longitudinal, source.Sections)
+            });
+            for (int i = 0; i < result.Count; i++) result[i].Index = i;
+            return result;
+        }
+
+        /// <summary>
+        /// True when a tab holds any entered value. A fresh tab (no stations and
+        /// only the default blank cross section) is empty, so changing its type
+        /// cannot lose anything.
+        /// </summary>
+        public static bool HasData(IList<LongitudinalPoint> longitudinal, IList<CrossSection> sections)
+        {
+            if (longitudinal != null && longitudinal.Count > 0) return true;
+            foreach (var section in sections ?? new List<CrossSection>())
+            {
+                if (section == null) continue;
+                if (section.Station.HasValue || section.Water.HasValue || section.ProjectBottom.HasValue || section.BottomWidth.HasValue ||
+                    section.LeftSlope.HasValue || section.RightSlope.HasValue || section.SiltThickness.HasValue ||
+                    section.SiltLeft.HasValue || section.SiltRight.HasValue || section.LeftBank.HasValue ||
+                    section.RightBank.HasValue || section.ExistingBottom.HasValue) return true;
+                foreach (var point in section.Points ?? new List<SectionPoint>())
+                    if (point != null && (point.Existing.HasValue || point.Design.HasValue ||
+                        (point.DistanceFromPrevious ?? 0) != 0 || !string.IsNullOrWhiteSpace(point.Label))) return true;
+            }
+            return false;
+        }
+
+        /// <summary>Changes the type of one profile; every entered value is kept (fields of other types stay stored).</summary>
+        public static ProfileProject ChangeTemplate(ProfileProject source, string profileId, ProfileTemplate template)
+        {
+            if (!Enum.IsDefined(typeof(ProfileTemplate), template)) throw new ProfileValidationException("Неизвестный шаблон профиля.");
+            var result = ProjectFile.Clone(source);
+            var profiles = Snapshots(result);
+            int index = Find(profiles, profileId);
+            profiles[index].Template = template;
+            Activate(result, profiles, result.ActiveProfileIndex);
+            ProfileValidation.Check(result, false);
+            return result;
         }
 
         public static ProfileProject Select(ProfileProject source, string profileId)

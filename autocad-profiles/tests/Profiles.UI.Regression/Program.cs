@@ -39,6 +39,8 @@ internal static class Program
             Run("thirteen point columns fit and preserve active edits on resize", ThirteenColumns);
             FormWorkflowTests.Run();
             passed += FormWorkflowTests.Passed;
+            AutosaveWorkflowTests.Run();
+            passed += AutosaveWorkflowTests.Passed;
             Console.WriteLine("Passed: " + passed + ", failed: 0");
             return 0;
         }

@@ -19,6 +19,13 @@ namespace Profiles.AutoCAD
         private readonly HashSet<string> jsonAutoSaveProjects = new HashSet<string>();
         private readonly Dictionary<string, string> lastWrittenJson = new Dictionary<string, string>();
         private readonly HashSet<string> memoryOnlyProjects = new HashSet<string>();
+        // Hash of the project JSON currently stored in the DWG: unchanged data is not rewritten.
+        private readonly Dictionary<string, string> drawingHashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        // Autosaved projects of other drawings, offered in the picker; written here only after a change or build.
+        private readonly Dictionary<string, LibraryEntry> libraryOnly = new Dictionary<string, LibraryEntry>(StringComparer.OrdinalIgnoreCase);
+        private readonly ProfilesAutosave autosave;
+        // The blank project shown when nothing exists yet; stored only once something is entered.
+        private string transientProjectId;
         private readonly Action<ProfileProject> saveProjectToDrawing;
         private readonly Action<string> deleteProjectFromDrawing;
         private string currentProjectId;
@@ -32,6 +39,8 @@ namespace Profiles.AutoCAD
             internal string Name;
             public override string ToString() => Name;
         }
+
+        private ProjectLibrary Library => autosave?.Library;
 
         private sealed class TemplateChoice
         {
@@ -56,13 +65,17 @@ namespace Profiles.AutoCAD
             bar.Controls.Add(save);
             var delete = Button("Удалить проект…", DeleteProject);
             bar.Controls.Add(delete);
+            var versions = Button("Версии…", ShowVersions);
+            versions.Enabled = autosave != null;
+            bar.Controls.Add(versions);
+            tips.SetToolTip(versions, "Автосохранённые версии текущего проекта и удалённые проекты. Любую можно открыть снова.");
             projectPicker.AccessibleName = "Проект в чертеже";
             templatePicker.AccessibleName = "Тип профиля";
             tips.SetToolTip(delete, "Удалить текущий проект (все его вкладки и поперечники) из чертежа. Уже построенные объекты остаются в DWG как обычные линии и тексты.");
-            tips.SetToolTip(projectPicker, "Независимые наборы исходных данных. Каждый проект может иметь продольный профиль и набор поперечников.");
-            tips.SetToolTip(templatePicker, "Выбор другого типа создаёт новую пустую вкладку профиля. Данные исходной вкладки сохраняются; их можно открыть снова.");
-            tips.SetToolTip(save, "Данные записываются в текущий чертёж (Ctrl+S). После закрытия окна сохраните сам DWG, чтобы оставить изменения на диске.");
-            tips.SetToolTip(autoSaveJson, "По умолчанию JSON не переписывается автоматически. Сначала импортируйте или экспортируйте файл, затем включите эту опцию явно.");
+            tips.SetToolTip(projectPicker, "Независимые наборы исходных данных. В списке также проекты из других чертежей (автосохранение): выберите, чтобы продолжить работу.");
+            tips.SetToolTip(templatePicker, "Тип текущего профиля. Пустой профиль меняет тип сразу; для профиля с данными можно перейти к вкладке этого типа, сменить тип с сохранением данных или создать новую вкладку.");
+            tips.SetToolTip(save, "Данные записываются в текущий чертёж (Ctrl+S) и в автосохранение. После закрытия окна сохраните сам DWG, чтобы оставить изменения в файле чертежа.");
+            tips.SetToolTip(autoSaveJson, "Переписывать выбранный JSON-файл после каждого изменения. Включается сам после «Экспорт JSON…»; для импортированного файла включите явно.");
             return bar;
         }
 
@@ -75,21 +88,56 @@ namespace Profiles.AutoCAD
             templatePicker.SelectionChangeCommitted += TemplateSelectionChanged;
             if (available != null)
                 foreach (var project in available) RegisterProject(project);
+            if (autosave != null)
+            {
+                foreach (var pair in autosave.Sync.DrawingHashes) drawingHashes[pair.Key] = pair.Value;
+                foreach (var entry in autosave.Sync.LibraryOnly) libraryOnly[entry.ProjectId] = entry;
+                LoadJsonLinks();
+            }
             projectPicker.SelectionChangeCommitted += ProjectSelectionChanged;
             autoSaveJson.CheckedChanged += (s, e) =>
             {
                 if (loading || currentProjectId == null) return;
                 if (autoSaveJson.Checked) jsonAutoSaveProjects.Add(currentProjectId);
                 else jsonAutoSaveProjects.Remove(currentProjectId);
+                RememberJsonLink(currentProjectId);
                 SetDirty();
             };
             autoSaveTimer.Tick += (s, e) =>
             {
                 autoSaveTimer.Stop();
                 if (!dirty || loading || saving || HasActiveNumericEditor || (stationInputEdited && sectionStation.ContainsFocus)) return;
-                if (saveProjectToDrawing == null && !(autoSaveJson.Checked && currentFile != null)) return;
+                if (saveProjectToDrawing == null && autosave == null && !(autoSaveJson.Checked && currentFile != null)) return;
                 TrySaveCurrent(false);
             };
+        }
+
+        /// <summary>JSON files linked in earlier sessions; autosave is restored only while the folder exists.</summary>
+        private void LoadJsonLinks()
+        {
+            try
+            {
+                foreach (var entry in Library.List())
+                {
+                    if (string.IsNullOrEmpty(entry.JsonPath)) continue;
+                    jsonPaths[entry.ProjectId] = entry.JsonPath;
+                    string folder = Path.GetDirectoryName(entry.JsonPath);
+                    if (entry.JsonAutoSave && !string.IsNullOrEmpty(folder) && Directory.Exists(folder)) jsonAutoSaveProjects.Add(entry.ProjectId);
+                }
+            }
+            catch (Exception error) when (error is ProfileValidationException || error is IOException || error is UnauthorizedAccessException || error is ArgumentException)
+            { /* JSON links are a convenience; the editor still opens. */ }
+        }
+
+        private void RememberJsonLink(string projectId)
+        {
+            if (Library == null || projectId == null) return;
+            try
+            {
+                jsonPaths.TryGetValue(projectId, out var path);
+                Library.SetJsonLink(projectId, path, path != null && jsonAutoSaveProjects.Contains(projectId));
+            }
+            catch (ProfileValidationException error) { SetStatus(error.Message, true); }
         }
 
         private void SelectTemplate(ProfileTemplate template)
@@ -115,25 +163,52 @@ namespace Profiles.AutoCAD
             longGrid.Invalidate();
         }
 
-        private void RegisterProject(ProfileProject project)
+        private void RegisterProject(ProfileProject project, bool owned = false)
         {
             if (project == null) return;
-            var clone = ProjectFile.Clone(project);
+            // An owned snapshot was just deserialized for this list; others are copied.
+            var clone = owned ? project : ProjectFile.Clone(project);
             int index = projects.FindIndex(p => string.Equals(p.ProjectId, clone.ProjectId, StringComparison.Ordinal));
             if (index < 0) projects.Add(clone);
             else projects[index] = clone;
         }
 
+        private static string LibraryCaption(LibraryEntry entry) =>
+            " — автосохранение" + (string.IsNullOrEmpty(entry.SourceDrawing) ? "" : ", «" + entry.SourceDrawing + "»") +
+            ", " + ProfilesAutosave.LocalTime(entry.SavedUtc);
+
         private void RefreshProjectPicker()
         {
+            var choices = projects.Select(item => new ProjectChoice
+            {
+                Id = item.ProjectId,
+                Name = item.Name + (libraryOnly.TryGetValue(item.ProjectId, out var entry) ? LibraryCaption(entry) : "")
+            }).ToList();
+            var listed = new HashSet<string>(choices.Select(choice => choice.Id), StringComparer.OrdinalIgnoreCase);
+            choices.AddRange(libraryOnly.Values.Where(entry => !listed.Contains(entry.ProjectId))
+                .OrderByDescending(entry => entry.SavedUtc)
+                .Select(entry => new ProjectChoice { Id = entry.ProjectId, Name = entry.Name + LibraryCaption(entry) }));
             bool old = loading;
             loading = true;
-            projectPicker.Items.Clear();
-            foreach (var item in projects)
-                projectPicker.Items.Add(new ProjectChoice { Id = item.ProjectId, Name = item.Name });
-            for (int i = 0; i < projectPicker.Items.Count; i++)
-                if (((ProjectChoice)projectPicker.Items[i]).Id == currentProjectId) { projectPicker.SelectedIndex = i; break; }
-            loading = old;
+            try
+            {
+                // Autosave runs after every pause in typing: rebuild the list only when it changed.
+                bool same = projectPicker.Items.Count == choices.Count && choices.Select((choice, index) =>
+                    projectPicker.Items[index] is ProjectChoice item && item.Id == choice.Id && item.Name == choice.Name).All(equal => equal);
+                if (!same)
+                {
+                    projectPicker.BeginUpdate();
+                    try
+                    {
+                        projectPicker.Items.Clear();
+                        foreach (var choice in choices) projectPicker.Items.Add(choice);
+                    }
+                    finally { projectPicker.EndUpdate(); }
+                }
+                int selected = choices.FindIndex(choice => choice.Id == currentProjectId);
+                if (projectPicker.SelectedIndex != selected) projectPicker.SelectedIndex = selected;
+            }
+            finally { loading = old; }
         }
 
         private void RestoreJsonSelection()
@@ -152,9 +227,19 @@ namespace Profiles.AutoCAD
             string requested = choice.Id;
             if (!TrySaveCurrent(true)) { RefreshProjectPicker(); return; }
             var target = projects.FirstOrDefault(p => p.ProjectId == requested);
+            if (target == null && Library != null && libraryOnly.ContainsKey(requested))
+            {
+                try { target = Library.Load(requested); }
+                catch (ProfileValidationException error) { RefreshProjectPicker(); ShowError(error.Message); return; }
+            }
             if (target == null) { RefreshProjectPicker(); return; }
             LoadProject(ProjectFile.Clone(target));
-            SetStatus("Открыт проект «" + currentProjectName + "». Данные проектов хранятся отдельно.");
+            if (libraryOnly.TryGetValue(requested, out var entry))
+                SetStatus("Открыт проект «" + currentProjectName + "» из автосохранения" +
+                    (string.IsNullOrEmpty(entry.SourceDrawing) ? "" : " (чертёж «" + entry.SourceDrawing + "»)") +
+                    ". В этот чертёж он запишется после первого изменения или построения.");
+            else
+                SetStatus("Открыт проект «" + currentProjectName + "». Данные проектов хранятся отдельно.");
         }
 
         private void NewProject()
@@ -162,9 +247,15 @@ namespace Profiles.AutoCAD
             if (!TrySaveCurrent(true)) return;
             string name = AskProjectName("Новый проект", UniqueProjectName("Проект"));
             if (name == null) return;
+            NewProjectNamed(name);
+        }
+
+        private void NewProjectNamed(string name)
+        {
+            if (!TrySaveCurrent(true)) return;
             LoadProject(BlankProject(name));
             SetDirty();
-            TrySaveCurrent(true);
+            TrySaveCurrent(true, forceDrawing: true);
         }
 
         private ProfileProject BlankProject(string name) => new ProfileProject
@@ -188,12 +279,28 @@ namespace Profiles.AutoCAD
                 "Удалить проект «" + deletedName + "»" + (deleteProjectFromDrawing != null ? " из чертежа" : "") + "?\n\n" +
                 "Будут удалены его исходные данные: все вкладки профилей, таблицы и поперечники. " +
                 "Уже построенные линии и тексты останутся в чертеже как обычные объекты — при необходимости удалите их вручную.\n\n" +
-                "Если проект может понадобиться, сначала нажмите «Отмена» и экспортируйте его в JSON.",
+                (autosave != null
+                    ? "Проект можно будет вернуть: «Версии…» → «Удалённые проекты»."
+                    : "Если проект может понадобиться, сначала нажмите «Нет» и экспортируйте его в JSON."),
                 "Удаление проекта", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+            DeleteProjectConfirmed();
+        }
+
+        private void DeleteProjectConfirmed()
+        {
+            if (currentProjectId == null) return;
+            // The recoverable copy in «Удалённые проекты» gets the latest valid edits.
+            if (autosave != null) TrySaveCurrent(false);
+            string deletedId = currentProjectId, deletedName = currentProjectName ?? "Проект";
             autoSaveTimer.Stop();
             interpolationTimer.Stop();
             try { deleteProjectFromDrawing?.Invoke(deletedId); }
             catch (Exception ex) { ShowError("Проект не удалён: " + ex.Message); return; }
+            string libraryWarning = null;
+            try { Library?.Delete(deletedId); }
+            catch (ProfileValidationException error) { libraryWarning = error.Message; }
+            drawingHashes.Remove(deletedId);
+            libraryOnly.Remove(deletedId);
             projects.RemoveAll(project => string.Equals(project.ProjectId, deletedId, StringComparison.OrdinalIgnoreCase));
             jsonPaths.Remove(deletedId);
             jsonAutoSaveProjects.Remove(deletedId);
@@ -206,7 +313,9 @@ namespace Profiles.AutoCAD
             // next project (or an empty one) without reading the old buffer.
             LoadProject(next != null ? ProjectFile.Clone(next) : BlankProject(UniqueProjectName("Проект")));
             SetStatus("Проект «" + deletedName + "» удалён. Открыт проект «" + currentProjectName + "»." +
-                (deleteProjectFromDrawing != null ? " Сохраните DWG, чтобы удаление сохранилось на диске." : ""));
+                (deleteProjectFromDrawing != null ? " Сохраните DWG, чтобы удаление сохранилось на диске." : "") +
+                (autosave != null && libraryWarning == null ? " Вернуть: «Версии…» → «Удалённые проекты»." : "") +
+                (libraryWarning != null ? " " + libraryWarning : ""), libraryWarning != null);
         }
 
         private void RenameProject()
@@ -261,42 +370,107 @@ namespace Profiles.AutoCAD
             }
         }
 
-        private void PersistProject(ProfileProject project, bool explicitSave)
+        private void PersistProject(ProfileProject project, bool explicitSave, bool forceDrawing = false)
         {
-            // Clone performs numeric/schema validation without requiring complete geometry.
-            var snapshot = ProjectFile.Clone(project);
-            if (saveProjectToDrawing != null) saveProjectToDrawing(snapshot);
+            // One serialization validates the project (numbers, schema) without
+            // requiring complete geometry and encodes it for every store.
+            string json = ProjectFile.Serialize(project);
+            var snapshot = ProjectFile.Deserialize(json);
+            string id = snapshot.ProjectId;
+            if (id == transientProjectId)
+            {
+                if (!dirty && !forceDrawing)
+                {
+                    // Nothing was entered: an untouched blank project is not stored anywhere.
+                    RegisterProject(snapshot, owned: true);
+                    Project = ProjectFile.Deserialize(json);
+                    profileContainer = Project;
+                    RefreshProjectPicker();
+                    UpdateTitle();
+                    return;
+                }
+                transientProjectId = null;
+            }
+            string hash = ProjectLibrary.Hash(json);
+            bool inDrawing = false;
+            string drawingError = null;
+            if (saveProjectToDrawing != null)
+            {
+                if (drawingHashes.TryGetValue(id, out var stored) && stored == hash) inDrawing = true;
+                // A project opened from another drawing's autosave is copied here
+                // only after it changes or is built: browsing adds nothing to the DWG.
+                else if (!libraryOnly.ContainsKey(id) || dirty || forceDrawing)
+                {
+                    try
+                    {
+                        if (autosave?.SaveSerializedToDrawing != null) autosave.SaveSerializedToDrawing(snapshot, json);
+                        else saveProjectToDrawing(snapshot);
+                        inDrawing = true;
+                        drawingHashes[id] = hash;
+                        libraryOnly.Remove(id);
+                    }
+                    catch (Exception error) { drawingError = error.Message; }
+                }
+            }
+            bool librarySaved = false;
+            string libraryError = null;
+            if (Library != null)
+            {
+                try
+                {
+                    var entry = Library.Save(snapshot, json, inDrawing ? autosave.DrawingKey() : null, autosave.DrawingName);
+                    librarySaved = true;
+                    if (libraryOnly.ContainsKey(id)) libraryOnly[id] = entry;
+                }
+                catch (ProfileValidationException error) { libraryError = error.Message; }
+            }
+            string jsonError = null;
             if (autoSaveJson.Checked && currentFile != null)
             {
-                ProjectFile.Save(currentFile, snapshot);
-                lastWrittenJson[snapshot.ProjectId] = ProjectFile.Serialize(snapshot);
+                try
+                {
+                    ProjectFile.Save(currentFile, snapshot);
+                    lastWrittenJson[id] = json;
+                }
+                catch (ProfileValidationException error) { jsonError = error.Message; }
             }
-            RegisterProject(snapshot);
-            Project = snapshot;
-            profileContainer = ProjectFile.Clone(snapshot);
-            bool savedJson = lastWrittenJson.TryGetValue(snapshot.ProjectId, out var written) && written == ProjectFile.Serialize(snapshot);
-            dirty = saveProjectToDrawing == null && !savedJson;
-            if (dirty) memoryOnlyProjects.Add(snapshot.ProjectId);
-            else memoryOnlyProjects.Remove(snapshot.ProjectId);
+            bool savedJson = lastWrittenJson.TryGetValue(id, out var written) && written == json;
+            if (drawingError != null && !librarySaved && !savedJson)
+                throw new ProfileValidationException("Данные не записаны в DWG: " + drawingError + (libraryError != null ? " " + libraryError : ""));
+            RegisterProject(snapshot, owned: true);
+            // Read-only views of the saved state; nothing mutates them in place.
+            Project = ProjectFile.Deserialize(json);
+            profileContainer = Project;
+            dirty = !(inDrawing || librarySaved || savedJson);
+            if (dirty) memoryOnlyProjects.Add(id);
+            else memoryOnlyProjects.Remove(id);
             lastSaveError = null;
             RefreshProjectPicker();
             UpdateTitle();
-            if (saveProjectToDrawing != null)
-                SetStatus("Данные проекта сохранены в DWG. После закрытия окна сохраните сам чертёж AutoCAD.");
+            if (drawingError != null)
+                SetStatus("Не записано в DWG: " + drawingError + " Данные сохранены в автосохранении и не потеряются; запись в DWG повторится при следующем сохранении.", true);
+            else if (jsonError != null)
+                SetStatus("JSON не обновлён: " + jsonError + (inDrawing || librarySaved ? " Данные сохранены" + (inDrawing ? " в DWG" : "") + (librarySaved ? (inDrawing ? " и" : "") + " в автосохранении" : "") + "." : ""), true);
+            else if (libraryError != null)
+                SetStatus((inDrawing ? "Данные сохранены в DWG. " : "") + libraryError, true);
+            else if (inDrawing)
+                SetStatus("Сохранено в DWG" + (librarySaved ? " и в автосохранении" : "") + ". После работы сохраните сам чертёж AutoCAD (Ctrl+S).");
+            else if (librarySaved)
+                SetStatus("Сохранено в автосохранении. В этот чертёж проект запишется после первого изменения или построения.");
             else if (autoSaveJson.Checked && currentFile != null)
                 SetStatus("Автосохранено в JSON: " + Path.GetFileName(currentFile));
             else if (explicitSave)
                 SetStatus("Данные сохранены в текущем окне. Для хранения между сеансами экспортируйте JSON.");
         }
 
-        private bool TrySaveCurrent(bool showError)
+        private bool TrySaveCurrent(bool showError, bool forceDrawing = false)
         {
             if (loading || saving) return true;
             autoSaveTimer.Stop();
             saving = true;
             try
             {
-                PersistProject(ReadProject(), showError);
+                PersistProject(ReadProject(), showError, forceDrawing);
                 return true;
             }
             catch (Exception ex)
@@ -313,8 +487,8 @@ namespace Profiles.AutoCAD
 
         private void SaveDraftExplicit()
         {
-            if (saveProjectToDrawing == null) { SaveProject(); return; }
-            TrySaveCurrent(true);
+            if (saveProjectToDrawing == null && autosave == null) { SaveProject(); return; }
+            TrySaveCurrent(true, forceDrawing: true);
         }
 
         private void OpenProject()
@@ -336,12 +510,22 @@ namespace Profiles.AutoCAD
                             project.ProjectId = Guid.NewGuid().ToString("N");
                             project.Name += " — копия";
                         }
+                        else
+                        {
+                            // The replaced data stays available in «Версии…».
+                            try { Library?.Checkpoint(project.ProjectId); }
+                            catch (ProfileValidationException error) { SetStatus(error.Message, true); }
+                        }
                     }
                     jsonPaths[project.ProjectId] = dialog.FileName;
                     jsonAutoSaveProjects.Remove(project.ProjectId);
                     LoadProject(project);
                     SetDirty();
-                    if (TrySaveCurrent(true)) SetStatus("Импортирован проект «" + currentProjectName + "». Автозапись JSON выключена; исходный файл не изменён.");
+                    if (TrySaveCurrent(true))
+                    {
+                        RememberJsonLink(currentProjectId);
+                        SetStatus("Импортирован проект «" + currentProjectName + "». Автозапись в этот JSON выключена; исходный файл не изменён.");
+                    }
                 }
                 catch (Exception ex) { ShowError("Не удалось импортировать файл: " + ex.Message); }
             }
@@ -349,26 +533,41 @@ namespace Profiles.AutoCAD
 
         private void SaveProject()
         {
+            string suggested = currentFile == null ? SafeJsonName(currentProjectName) : Path.GetFileName(currentFile);
+            using (var dialog = new SaveFileDialog
+            {
+                Filter = "Данные профилей (*.json)|*.json", Title = "Экспортировать проект профилей",
+                AddExtension = true, DefaultExt = "json", FileName = suggested,
+                InitialDirectory = currentFile == null ? "" : Path.GetDirectoryName(currentFile), OverwritePrompt = true
+            })
+            {
+                if (dialog.ShowDialog(this) != DialogResult.OK) return;
+                ExportTo(dialog.FileName);
+            }
+        }
+
+        private static string SafeJsonName(string name)
+        {
+            string result = new string((name ?? "Профили").Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c).ToArray()).Trim();
+            return (result.Length == 0 ? "Профили" : result) + ".json";
+        }
+
+        private void ExportTo(string path)
+        {
             bool exported = false;
             try
             {
                 var project = ReadProject();
-                using (var dialog = new SaveFileDialog
-                {
-                    Filter = "Данные профилей (*.json)|*.json", Title = "Экспортировать проект профилей",
-                    AddExtension = true, DefaultExt = "json", FileName = currentFile == null ? "Профили.json" : Path.GetFileName(currentFile),
-                    InitialDirectory = currentFile == null ? "" : Path.GetDirectoryName(currentFile), OverwritePrompt = true
-                })
-                {
-                    if (dialog.ShowDialog(this) != DialogResult.OK) return;
-                    ProjectFile.Save(dialog.FileName, project);
-                    exported = true;
-                    lastWrittenJson[project.ProjectId] = ProjectFile.Serialize(project);
-                    jsonPaths[currentProjectId] = dialog.FileName;
-                    RestoreJsonSelection();
-                    PersistProject(project, true);
-                    SetStatus("Экспортирован JSON: " + Path.GetFileName(currentFile) + ". Автозапись файла включается отдельным флажком.");
-                }
+                ProjectFile.Save(path, project);
+                exported = true;
+                lastWrittenJson[project.ProjectId] = ProjectFile.Serialize(project);
+                jsonPaths[currentProjectId] = path;
+                // The user chose this file: later changes keep it up to date.
+                jsonAutoSaveProjects.Add(currentProjectId);
+                RestoreJsonSelection();
+                PersistProject(project, true);
+                RememberJsonLink(currentProjectId);
+                SetStatus("Экспортирован JSON: " + Path.GetFileName(currentFile) + ". Дальнейшие изменения записываются в него автоматически (флажок «Автосохранять JSON»).");
             }
             catch (Exception ex)
             {
@@ -403,7 +602,7 @@ namespace Profiles.AutoCAD
                     "Несохранённые изменения", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
                 if (answer != DialogResult.Yes) { e.Cancel = true; return; }
             }
-            else if (saveProjectToDrawing == null && memoryOnlyProjects.Count > 0)
+            else if (saveProjectToDrawing == null && autosave == null && memoryOnlyProjects.Count > 0)
             {
                 var answer = MessageBox.Show(this,
                     "В этом окне нет записи в DWG. Есть проекты, изменения которых хранятся только в памяти: " + memoryOnlyProjects.Count + ".\n\nДа — экспортировать текущий проект в JSON и остаться в окне.\nНет — закрыть без сохранения оставшихся изменений.\nОтмена — вернуться к данным.",
@@ -426,7 +625,7 @@ namespace Profiles.AutoCAD
             preview.MarkStale();
             previewNotes.Text = "Данные изменены. Нажмите «Обновить» для повторной проверки.";
             UpdateTitle();
-            SetStatus("Есть изменения. Корректные данные будут автоматически сохранены в DWG.");
+            SetStatus("Есть изменения. Корректные данные сохраняются автоматически" + (saveProjectToDrawing != null ? " в DWG" : "") + (autosave != null ? " и в автосохранении" : "") + ".");
             autoSaveTimer.Stop(); autoSaveTimer.Start();
             interpolationTimer.Stop(); interpolationTimer.Start();
         }

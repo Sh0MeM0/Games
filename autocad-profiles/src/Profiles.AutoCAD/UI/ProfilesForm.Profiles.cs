@@ -15,6 +15,7 @@ namespace Profiles.AutoCAD
             Padding = new Point(12, 3), Margin = new Padding(0, 3, 4, 0)
         };
         private readonly Dictionary<string, string> profileSectionSelections = new Dictionary<string, string>();
+        private readonly Dictionary<string, string> lastProfileByTemplate = new Dictionary<string, string>();
         private Button deleteProfileButton;
         private ProfileProject profileContainer;
         private bool updatingProfileTabs;
@@ -59,9 +60,13 @@ namespace Profiles.AutoCAD
                     page.Dispose();
                 }
                 if (profileContainer == null) return;
-                foreach (var profile in ProfileCollection.Enumerate(profileContainer))
+                foreach (var profile in ProfileCollection.Describe(profileContainer))
                 {
-                    var page = new TabPage(profile.Name) { Tag = profile.ProfileId, ToolTipText = profile.Name };
+                    var page = new TabPage(TabCaption(profile.Name, profile.Template))
+                    {
+                        Tag = profile.ProfileId,
+                        ToolTipText = profile.Name + " — " + TemplateName(profile.Template) + (profile.HasData ? "" : " (пока без данных)")
+                    };
                     profileTabs.TabPages.Add(page);
                     if (string.Equals(profile.ProfileId, CurrentProfileId, StringComparison.OrdinalIgnoreCase))
                         profileTabs.SelectedTab = page;
@@ -106,7 +111,7 @@ namespace Profiles.AutoCAD
         private void AddProfile()
         {
             if (!TrySaveCurrent(true)) return;
-            var profiles = ProfileCollection.Enumerate(Project);
+            var profiles = ProfileCollection.Describe(Project);
             int number = 1;
             while (profiles.Any(profile => string.Equals(profile.Name, "Профиль " + number, StringComparison.OrdinalIgnoreCase))) number++;
             string name = AskProjectName("Новый профиль", "Профиль " + number, "Название профиля", 200);
@@ -123,13 +128,15 @@ namespace Profiles.AutoCAD
 
         private void DeleteProfile()
         {
-            if (profileContainer == null || ProfileCollection.Enumerate(profileContainer).Count <= 1) return;
+            if (profileContainer == null || ProfileCollection.Describe(profileContainer).Count <= 1) return;
             if (!TrySaveCurrent(true)) return;
             if (MessageBox.Show(this,
                 "Удалить профиль «" + Project.ProfileName + "»?\n\n" +
                 "Будут удалены его продольные данные и поперечники. Остальные профили проекта сохранятся. " +
                 "Уже построенные объекты останутся в чертеже; при необходимости удалите их вручную.\n\n" +
-                "Чтобы сохранить копию, нажмите «Нет» и экспортируйте проект в JSON.",
+                (autosave != null
+                    ? "Состояние до удаления останется в «Версии…»."
+                    : "Чтобы сохранить копию, нажмите «Нет» и экспортируйте проект в JSON."),
                 "Удаление профиля", MessageBoxButtons.YesNo, MessageBoxIcon.Warning,
                 MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
             try { RemoveCurrentProfile(); }
@@ -138,6 +145,9 @@ namespace Profiles.AutoCAD
 
         private void RemoveCurrentProfile()
         {
+            // The removed tab stays available in «Версии…».
+            try { if (Library != null && currentProjectId != null) Library.Checkpoint(currentProjectId); }
+            catch (ProfileValidationException error) { SetStatus(error.Message, true); }
             var remaining = ProfileCollection.Remove(Project, CurrentProfileId);
             string removedSelection = ProfileSelectionKey;
             autoSaveTimer.Stop();
@@ -166,6 +176,45 @@ namespace Profiles.AutoCAD
             catch (Exception error) { ShowError(error.Message); }
         }
 
+        internal enum TemplateSwitchChoice { Cancel, OpenExisting, ChangeCurrent, CreateNew }
+
+        /// <summary>Chooses what a type change does for a profile with data; replaced in UI tests.</summary>
+        internal Func<string, string, string, TemplateSwitchChoice> ChooseTemplateSwitch { get; set; }
+
+        internal static string TemplateName(ProfileTemplate template) =>
+            template == ProfileTemplate.NewChannel ? "Новый канал" : template == ProfileTemplate.Nvk ? "Сети НВК" : "Подчистка канала";
+
+        private static string TemplateShortName(ProfileTemplate template) =>
+            template == ProfileTemplate.NewChannel ? "новый канал" : template == ProfileTemplate.Nvk ? "НВК" : "подчистка";
+
+        /// <summary>The type is shown on every tab, so it is always visible where the data of each type lives.</summary>
+        internal static string TabCaption(string name, ProfileTemplate template)
+        {
+            string marker = template == ProfileTemplate.NewChannel ? "новый канал" : template == ProfileTemplate.Nvk ? "нвк" : "подчист";
+            return (name ?? "").IndexOf(marker, StringComparison.OrdinalIgnoreCase) >= 0 ? name : name + " · " + TemplateShortName(template);
+        }
+
+        private string TemplateMemoryKey(ProfileTemplate template) => currentProjectId + ":" + template;
+
+        private void RememberProfileTemplate()
+        {
+            if (profileContainer != null && currentProjectId != null)
+                lastProfileByTemplate[TemplateMemoryKey(profileContainer.Template)] = profileContainer.ProfileId;
+        }
+
+        private ProfileSummary ProfileForTemplate(List<ProfileSummary> profiles, ProfileTemplate template)
+        {
+            var candidates = profiles.Where(profile => profile.Template == template &&
+                !string.Equals(profile.ProfileId, CurrentProfileId, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (lastProfileByTemplate.TryGetValue(TemplateMemoryKey(template), out var remembered))
+            {
+                var match = candidates.FirstOrDefault(profile => string.Equals(profile.ProfileId, remembered, StringComparison.OrdinalIgnoreCase));
+                if (match != null) return match;
+            }
+            // Prefer a tab that already holds work over an empty one.
+            return candidates.LastOrDefault(profile => profile.HasData) ?? candidates.LastOrDefault();
+        }
+
         private void TemplateSelectionChanged(object sender, EventArgs e)
         {
             if (loading || profileContainer == null) return;
@@ -182,22 +231,100 @@ namespace Profiles.AutoCAD
             if (!TrySaveCurrent(true)) return;
             try
             {
-                RememberProfileSection();
-                string prefix = requested == ProfileTemplate.NewChannel ? "Новый канал" :
-                    requested == ProfileTemplate.Nvk ? "Сети НВК" : "Подчистка канала";
-                var names = ProfileCollection.Enumerate(Project).Select(profile => profile.Name).ToList();
-                string name = prefix;
-                int number = 2;
-                while (names.Any(existing => string.Equals(existing, name, StringComparison.OrdinalIgnoreCase)))
-                    name = prefix + " " + number++;
-                var created = ProfileCollection.Add(Project, name);
-                created.Template = requested;
-                LoadProject(created);
-                SetDirty();
-                if (TrySaveCurrent(true))
-                    SetStatus("Создана пустая вкладка «" + name + "». Исходный профиль со всеми данными сохранён на прежней вкладке.");
+                var profiles = ProfileCollection.Describe(Project);
+                var current = profiles.First(profile => string.Equals(profile.ProfileId, CurrentProfileId, StringComparison.OrdinalIgnoreCase));
+                var existing = ProfileForTemplate(profiles, requested);
+                TemplateSwitchChoice choice;
+                if (!current.HasData) choice = TemplateSwitchChoice.ChangeCurrent;
+                else
+                {
+                    var chooser = ChooseTemplateSwitch ?? AskTemplateSwitch;
+                    choice = chooser(TemplateName(requested), current.Name, existing?.Name);
+                    if (choice == TemplateSwitchChoice.OpenExisting && existing == null) choice = TemplateSwitchChoice.CreateNew;
+                }
+                switch (choice)
+                {
+                    case TemplateSwitchChoice.OpenExisting:
+                        RememberProfileSection();
+                        LoadProject(ProfileCollection.Select(Project, existing.ProfileId));
+                        RestoreProfileSection();
+                        SetDirty();
+                        if (TrySaveCurrent(true))
+                            SetStatus("Открыта вкладка «" + existing.Name + "» (" + TemplateName(requested) + "). Данные вкладки «" + current.Name + "» сохранены.");
+                        break;
+                    case TemplateSwitchChoice.ChangeCurrent:
+                        RememberProfileSection();
+                        LoadProject(ProfileCollection.ChangeTemplate(Project, CurrentProfileId, requested));
+                        RestoreProfileSection();
+                        SetDirty();
+                        if (TrySaveCurrent(true))
+                            SetStatus(current.HasData
+                                ? "Тип профиля «" + current.Name + "» изменён на «" + TemplateName(requested) + "». Все введённые данные сохранены; столбцы прежнего типа скрыты, их значения хранятся и вернутся при обратной смене."
+                                : "Тип профиля «" + current.Name + "»: " + TemplateName(requested) + ".");
+                        break;
+                    case TemplateSwitchChoice.CreateNew:
+                        RememberProfileSection();
+                        string prefix = TemplateName(requested);
+                        string name = prefix;
+                        int number = 2;
+                        while (profiles.Any(profile => string.Equals(profile.Name, name, StringComparison.OrdinalIgnoreCase)))
+                            name = prefix + " " + number++;
+                        var created = ProfileCollection.Add(Project, name);
+                        created.Template = requested;
+                        LoadProject(created);
+                        SetDirty();
+                        if (TrySaveCurrent(true))
+                            SetStatus("Создана пустая вкладка «" + name + "». Профиль «" + current.Name + "» со всеми данными сохранён на своей вкладке.");
+                        break;
+                    default:
+                        SetStatus("Тип профиля не изменён.");
+                        break;
+                }
             }
             catch (Exception error) { ShowError(error.Message); }
+        }
+
+        private TemplateSwitchChoice AskTemplateSwitch(string requested, string current, string existing)
+        {
+            using (var dialog = new Form
+            {
+                Text = "Тип профиля: " + requested, Font = Font, StartPosition = FormStartPosition.CenterParent,
+                FormBorderStyle = FormBorderStyle.FixedDialog, MinimizeBox = false, MaximizeBox = false,
+                ShowInTaskbar = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink
+            })
+            {
+                var choice = TemplateSwitchChoice.Cancel;
+                var layout = new TableLayoutPanel { AutoSize = true, ColumnCount = 1, Padding = new Padding(Px(12)) };
+                layout.Controls.Add(new Label
+                {
+                    AutoSize = true, MaximumSize = new Size(Px(520), 0), Margin = new Padding(0, 0, 0, Px(8)),
+                    Text = "В профиле «" + current + "» есть данные. Они сохранены и никуда не пропадут.\n\nЧто сделать с типом «" + requested + "»?"
+                });
+                Button Choice(string text, string hint, TemplateSwitchChoice value)
+                {
+                    var button = new Button { Text = text, AutoSize = true, MinimumSize = new Size(Px(520), Px(30)), TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(0, Px(2), 0, Px(2)) };
+                    button.Click += (s, e) => { choice = value; dialog.DialogResult = DialogResult.OK; };
+                    tips.SetToolTip(button, hint);
+                    layout.Controls.Add(button);
+                    return button;
+                }
+                Button first = null;
+                if (existing != null)
+                    first = Choice("Перейти к вкладке «" + existing + "» (" + requested + ")",
+                        "Открыть уже созданный профиль этого типа со всеми его данными.", TemplateSwitchChoice.OpenExisting);
+                var change = Choice("Сменить тип профиля «" + current + "» на «" + requested + "» (данные сохранятся)",
+                    "Пикеты, отметки и поперечники остаются. Столбцы, которых нет у нового типа, скрываются; их значения хранятся и вернутся при обратной смене.", TemplateSwitchChoice.ChangeCurrent);
+                var create = Choice("Создать новую пустую вкладку «" + requested + "»",
+                    "Отдельный профиль этого типа. Профиль «" + current + "» остаётся на своей вкладке.", TemplateSwitchChoice.CreateNew);
+                var cancel = new Button { Text = "Отмена", AutoSize = true, MinimumSize = new Size(Px(90), Px(28)), DialogResult = DialogResult.Cancel, Anchor = AnchorStyles.Right, Margin = new Padding(0, Px(8), 0, 0) };
+                layout.Controls.Add(cancel);
+                dialog.Controls.Add(layout);
+                dialog.CancelButton = cancel;
+                var accept = first ?? create;
+                dialog.AcceptButton = accept;
+                dialog.Shown += (s, e) => accept.Focus();
+                return dialog.ShowDialog(this) == DialogResult.OK ? choice : TemplateSwitchChoice.Cancel;
+            }
         }
     }
 }

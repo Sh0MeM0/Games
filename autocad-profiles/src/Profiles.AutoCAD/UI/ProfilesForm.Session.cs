@@ -30,6 +30,9 @@ namespace Profiles.AutoCAD
         internal readonly Dictionary<string, string> LastWrittenJson = new Dictionary<string, string>();
         internal readonly HashSet<string> MemoryOnlyProjects = new HashSet<string>();
         internal readonly Dictionary<string, string> ProfileSectionSelections = new Dictionary<string, string>();
+        internal readonly Dictionary<string, string> DrawingHashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        internal readonly Dictionary<string, LibraryEntry> LibraryOnly = new Dictionary<string, LibraryEntry>(StringComparer.OrdinalIgnoreCase);
+        internal readonly Dictionary<string, string> LastProfileByTemplate = new Dictionary<string, string>();
     }
 
     public sealed partial class ProfilesForm
@@ -57,6 +60,9 @@ namespace Profiles.AutoCAD
             foreach (var entry in lastWrittenJson) state.LastWrittenJson[entry.Key] = entry.Value;
             foreach (string id in memoryOnlyProjects) state.MemoryOnlyProjects.Add(id);
             foreach (var entry in profileSectionSelections) state.ProfileSectionSelections[entry.Key] = entry.Value;
+            foreach (var entry in drawingHashes) state.DrawingHashes[entry.Key] = entry.Value;
+            foreach (var entry in libraryOnly) state.LibraryOnly[entry.Key] = entry.Value;
+            foreach (var entry in lastProfileByTemplate) state.LastProfileByTemplate[entry.Key] = entry.Value;
             return state;
         }
 
@@ -84,6 +90,11 @@ namespace Profiles.AutoCAD
                 foreach (string id in state.MemoryOnlyProjects) memoryOnlyProjects.Add(id);
                 profileSectionSelections.Clear();
                 foreach (var entry in state.ProfileSectionSelections) profileSectionSelections[entry.Key] = entry.Value;
+                // Hashes recorded by this form are newer than the catalog read when the command started.
+                foreach (var entry in state.DrawingHashes) drawingHashes[entry.Key] = entry.Value;
+                libraryOnly.Clear();
+                foreach (var entry in state.LibraryOnly) libraryOnly[entry.Key] = entry.Value;
+                foreach (var entry in state.LastProfileByTemplate) lastProfileByTemplate[entry.Key] = entry.Value;
                 allCrossSections = state.AllSections;
                 allLongitudinalProfiles = state.AllProfiles;
                 showEarthworks.Checked = state.ShowEarthworks;
