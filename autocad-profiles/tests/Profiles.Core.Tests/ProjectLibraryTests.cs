@@ -41,7 +41,7 @@ public sealed class ProjectLibraryTests : IDisposable
     {
         var library = Library();
         var project = Project();
-        var first = library.Save(project, drawingName: "план.dwg");
+        var first = library.Save(project, drawingPath: @"C:\Проекты\план.dwg");
         Assert.Equal(1, first.Sequence);
         Assert.Equal("план.dwg", first.SourceDrawing);
         var file = Path.Combine(library.ProjectsPath, project.ProjectId + ".json");
@@ -106,11 +106,11 @@ public sealed class ProjectLibraryTests : IDisposable
     {
         var library = Library();
         var project = Project("Канал А");
-        var openA = library.Synchronize(new[] { project }, DrawingA, "А.dwg");
+        var openA = library.Synchronize(new[] { project }, DrawingA, @"C:\Проекты\А.dwg");
         Assert.Single(openA.DrawingProjects);
         Assert.Empty(openA.Restored);
         Assert.Empty(openA.LibraryOnly);
-        var openB = library.Synchronize(Array.Empty<ProfileProject>(), DrawingB, "Б.dwg");
+        var openB = library.Synchronize(Array.Empty<ProfileProject>(), DrawingB, @"C:\Проекты\Б.dwg");
         var entry = Assert.Single(openB.LibraryOnly);
         Assert.Equal(project.ProjectId, entry.ProjectId);
         Assert.Equal("Канал А", entry.Name);
@@ -123,24 +123,24 @@ public sealed class ProjectLibraryTests : IDisposable
     {
         var library = Library();
         var original = Project();
-        library.Synchronize(new[] { original }, DrawingA, "А.dwg");
+        library.Synchronize(new[] { original }, DrawingA, @"C:\Проекты\А.dwg");
         // Edits during the command: each one reached the DWG and the library.
         var edited = original;
         for (int i = 1; i <= 3; i++)
         {
             now = now.AddSeconds(30);
             edited = Edit(original, 100 + i);
-            library.Save(edited, drawingKey: DrawingA, drawingName: "А.dwg");
+            library.Save(edited, drawingKey: DrawingA, drawingPath: @"C:\Проекты\А.dwg");
         }
         // UNDO (or closing AutoCAD without saving the DWG) returns the drawing to the original.
         now = now.AddMinutes(1);
-        var reopened = library.Synchronize(new[] { ProjectFile.Clone(original) }, DrawingA, "А.dwg");
+        var reopened = library.Synchronize(new[] { ProjectFile.Clone(original) }, DrawingA, @"C:\Проекты\А.dwg");
         Assert.Contains(original.ProjectId, reopened.Restored);
         Assert.Equal(103, reopened.DrawingProjects.Single().Longitudinal[0].ExistingBottom);
         Assert.Contains("более ранняя версия", reopened.Messages.Single());
         Assert.Equal(LibraryProjectHash(original), reopened.DrawingHashes[original.ProjectId]);
         // An intermediate state (one UNDO step back) is also recognised.
-        var partial = library.Synchronize(new[] { Edit(original, 102) }, DrawingA, "А.dwg");
+        var partial = library.Synchronize(new[] { Edit(original, 102) }, DrawingA, @"C:\Проекты\А.dwg");
         Assert.Contains(original.ProjectId, partial.Restored);
     }
 
@@ -149,13 +149,13 @@ public sealed class ProjectLibraryTests : IDisposable
     {
         var library = Library();
         var project = Project();
-        library.Synchronize(new[] { project }, DrawingA, "А.dwg");
+        library.Synchronize(new[] { project }, DrawingA, @"C:\Проекты\А.dwg");
         now = now.AddSeconds(20);
         library.Save(Edit(project, 150), drawingKey: DrawingA);
         // Another computer saved a different edit in the same DWG.
         now = now.AddMinutes(1);
         var foreign = Edit(project, 175);
-        var result = library.Synchronize(new[] { foreign }, DrawingA, "А.dwg");
+        var result = library.Synchronize(new[] { foreign }, DrawingA, @"C:\Проекты\А.dwg");
         Assert.Empty(result.Restored);
         Assert.Equal(175, result.DrawingProjects.Single().Longitudinal[0].ExistingBottom);
         Assert.Equal(175, library.Load(project.ProjectId).Longitudinal[0].ExistingBottom);
@@ -165,18 +165,38 @@ public sealed class ProjectLibraryTests : IDisposable
     }
 
     [Fact]
-    public void ADrawingCopyNeverReplacesNewerWorkMadeInAnotherDrawing()
+    public void NewerWorkFromAnotherDrawingIsOfferedButNeverWrittenOverThisFile()
     {
         var library = Library();
         var project = Project();
-        library.Synchronize(new[] { project }, DrawingA, "А.dwg");
-        // Opened in drawing B from the library and edited there.
+        library.Synchronize(new[] { project }, DrawingA, @"C:\Проекты\А.dwg");
+        // «Сохранить как» copies the drawing (same catalog id); the copy is edited.
         now = now.AddMinutes(1);
-        library.Save(Edit(project, 120), drawingKey: DrawingB, drawingName: "Б.dwg");
-        // Drawing A still holds the state recorded for it earlier.
-        var result = library.Synchronize(new[] { ProjectFile.Clone(project) }, DrawingA, "А.dwg");
+        library.Save(Edit(project, 120), drawingKey: DrawingA, drawingPath: @"C:\Проекты\А — вариант 2.dwg");
+        var result = library.Synchronize(new[] { ProjectFile.Clone(project) }, DrawingA, @"C:\Проекты\А.dwg");
+        Assert.Empty(result.Restored);
+        Assert.Contains(project.ProjectId, result.NewerElsewhere);
+        Assert.Equal(100, result.DrawingProjects.Single().Longitudinal[0].ExistingBottom);
+        Assert.Contains("А — вариант 2.dwg", result.Messages.Single());
+        // Work continued in the original keeps the variant as its own version.
+        now = now.AddSeconds(30);
+        library.Save(Edit(project, 101), drawingKey: DrawingA, drawingPath: @"C:\Проекты\А.dwg");
+        var versions = library.Versions(project.ProjectId);
+        var variant = versions.Single(version => !version.IsCurrent && library.LoadVersion(project.ProjectId, version.VersionId).Longitudinal[0].ExistingBottom == 120);
+        Assert.Equal("А — вариант 2.dwg", variant.SourceDrawing);
+        Assert.Equal("А.dwg", versions[0].SourceDrawing);
+    }
+
+    [Fact]
+    public void PathsCompareWithoutCase()
+    {
+        var library = Library();
+        var project = Project();
+        library.Synchronize(new[] { project }, DrawingA, @"C:\Проекты\А.dwg");
+        now = now.AddMinutes(1);
+        library.Save(Edit(project, 130), drawingKey: DrawingA, drawingPath: @"c:\проекты\а.DWG");
+        var result = library.Synchronize(new[] { ProjectFile.Clone(project) }, DrawingA, @"C:\Проекты\А.dwg");
         Assert.Contains(project.ProjectId, result.Restored);
-        Assert.Equal(120, result.DrawingProjects.Single().Longitudinal[0].ExistingBottom);
     }
 
     [Fact]
@@ -240,7 +260,7 @@ public sealed class ProjectLibraryTests : IDisposable
         var project = Project();
         library.Save(project);
         File.WriteAllText(Path.Combine(library.ProjectsPath, project.ProjectId + ".json"), "{ broken");
-        var result = library.Synchronize(new[] { project }, DrawingA, "А.dwg");
+        var result = library.Synchronize(new[] { project }, DrawingA, @"C:\Проекты\А.dwg");
         Assert.Equal(100, result.DrawingProjects.Single().Longitudinal[0].ExistingBottom);
         Assert.Contains(result.Messages, message => message.StartsWith("Автосохранение", StringComparison.Ordinal));
     }

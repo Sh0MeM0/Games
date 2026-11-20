@@ -21,6 +21,8 @@ namespace Profiles.Core
         public long Sequence { get; internal set; }
         /// <summary>File name of the drawing the project was last saved from (display only).</summary>
         public string SourceDrawing { get; internal set; }
+        /// <summary>Full path of that drawing; decides whether a newer version belongs to the same file.</summary>
+        public string SourcePath { get; internal set; }
         public string JsonPath { get; internal set; }
         public bool JsonAutoSave { get; internal set; }
         public int ProfileCount { get; internal set; }
@@ -46,6 +48,8 @@ namespace Profiles.Core
         public DateTime SavedUtc { get; internal set; }
         public long Bytes { get; internal set; }
         public bool IsCurrent { get; internal set; }
+        /// <summary>Drawing the version was saved from, when known.</summary>
+        public string SourceDrawing { get; internal set; }
     }
 
     internal struct DrawingState
@@ -60,8 +64,10 @@ namespace Profiles.Core
         public List<ProfileProject> DrawingProjects { get; } = new List<ProfileProject>();
         /// <summary>Library projects that are not stored in this drawing, newest first.</summary>
         public List<LibraryEntry> LibraryOnly { get; } = new List<LibraryEntry>();
-        /// <summary>Projects taken from the library because the drawing holds an earlier state (UNDO, DWG not saved, older copy).</summary>
+        /// <summary>Projects taken from the library because this drawing file holds an earlier state of its own work (UNDO, DWG not saved).</summary>
         public HashSet<string> Restored { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>Projects kept as stored in this drawing although a newer version was saved from another drawing.</summary>
+        public HashSet<string> NewerElsewhere { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         /// <summary>Hash of the JSON currently stored in the drawing, by project.</summary>
         public Dictionary<string, string> DrawingHashes { get; } = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         public List<string> Messages { get; } = new List<string>();
@@ -148,7 +154,7 @@ namespace Profiles.Core
         /// content goes to History when <paramref name="checkpoint"/> is set or
         /// the last kept version is older than three minutes.
         /// </summary>
-        public LibraryEntry Save(ProfileProject project, string json = null, string drawingKey = null, string drawingName = null, bool checkpoint = false)
+        public LibraryEntry Save(ProfileProject project, string json = null, string drawingKey = null, string drawingPath = null, bool checkpoint = false)
         {
             if (project == null) throw new ArgumentNullException(nameof(project));
             json = json ?? ProjectFile.Serialize(project);
@@ -159,21 +165,33 @@ namespace Profiles.Core
             {
                 Directory.CreateDirectory(ProjectsPath);
                 var previous = ReadEntry(id, verify: true);
+                string path = NormalizePath(drawingPath);
                 if (previous != null && previous.Hash == hash)
                 {
                     bool changed = RecordState(previous, drawingKey, hash, previous.Sequence);
-                    if (!string.IsNullOrEmpty(drawingName) && previous.SourceDrawing != drawingName) { previous.SourceDrawing = drawingName; changed = true; }
+                    if (path != null && !SamePath(previous.SourcePath, path))
+                    {
+                        previous.SourcePath = path;
+                        previous.SourceDrawing = DisplayName(path);
+                        changed = true;
+                    }
                     if (changed) WriteMeta(previous);
                     return previous.Copy();
                 }
-                if (previous != null) Archive(previous, checkpoint);
+                // Work saved from another drawing is always kept as its own version.
+                bool otherDrawing = previous != null && path != null && previous.SourcePath != null && !SamePath(previous.SourcePath, path);
+                if (previous != null) Archive(previous, checkpoint || otherDrawing);
                 WriteAtomic(ProjectFilePath(id), json + Environment.NewLine);
                 var entry = previous?.Copy() ?? new LibraryEntry { ProjectId = id };
                 entry.Name = project.Name;
                 entry.Hash = hash;
                 entry.Sequence = (previous?.Sequence ?? 0) + 1;
                 entry.SavedUtc = clock();
-                if (!string.IsNullOrEmpty(drawingName)) entry.SourceDrawing = drawingName;
+                if (path != null)
+                {
+                    entry.SourcePath = path;
+                    entry.SourceDrawing = DisplayName(path);
+                }
                 entry.ProfileCount = 1 + (project.AdditionalProfiles?.Count ?? 0);
                 entry.PointCount = Points(project);
                 RecordState(entry, drawingKey, hash, entry.Sequence);
@@ -286,14 +304,16 @@ namespace Profiles.Core
             var result = new List<LibraryVersion>();
             var entry = ReadEntry(projectId, verify: false);
             if (entry != null)
-                result.Add(new LibraryVersion { VersionId = "", SavedUtc = entry.SavedUtc, Bytes = Length(ProjectFilePath(projectId)), IsCurrent = true });
+                result.Add(new LibraryVersion { VersionId = "", SavedUtc = entry.SavedUtc, Bytes = Length(ProjectFilePath(projectId)), IsCurrent = true, SourceDrawing = entry.SourceDrawing });
             string folder = Path.Combine(HistoryPath, projectId);
+            var sources = ReadHistoryIndex(folder);
             if (Directory.Exists(folder))
                 foreach (string file in SafeFiles(folder, "*.json"))
                 {
                     string version = Path.GetFileNameWithoutExtension(file);
                     if (!TryParseStamp(version, out var saved)) continue;
-                    result.Add(new LibraryVersion { VersionId = version, SavedUtc = saved, Bytes = Length(file) });
+                    sources.TryGetValue(version, out var source);
+                    result.Add(new LibraryVersion { VersionId = version, SavedUtc = saved, Bytes = Length(file), SourceDrawing = source });
                 }
             return result.OrderByDescending(version => version.IsCurrent).ThenByDescending(version => version.SavedUtc).ToList();
         }
@@ -313,7 +333,7 @@ namespace Profiles.Core
         /// the newer library version; an unknown drawing state wins and the
         /// library version is kept in History.
         /// </summary>
-        public LibrarySyncResult Synchronize(IEnumerable<ProfileProject> drawingProjects, string drawingKey, string drawingName)
+        public LibrarySyncResult Synchronize(IEnumerable<ProfileProject> drawingProjects, string drawingKey, string drawingPath)
         {
             var result = new LibrarySyncResult();
             var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -330,7 +350,7 @@ namespace Profiles.Core
                 {
                     if (entry == null)
                     {
-                        Save(project, json, drawingKey, drawingName);
+                        Save(project, json, drawingKey, drawingPath);
                         result.DrawingProjects.Add(project);
                         continue;
                     }
@@ -346,16 +366,27 @@ namespace Profiles.Core
                             if (state.Hash == hash) drawingSequence = Math.Max(drawingSequence ?? 0, state.Sequence);
                     if (drawingSequence.HasValue && drawingSequence.Value < entry.Sequence)
                     {
-                        var newer = Load(project.ProjectId);
-                        result.DrawingProjects.Add(newer);
-                        result.Restored.Add(project.ProjectId);
-                        result.Messages.Add("Проект «" + newer.Name + "»: в чертеже более ранняя версия (UNDO, DWG закрыт без сохранения или старая копия файла). " +
-                            "Открыта последняя автосохранённая версия от " + Local(entry.SavedUtc) + ". Прежние версии — кнопка «Версии…».");
+                        if (entry.SourcePath == null || SamePath(entry.SourcePath, NormalizePath(drawingPath)))
+                        {
+                            // Later work of this very file is missing from it: UNDO, the DWG closed without saving, a crash.
+                            var newer = Load(project.ProjectId);
+                            result.DrawingProjects.Add(newer);
+                            result.Restored.Add(project.ProjectId);
+                            result.Messages.Add("Проект «" + newer.Name + "»: в чертеже более ранняя версия (UNDO, DWG закрыт без сохранения или сбой). " +
+                                "Открыта последняя автосохранённая версия от " + Local(entry.SavedUtc) + ". Прежние версии — кнопка «Версии…».");
+                            continue;
+                        }
+                        // A copy of the drawing (e.g. «Сохранить как») may be a deliberate
+                        // variant: its newer work is offered, never written over this file.
+                        result.DrawingProjects.Add(project);
+                        result.NewerElsewhere.Add(project.ProjectId);
+                        result.Messages.Add("Проект «" + project.Name + "»: есть более новая версия из чертежа «" + entry.SourceDrawing + "» от " + Local(entry.SavedUtc) +
+                            ". Открыта версия этого чертежа; ту можно открыть в «Версии…».");
                         continue;
                     }
                     // The drawing was changed where this library did not see it
                     // (another computer, older module): the DWG wins, nothing is dropped.
-                    Save(project, json, drawingKey, drawingName, checkpoint: true);
+                    Save(project, json, drawingKey, drawingPath, checkpoint: true);
                     result.DrawingProjects.Add(project);
                     result.Messages.Add("Проект «" + project.Name + "»: в чертеже другая версия, чем в автосохранении. Открыта версия из DWG; " +
                         "автосохранённая от " + Local(entry.SavedUtc) + " доступна в «Версии…».");
@@ -402,12 +433,32 @@ namespace Profiles.Core
             string name = Stamp(entry.SavedUtc);
             string target = Path.Combine(folder, name + ".json");
             for (int suffix = 1; File.Exists(target); suffix++)
-                target = Path.Combine(folder, Stamp(entry.SavedUtc.AddMilliseconds(suffix)) + ".json");
+                target = Path.Combine(folder, (name = Stamp(entry.SavedUtc.AddMilliseconds(suffix))) + ".json");
             File.Copy(source, target);
-            PruneHistory(folder);
+            var index = ReadHistoryIndex(folder);
+            if (!string.IsNullOrEmpty(entry.SourceDrawing)) index[name] = entry.SourceDrawing;
+            PruneHistory(folder, index);
         }
 
-        private void PruneHistory(string folder)
+        private static Dictionary<string, string> ReadHistoryIndex(string folder)
+        {
+            var result = new Dictionary<string, string>(StringComparer.Ordinal);
+            string file = Path.Combine(folder, "index.json");
+            try
+            {
+                if (!File.Exists(file)) return result;
+                JObject root;
+                using (var reader = new JsonTextReader(new StringReader(File.ReadAllText(file, Utf8))) { DateParseHandling = DateParseHandling.None, MaxDepth = 8 })
+                    root = JObject.Load(reader);
+                foreach (var item in root.Properties())
+                    if (item.Value.Type == JTokenType.String) result[item.Name] = item.Value.Value<string>();
+            }
+            catch (Exception error) when (error is IOException || error is UnauthorizedAccessException || error is JsonException || error is DecoderFallbackException)
+            { /* The index only names drawings; versions stay usable without it. */ }
+            return result;
+        }
+
+        private void PruneHistory(string folder, Dictionary<string, string> index)
         {
             var files = SafeFiles(folder, "*.json").Select(file => new FileInfo(file))
                 .Where(info => TryParseStamp(Path.GetFileNameWithoutExtension(info.Name), out _))
@@ -419,6 +470,31 @@ namespace Profiles.Core
                 if (i >= MaximumHistoryVersions || (i > 0 && total > MaximumHistoryBytes))
                     try { files[i].Delete(); } catch (IOException) { } catch (UnauthorizedAccessException) { }
             }
+            var kept = new HashSet<string>(SafeFiles(folder, "*.json").Select(Path.GetFileNameWithoutExtension), StringComparer.Ordinal);
+            foreach (string stale in index.Keys.Where(key => !kept.Contains(key)).ToList()) index.Remove(stale);
+            var root = new JObject();
+            foreach (var item in index) root[item.Key] = item.Value;
+            try { WriteAtomic(Path.Combine(folder, "index.json"), root.ToString(Formatting.Indented)); }
+            catch (Exception error) when (error is IOException || error is UnauthorizedAccessException) { }
+        }
+
+        private static string NormalizePath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return null;
+            try { return Path.IsPathRooted(path) ? Path.GetFullPath(path) : path.Trim(); }
+            catch (Exception error) when (error is ArgumentException || error is NotSupportedException || error is PathTooLongException || error is System.Security.SecurityException)
+            { return path.Trim(); }
+        }
+
+        private static bool SamePath(string left, string right) =>
+            left != null && right != null && string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>File name after the last \ or /, the same on Windows and in tests elsewhere.</summary>
+        public static string DisplayName(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return path;
+            int slash = Math.Max(path.LastIndexOf('\\'), path.LastIndexOf('/'));
+            return slash >= 0 && slash < path.Length - 1 ? path.Substring(slash + 1) : path;
         }
 
         private void PruneDeleted()
@@ -500,6 +576,7 @@ namespace Profiles.Core
                     Hash = root.Value<string>("Hash"),
                     Sequence = root.Value<long?>("Sequence") ?? 0,
                     SourceDrawing = root.Value<string>("SourceDrawing"),
+                    SourcePath = root.Value<string>("SourcePath"),
                     JsonPath = root.Value<string>("JsonPath"),
                     JsonAutoSave = root.Value<bool?>("JsonAutoSave") ?? false,
                     ProfileCount = root.Value<int?>("ProfileCount") ?? 1,
@@ -547,6 +624,7 @@ namespace Profiles.Core
                 ["Hash"] = entry.Hash,
                 ["Sequence"] = entry.Sequence,
                 ["SourceDrawing"] = entry.SourceDrawing,
+                ["SourcePath"] = entry.SourcePath,
                 ["JsonPath"] = entry.JsonPath,
                 ["JsonAutoSave"] = entry.JsonAutoSave,
                 ["ProfileCount"] = entry.ProfileCount,

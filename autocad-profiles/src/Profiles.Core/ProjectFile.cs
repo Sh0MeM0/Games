@@ -110,7 +110,8 @@ namespace Profiles.Core
                     {
                         DuplicatePropertyNameHandling = DuplicatePropertyNameHandling.Error,
                         CommentHandling = CommentHandling.Load,
-                        LineInfoHandling = LineInfoHandling.Load
+                        // Messages name the JSON path; per-token line numbers only cost memory and time.
+                        LineInfoHandling = LineInfoHandling.Ignore
                     });
                     while (reader.Read())
                         if (reader.TokenType != JsonToken.None)
@@ -124,18 +125,7 @@ namespace Profiles.Core
                     if (version <= 2) UpgradeVersionTwo((JObject)root);
                     if (version <= 3) UpgradeVersionThree((JObject)root);
                     if (version <= 4) UpgradeVersionFour((JObject)root);
-                    ValidateToken(root, typeof(ProfileProject), "Проект");
-                    var project = root.ToObject<ProfileProject>(JsonSerializer.Create(Settings()));
-                    ProfileValidation.Check(project, geometry: false);
-                    project.ProjectId = Guid.Parse(project.ProjectId).ToString("N");
-                    project.ProfileId = Guid.Parse(project.ProfileId).ToString("N");
-                    foreach (var section in project.Sections) section.SectionId = Guid.Parse(section.SectionId).ToString("N");
-                    foreach (var profile in project.AdditionalProfiles)
-                    {
-                        profile.ProfileId = Guid.Parse(profile.ProfileId).ToString("N");
-                        foreach (var section in profile.Sections) section.SectionId = Guid.Parse(section.SectionId).ToString("N");
-                    }
-                    return project;
+                    return Materialize(root);
                 }
             }
             catch (ProfileValidationException) { throw; }
@@ -145,7 +135,84 @@ namespace Profiles.Core
             }
         }
 
-        public static ProfileProject Clone(ProfileProject project) => Deserialize(Serialize(project));
+        private static ProfileProject Materialize(JToken root)
+        {
+            ValidateToken(root, typeof(ProfileProject));
+            var project = root.ToObject<ProfileProject>(Serializer);
+            ProfileValidation.Check(project, geometry: false);
+            project.ProjectId = Guid.Parse(project.ProjectId).ToString("N");
+            project.ProfileId = Guid.Parse(project.ProfileId).ToString("N");
+            foreach (var section in project.Sections) section.SectionId = Guid.Parse(section.SectionId).ToString("N");
+            foreach (var profile in project.AdditionalProfiles)
+            {
+                profile.ProfileId = Guid.Parse(profile.ProfileId).ToString("N");
+                foreach (var section in profile.Sections) section.SectionId = Guid.Parse(section.SectionId).ToString("N");
+            }
+            return project;
+        }
+
+        /// <summary>
+        /// An independent, validated copy with the same result as
+        /// Deserialize(Serialize(project)): the source passes the same validation
+        /// (for an object graph it covers everything the JSON schema check does —
+        /// missing lists and texts, non-finite numbers, unknown enum values, sizes)
+        /// and identifiers are normalised the same way. The graph is copied
+        /// directly: the JSON round trip cost ~0.25 s for a large project and ran
+        /// several times per edit. ProjectCopyTests guards that no member is missed.
+        /// The 10 MB file limit is enforced when the project is serialized for a file or the DWG.
+        /// </summary>
+        public static ProfileProject Clone(ProfileProject project)
+        {
+            ProfileValidation.Check(project, geometry: false);
+            var copy = new ProfileProject
+            {
+                SchemaVersion = project.SchemaVersion,
+                ProjectId = Guid.Parse(project.ProjectId).ToString("N"),
+                Name = project.Name,
+                ProfileId = Guid.Parse(project.ProfileId).ToString("N"),
+                ProfileName = project.ProfileName,
+                ActiveProfileIndex = project.ActiveProfileIndex,
+                AdditionalProfiles = project.AdditionalProfiles.Select(profile => new ProfileData
+                {
+                    ProfileId = Guid.Parse(profile.ProfileId).ToString("N"),
+                    Name = profile.Name,
+                    Template = profile.Template,
+                    Settings = CopySettings(profile.Settings),
+                    Longitudinal = profile.Longitudinal.Select(CopyPoint).ToList(),
+                    Sections = profile.Sections.Select(CopySection).ToList()
+                }).ToList(),
+                Kind = project.Kind,
+                Template = project.Template,
+                Settings = CopySettings(project.Settings),
+                Longitudinal = project.Longitudinal.Select(CopyPoint).ToList(),
+                Sections = project.Sections.Select(CopySection).ToList()
+            };
+            return copy;
+        }
+
+        private static ProfileSettings CopySettings(ProfileSettings source) => new ProfileSettings
+        {
+            Title = source.Title, HorizontalScale = source.HorizontalScale, VerticalScale = source.VerticalScale,
+            CrossHorizontalScale = source.CrossHorizontalScale, CrossVerticalScale = source.CrossVerticalScale,
+            MetresPerDrawingUnit = source.MetresPerDrawingUnit, Datum = source.Datum,
+            TextHeightMm = source.TextHeightMm, TextWidthFactor = source.TextWidthFactor, ShowEmptyRows = source.ShowEmptyRows
+        };
+
+        private static LongitudinalPoint CopyPoint(LongitudinalPoint source) => new LongitudinalPoint
+        {
+            Station = source.Station, ProjectGround = source.ProjectGround, PipeInvert = source.PipeInvert,
+            PipeDescription = source.PipeDescription, Foundation = source.Foundation, PointName = source.PointName,
+            PeatDepth = source.PeatDepth, Ground = source.Ground, LeftBank = source.LeftBank, RightBank = source.RightBank,
+            ExistingBottom = source.ExistingBottom, Water = source.Water, ProjectBottom = source.ProjectBottom,
+            BottomWidth = source.BottomWidth, LeftSlope = source.LeftSlope, RightSlope = source.RightSlope
+        };
+
+        private static CrossSection CopySection(CrossSection source)
+        {
+            var copy = ProfileInterpolation.CloneSection(source);
+            copy.SectionId = Guid.Parse(source.SectionId).ToString("N");
+            return copy;
+        }
 
         private static void UpgradeLegacy(JObject root)
         {
@@ -263,6 +330,38 @@ namespace Profiles.Core
             root["SchemaVersion"] = 5;
         }
 
+        // A fresh serializer per call: cheap, and no shared state between concurrent callers.
+        private static JsonSerializer Serializer => JsonSerializer.Create(Settings());
+
+        private sealed class TypeShape
+        {
+            internal PropertyInfo[] Properties;
+            internal Dictionary<string, PropertyInfo> ByName;
+            internal HashSet<string> EnumNames;
+        }
+
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, TypeShape> Shapes =
+            new System.Collections.Concurrent.ConcurrentDictionary<Type, TypeShape>();
+
+        private static TypeShape Shape(Type type) => Shapes.GetOrAdd(type, key =>
+        {
+            var properties = key.IsEnum ? new PropertyInfo[0] : key.GetProperties(BindingFlags.Instance | BindingFlags.Public);
+            return new TypeShape
+            {
+                Properties = properties,
+                ByName = properties.ToDictionary(property => property.Name, StringComparer.Ordinal),
+                EnumNames = key.IsEnum ? new HashSet<string>(Enum.GetNames(key), StringComparer.Ordinal) : null
+            };
+        });
+
+        /// <summary>Location in the style «Проект.Sections[0].Points[2].Existing», built only for an error.</summary>
+        private static string Location(JToken token, string member = null)
+        {
+            string path = token.Path;
+            string location = path.Length == 0 ? "Проект" : "Проект." + path;
+            return member == null ? location : location + "." + member;
+        }
+
         private static JsonSerializerSettings Settings()
         {
             return new JsonSerializerSettings
@@ -277,69 +376,66 @@ namespace Profiles.Core
             };
         }
 
-        private static void ValidateToken(JToken token, Type expected, string location)
+        private static void ValidateToken(JToken token, Type expected)
         {
             Type nullable = Nullable.GetUnderlyingType(expected);
             if (token.Type == JTokenType.Null)
             {
                 if (nullable != null) return;
-                Invalid(location, "обязательное поле не может быть null");
+                Invalid(Location(token), "обязательное поле не может быть null");
             }
             if (nullable != null) expected = nullable;
             if (expected == typeof(double))
             {
                 if (token.Type != JTokenType.Integer && token.Type != JTokenType.Float)
-                    Invalid(location, "ожидается число или null для необязательной отметки, а не текст");
+                    Invalid(Location(token), "ожидается число или null для необязательной отметки, а не текст");
                 double value = token.Value<double>();
-                if (double.IsNaN(value) || double.IsInfinity(value)) Invalid(location, "NaN и бесконечность недопустимы");
+                if (double.IsNaN(value) || double.IsInfinity(value)) Invalid(Location(token), "NaN и бесконечность недопустимы");
                 return;
             }
             if (expected == typeof(int))
             {
-                if (token.Type != JTokenType.Integer) Invalid(location, "ожидается целое число");
+                if (token.Type != JTokenType.Integer) Invalid(Location(token), "ожидается целое число");
                 token.Value<int>();
                 return;
             }
             if (expected == typeof(bool))
             {
-                if (token.Type != JTokenType.Boolean) Invalid(location, "ожидается true или false");
+                if (token.Type != JTokenType.Boolean) Invalid(Location(token), "ожидается true или false");
                 return;
             }
             if (expected == typeof(string))
             {
-                if (token.Type != JTokenType.String) Invalid(location, "ожидается строка");
+                if (token.Type != JTokenType.String) Invalid(Location(token), "ожидается строка");
                 return;
             }
             if (expected.IsEnum)
             {
-                if (token.Type != JTokenType.String || !Enum.GetNames(expected).Contains(token.Value<string>(), StringComparer.Ordinal))
-                    Invalid(location, "неизвестное значение перечисления");
+                if (token.Type != JTokenType.String || !Shape(expected).EnumNames.Contains(token.Value<string>()))
+                    Invalid(Location(token), "неизвестное значение перечисления");
                 return;
             }
             if (expected.IsGenericType && expected.GetGenericTypeDefinition() == typeof(List<>))
             {
-                if (!(token is JArray array)) Invalid(location, "ожидается массив");
-                var items = (JArray)token;
-                if (items.Count > 10000) Invalid(location, "слишком много элементов (предел 10000)");
+                if (!(token is JArray items)) { Invalid(Location(token), "ожидается массив"); return; }
+                if (items.Count > 10000) Invalid(Location(token), "слишком много элементов (предел 10000)");
                 Type itemType = expected.GetGenericArguments()[0];
-                for (int i = 0; i < items.Count; i++) ValidateToken(items[i], itemType, location + "[" + i + "]");
+                foreach (var item in items) ValidateToken(item, itemType);
                 return;
             }
-            if (!(token is JObject)) Invalid(location, "ожидается объект");
-            var obj = (JObject)token;
-            var properties = expected.GetProperties(BindingFlags.Instance | BindingFlags.Public);
+            if (!(token is JObject obj)) { Invalid(Location(token), "ожидается объект"); return; }
+            var shape = Shape(expected);
             foreach (JProperty member in obj.Properties())
-            {
-                if (!properties.Any(p => p.Name == member.Name)) Invalid(location + "." + member.Name, "неизвестное поле");
-            }
-            foreach (PropertyInfo property in properties)
+                if (!shape.ByName.ContainsKey(member.Name)) Invalid(Location(token, member.Name), "неизвестное поле");
+            foreach (PropertyInfo property in shape.Properties)
             {
                 JToken value;
                 if (!obj.TryGetValue(property.Name, StringComparison.Ordinal, out value))
-                    Invalid(location + "." + property.Name, "поле отсутствует; файл должен содержать полную схему проекта");
-                ValidateToken(value, property.PropertyType, location + "." + property.Name);
+                    Invalid(Location(token, property.Name), "поле отсутствует; файл должен содержать полную схему проекта");
+                ValidateToken(value, property.PropertyType);
             }
-            if (obj.Children().Any(child => child.Type == JTokenType.Comment)) Invalid(location, "комментарии не поддерживаются");
+            foreach (var child in obj.Children())
+                if (child.Type == JTokenType.Comment) Invalid(Location(token), "комментарии не поддерживаются");
         }
 
         private static string FullPath(string path)

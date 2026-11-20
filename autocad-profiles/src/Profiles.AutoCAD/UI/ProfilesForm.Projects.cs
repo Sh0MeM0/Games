@@ -372,10 +372,9 @@ namespace Profiles.AutoCAD
 
         private void PersistProject(ProfileProject project, bool explicitSave, bool forceDrawing = false)
         {
-            // One serialization validates the project (numbers, schema) without
-            // requiring complete geometry and encodes it for every store.
-            string json = ProjectFile.Serialize(project);
-            var snapshot = ProjectFile.Deserialize(json);
+            // The copy validates the project (numbers, schema) without requiring
+            // complete geometry; one serialization encodes it for every store.
+            var snapshot = ProjectFile.Clone(project);
             string id = snapshot.ProjectId;
             if (id == transientProjectId)
             {
@@ -383,7 +382,7 @@ namespace Profiles.AutoCAD
                 {
                     // Nothing was entered: an untouched blank project is not stored anywhere.
                     RegisterProject(snapshot, owned: true);
-                    Project = ProjectFile.Deserialize(json);
+                    Project = ProjectFile.Clone(snapshot);
                     profileContainer = Project;
                     RefreshProjectPicker();
                     UpdateTitle();
@@ -391,6 +390,7 @@ namespace Profiles.AutoCAD
                 }
                 transientProjectId = null;
             }
+            string json = ProjectFile.Serialize(snapshot);
             string hash = ProjectLibrary.Hash(json);
             bool inDrawing = false;
             string drawingError = null;
@@ -418,14 +418,15 @@ namespace Profiles.AutoCAD
             {
                 try
                 {
-                    var entry = Library.Save(snapshot, json, inDrawing ? autosave.DrawingKey() : null, autosave.DrawingName);
+                    var entry = Library.Save(snapshot, json, inDrawing ? autosave.DrawingKey() : null, autosave.DrawingPath);
                     librarySaved = true;
                     if (libraryOnly.ContainsKey(id)) libraryOnly[id] = entry;
                 }
                 catch (ProfileValidationException error) { libraryError = error.Message; }
             }
             string jsonError = null;
-            if (autoSaveJson.Checked && currentFile != null)
+            if (autoSaveJson.Checked && currentFile != null &&
+                !(lastWrittenJson.TryGetValue(id, out var previousJson) && previousJson == json && File.Exists(currentFile)))
             {
                 try
                 {
@@ -439,7 +440,7 @@ namespace Profiles.AutoCAD
                 throw new ProfileValidationException("Данные не записаны в DWG: " + drawingError + (libraryError != null ? " " + libraryError : ""));
             RegisterProject(snapshot, owned: true);
             // Read-only views of the saved state; nothing mutates them in place.
-            Project = ProjectFile.Deserialize(json);
+            Project = ProjectFile.Clone(snapshot);
             profileContainer = Project;
             dirty = !(inDrawing || librarySaved || savedJson);
             if (dirty) memoryOnlyProjects.Add(id);
@@ -448,7 +449,9 @@ namespace Profiles.AutoCAD
             RefreshProjectPicker();
             UpdateTitle();
             if (drawingError != null)
-                SetStatus("Не записано в DWG: " + drawingError + " Данные сохранены в автосохранении и не потеряются; запись в DWG повторится при следующем сохранении.", true);
+                SetStatus("Не записано в DWG: " + drawingError + (librarySaved
+                    ? " Данные сохранены в автосохранении и не потеряются; запись в DWG повторится при следующем сохранении."
+                    : " Данные сохранены только в JSON-файле " + Path.GetFileName(currentFile) + (libraryError != null ? ". " + libraryError : ".")), true);
             else if (jsonError != null)
                 SetStatus("JSON не обновлён: " + jsonError + (inDrawing || librarySaved ? " Данные сохранены" + (inDrawing ? " в DWG" : "") + (librarySaved ? (inDrawing ? " и" : "") + " в автосохранении" : "") + "." : ""), true);
             else if (libraryError != null)

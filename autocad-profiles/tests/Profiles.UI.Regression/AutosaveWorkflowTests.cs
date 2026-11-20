@@ -25,6 +25,7 @@ internal static class AutosaveWorkflowTests
         Check("a new empty tab of another type keeps the original tab untouched", NewTabKeepsOriginal);
         Check("every accepted change reaches the DWG and the autosave library", ChangesReachBothStores);
         Check("another drawing offers the autosaved project and copies it only after a change", OtherDrawingContinuesWork);
+        Check("UNDO or an unsaved DWG reopens the latest work of the same drawing", UndoRestoresLatestWork);
         Check("an unchanged project is not rewritten into the DWG", UnchangedNotRewritten);
         Check("a failing DWG write does not block switching and nothing is lost", DrawingFailureDoesNotBlock);
         Check("earlier versions and deleted projects are restored", VersionsAndDeleted);
@@ -274,9 +275,49 @@ internal static class AutosaveWorkflowTests
                 Require(second.Records.ContainsKey(id), "edited project was not written into the second DWG");
                 Require(session.Library.Load(id).Longitudinal[0].ExistingBottom == 101.25, "library missed the edit");
             }
-            // The first drawing still holds its earlier state: the newer work wins.
+            // The first drawing keeps its own state (it may be a deliberate variant);
+            // the newer work of the second drawing is offered in «Версии…».
             using (var form = session.Open(first, "Лист 1.dwg"))
-                Require(ReadProject(form).Longitudinal[0].ExistingBottom == 101.25, "first drawing lost the work made in the second");
+            {
+                Require(ReadProject(form).Longitudinal[0].ExistingBottom == 101, "work of another drawing replaced this file");
+                Require(Field<Label>(form, "status").Text.Contains("Лист 2.dwg"), "newer version of the other drawing not mentioned");
+                var latest = session.Library.Versions(id).First();
+                Call(form, "RestoreVersion", latest.VersionId, latest.SavedUtc);
+                Require(ReadProject(form).Longitudinal[0].ExistingBottom == 101.25, "newer version could not be opened");
+                Require(session.Library.Versions(id).Skip(1).Any(version =>
+                    session.Library.LoadVersion(id, version.VersionId).Longitudinal[0].ExistingBottom == 101), "this drawing's version was not kept");
+            }
+        }
+    }
+
+    private static void UndoRestoresLatestWork()
+    {
+        using (var session = new Session())
+        {
+            var drawing = new FakeDrawing();
+            string id, original;
+            using (var form = session.Open(drawing, @"C:\Чертежи\Канал.dwg"))
+            {
+                Call(form, "NewProjectNamed", "UNDO");
+                EnterStations(form, 101, 100);
+                Require(Save(form), "not saved");
+                id = ReadProject(form).ProjectId;
+                original = drawing.Records[id];
+                var grid = Field<DataGridView>(form, "longGrid");
+                grid.Rows[1].Cells["ExistingBottom"].Value = "97.25";
+                Call(form, "SetDirty");
+                Require(Save(form), "edit not saved");
+            }
+            // UNDO after building (or closing without saving) returns the DWG record to the earlier state.
+            drawing.Records[id] = original;
+            using (var form = session.Open(drawing, @"C:\Чертежи\Канал.dwg"))
+            {
+                Require(ReadProject(form).Longitudinal[1].ExistingBottom == 97.25, "latest work was not restored after UNDO");
+                Require(Field<Label>(form, "status").Text.Contains("более ранняя версия"), "user not told about the restore");
+                Call(form, "ClosingForm", form, new FormClosingEventArgs(CloseReason.UserClosing, false));
+                Require(Save(form), "restored data not saved");
+                Require(ProjectFile.Deserialize(drawing.Records[id]).Longitudinal[1].ExistingBottom == 97.25, "restored data not written back to the DWG");
+            }
         }
     }
 

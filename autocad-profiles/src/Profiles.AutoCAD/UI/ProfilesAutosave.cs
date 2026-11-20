@@ -15,18 +15,21 @@ namespace Profiles.AutoCAD
         private readonly Func<string> drawingKey;
         private string cachedKey;
 
-        public ProfilesAutosave(ProjectLibrary library, LibrarySyncResult sync, string drawingName, Func<string> drawingKey,
+        public ProfilesAutosave(ProjectLibrary library, LibrarySyncResult sync, string drawingPath, Func<string> drawingKey,
             Action<ProfileProject, string> saveSerializedToDrawing = null)
         {
             Library = library ?? throw new ArgumentNullException(nameof(library));
             Sync = sync ?? new LibrarySyncResult();
-            DrawingName = drawingName;
+            DrawingPath = drawingPath;
+            DrawingName = ProjectLibrary.DisplayName(drawingPath);
             this.drawingKey = drawingKey;
             SaveSerializedToDrawing = saveSerializedToDrawing;
         }
 
         public ProjectLibrary Library { get; }
         public LibrarySyncResult Sync { get; }
+        /// <summary>Full path of the drawing (AutoCAD document name); identifies work of this very file.</summary>
+        public string DrawingPath { get; }
         public string DrawingName { get; }
 
         /// <summary>Optional DWG writer that reuses the JSON already produced by the editor.</summary>

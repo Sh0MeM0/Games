@@ -114,7 +114,7 @@ namespace Profiles.AutoCAD
                     try
                     {
                         string key = autosave.DrawingKey();
-                        autosave.Library.Save(project, null, key, autosave.DrawingName);
+                        autosave.Library.Save(project, null, key, autosave.DrawingPath);
                     }
                     catch (ProfileValidationException exception) { editor.WriteMessage("\nПрофиля: " + exception.Message); }
                 };
@@ -255,12 +255,13 @@ namespace Profiles.AutoCAD
             try
             {
                 var library = new ProjectLibrary(ProjectLibrary.DefaultRoot());
-                string drawingName = SafeFileName(document.Name);
+                // The document name is the full path of a saved DWG («Drawing1.dwg» for a new one).
+                string drawingPath = document.Name;
                 string drawingKey = DrawingProjectStore.TryDrawingId(document.Database);
-                var sync = library.Synchronize(catalog.Projects, drawingKey, drawingName);
+                var sync = library.Synchronize(catalog.Projects, drawingKey, drawingPath);
                 foreach (string message in sync.Messages)
                     document.Editor.WriteMessage("\nПрофиля: " + message);
-                return new ProfilesAutosave(library, sync, drawingName, () =>
+                return new ProfilesAutosave(library, sync, drawingPath, () =>
                 {
                     using (document.LockDocument()) return DrawingProjectStore.TryDrawingId(document.Database);
                 }, saveSerialized);
@@ -272,12 +273,6 @@ namespace Profiles.AutoCAD
                 document.Editor.WriteMessage("\nПрофиля: автосохранение недоступно (" + exception.Message + "). Данные сохраняются только в DWG.");
                 return null;
             }
-        }
-
-        private static string SafeFileName(string path)
-        {
-            try { return string.IsNullOrEmpty(path) ? null : Path.GetFileName(path); }
-            catch (ArgumentException) { return path; }
         }
     }
 }

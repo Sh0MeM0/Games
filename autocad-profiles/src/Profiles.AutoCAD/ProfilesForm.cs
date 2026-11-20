@@ -805,10 +805,17 @@ namespace Profiles.AutoCAD
                 DisplayNumber(textHeight, settings.TextHeightMm);
                 DisplayNumber(textWidth, settings.TextWidthFactor);
                 longGrid.Rows.Clear();
+                // One AddRange instead of a layout pass per row: long profiles open faster.
+                var rows = new List<DataGridViewRow>();
                 foreach (var point in project.Longitudinal ?? new List<LongitudinalPoint>())
-                    longGrid.Rows.Add(point.Station, point.Ground, point.LeftBank, point.RightBank,
+                {
+                    var row = new DataGridViewRow();
+                    row.CreateCells(longGrid, point.Station, point.Ground, point.LeftBank, point.RightBank,
                         point.ExistingBottom, point.Water, point.ProjectBottom, point.BottomWidth, point.LeftSlope, point.RightSlope,
                         point.ProjectGround, point.PipeInvert, point.PipeDescription, point.Foundation, point.PointName, point.PeatDepth);
+                    rows.Add(row);
+                }
+                if (rows.Count > 0) longGrid.Rows.AddRange(rows.ToArray());
                 SortLongitudinalRows();
                 sharedLongitudinalBaseline = CopyLongitudinal(ReadLongitudinal());
                 sections.Clear();

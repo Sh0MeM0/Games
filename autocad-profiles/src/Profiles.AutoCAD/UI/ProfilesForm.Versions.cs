@@ -43,12 +43,14 @@ namespace Profiles.AutoCAD
                            "заменой при импорте и восстановлением) и удалённые проекты. Восстановление само сохраняет текущее состояние в этот список."
                 }, 0, 0);
                 var versions = new ListView { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true, MultiSelect = false, HideSelection = false };
-                versions.Columns.Add("Сохранено", Px(260));
-                versions.Columns.Add("Размер", Px(110));
+                versions.Columns.Add("Сохранено", Px(270));
+                versions.Columns.Add("Чертёж", Px(260));
+                versions.Columns.Add("Размер", Px(100));
                 foreach (var version in Library.Versions(currentProjectId))
                     versions.Items.Add(new ListViewItem(new[]
                     {
-                        (version.IsCurrent ? "Текущая — " : "") + ProfilesAutosave.LocalTime(version.SavedUtc, seconds: true),
+                        (version.IsCurrent ? "Последняя — " : "") + ProfilesAutosave.LocalTime(version.SavedUtc, seconds: true),
+                        version.SourceDrawing ?? "",
                         SizeText(version.Bytes)
                     }) { Tag = version });
                 layout.Controls.Add(versions, 0, 1);
@@ -78,8 +80,8 @@ namespace Profiles.AutoCAD
                 dialog.Controls.Add(layout);
                 dialog.CancelButton = close;
                 tips.SetToolTip(folder, Library.RootPath);
-                versions.SelectedIndexChanged += (s, e) =>
-                    openVersion.Enabled = versions.SelectedItems.Count == 1 && !((LibraryVersion)versions.SelectedItems[0].Tag).IsCurrent;
+                // The last autosave may come from another drawing and differ from the editor, so it can be opened too.
+                versions.SelectedIndexChanged += (s, e) => openVersion.Enabled = versions.SelectedItems.Count == 1;
                 deleted.SelectedIndexChanged += (s, e) => restoreDeleted.Enabled = deleted.SelectedItems.Count == 1;
                 openVersion.Click += (s, e) =>
                 {
@@ -114,8 +116,9 @@ namespace Profiles.AutoCAD
             if (Library == null || currentProjectId == null) return;
             try
             {
-                if (!TrySaveCurrent(true)) return;
+                // Read the chosen state before saving the editor: saving replaces the last autosave.
                 var version = Library.LoadVersion(currentProjectId, versionId);
+                if (!TrySaveCurrent(true)) return;
                 Library.Checkpoint(currentProjectId);
                 version.ProjectId = currentProjectId;
                 RememberProfileSection();
