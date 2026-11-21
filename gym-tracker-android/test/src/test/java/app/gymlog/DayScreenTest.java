@@ -119,37 +119,45 @@ public class DayScreenTest {
     }
 
     @Test
-    public void typingMuscleGroupListsReferenceExercisesWithVideo() {
+    public void typingMuscleGroupShowsPhotoTilesWithVideo() {
         DayActivity d = open(DAY1);
         AlertDialog dlg = d.showAddDialog();
         idle();
         View root = dlg.getWindow().getDecorView();
         EditText input = (EditText) root.findViewWithTag("exerciseName");
         ListView lv = (ListView) root.findViewWithTag("addList");
-        type(input, "грудь");
         DayActivity.AddAdapter ad = (DayActivity.AddAdapter) lv.getAdapter();
+        // empty field: popular exercises as photos
+        assertTrue(ad.getItem(0).toString().startsWith("Популярные упражнения"));
+        type(input, "грудь");
         int chest = Catalog.inGroup("chest").size();
-        assertTrue(chest >= 12);
+        assertTrue(chest >= 25);
         assertEquals("Справочник: грудь (" + chest + ")", ad.getItem(0));
-        int pecDeck = -1;
-        for (int i = 1; i < ad.getCount(); i++) {
-            Catalog.Item it = (Catalog.Item) ad.getItem(i);
-            assertTrue(it.key, it.inGroup("chest"));
-            if (it.key.equals("pec_deck")) pecDeck = i;
-        }
-        // video button next to the exercise
-        View row = ad.getView(pecDeck, null, lv);
-        row.findViewWithTag("video:pec_deck").performClick();
+        for (Catalog.Item it : ad.catalogItems()) assertTrue(it.key, it.inGroup("chest"));
+        assertEquals(chest, ad.catalogItems().size());
+        // video button on the photo
+        int row = ad.rowOf("pec_deck");
+        View rowView = ad.getView(row, null, lv);
+        rowView.findViewWithTag("video:pec_deck").performClick();
         Intent video = shadowOf(d).getNextStartedActivity();
         assertEquals(Intent.ACTION_VIEW, video.getAction());
         assertTrue(video.getDataString().startsWith("https://www.youtube.com/results?search_query="));
+        // equipment filter: only cable exercises
+        root.findViewWithTag("equip:cable").performClick();
+        idle();
+        assertTrue(ad.catalogItems().size() >= 4);
+        for (Catalog.Item it : ad.catalogItems()) assertEquals(it.key, "cable", it.equipment());
+        root.findViewWithTag("equip:all").performClick();
+        idle();
+        assertEquals(chest, ad.catalogItems().size());
         // the "Add" button refuses a bare muscle group name
         dlg.getButton(AlertDialog.BUTTON_POSITIVE).performClick();
         idle();
         assertNotNull(input.getError());
         assertTrue(d.cards.isEmpty());
-        // picking a reference exercise creates the machine with its picture
-        lv.performItemClick(null, pecDeck, pecDeck);
+        // tapping a photo tile adds the exercise with its photo
+        rowView = ad.getView(ad.rowOf("pec_deck"), null, lv);
+        rowView.findViewWithTag("tile:pec_deck").performClick();
         idle();
         assertEquals(1, d.cards.size());
         assertEquals("pec_deck", d.cards.get(0).entry.catalog);
@@ -168,18 +176,21 @@ public class DayScreenTest {
         assertEquals("Трицепс", input.getText().toString());
         DayActivity.AddAdapter ad = (DayActivity.AddAdapter) ((ListView) root.findViewWithTag("addList")).getAdapter();
         java.util.Set<String> keys = new java.util.HashSet<>();
-        for (Object o : ad.rows) if (o instanceof Catalog.Item) keys.add(((Catalog.Item) o).key);
-        assertTrue(keys.contains("triceps_pushdown"));
-        assertTrue(keys.contains("reverse_pushdown"));
-        assertTrue(keys.contains("overhead_cable_ext"));
-        assertTrue(keys.contains("db_overhead_ext"));
-        assertTrue(keys.contains("triceps_machine"));
+        for (Catalog.Item it : ad.catalogItems()) keys.add(it.key);
+        for (String k : new String[]{"triceps_pushdown", "reverse_pushdown", "rope_pushdown", "vbar_pushdown",
+                "overhead_cable_ext", "db_overhead_ext", "triceps_machine", "machine_triceps_ext", "french_press"}) {
+            assertTrue(k, keys.contains(k));
+        }
         type(input, "шраги");
         keys.clear();
-        for (Object o : ad.rows) if (o instanceof Catalog.Item) keys.add(((Catalog.Item) o).key);
-        assertTrue(keys.contains("shrugs"));
-        assertTrue(keys.contains("barbell_shrugs"));
-        assertTrue(keys.contains("smith_shrugs"));
+        for (Catalog.Item it : ad.catalogItems()) keys.add(it.key);
+        for (String k : new String[]{"shrugs", "barbell_shrugs", "smith_shrugs", "lever_shrug", "cable_shrug"}) {
+            assertTrue(k, keys.contains(k));
+        }
+        type(input, "нижний блок");
+        keys.clear();
+        for (Catalog.Item it : ad.catalogItems()) keys.add(it.key);
+        assertTrue(keys.toString(), keys.contains("seated_row"));
         ShadowAlertDialog.reset();
     }
 }

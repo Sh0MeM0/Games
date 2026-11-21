@@ -286,34 +286,70 @@ final class Ui {
 
     // ---------------------------------------------------------------- pictures & reference
 
-    /** Drawable id of the pictogram for a catalog key, or 0. */
-    static int pictogram(Context c, String key) {
-        Catalog.Item it = Catalog.get(key);
-        if (it == null) return 0;
-        return c.getResources().getIdentifier("ex_" + it.pict(), "drawable", c.getPackageName());
+    private static final android.util.LruCache<String, android.graphics.Bitmap> PHOTOS =
+            new android.util.LruCache<String, android.graphics.Bitmap>(12 * 1024 * 1024) {
+                @Override
+                protected int sizeOf(String key, android.graphics.Bitmap b) {
+                    return b.getByteCount();
+                }
+            };
+
+    /** Real photo of the exercise (frame 0 = start, 1 = end) from assets/ex, or null. */
+    static android.graphics.Bitmap photo(Context c, String catalogKey, int frame) {
+        Catalog.Item it = Catalog.get(catalogKey);
+        if (it == null || it.photo() == null) return null;
+        String path = "ex/" + it.photo() + "_" + frame + ".jpg";
+        android.graphics.Bitmap b = PHOTOS.get(path);
+        if (b != null) return b;
+        java.io.InputStream in = null;
+        try {
+            in = c.getAssets().open(path);
+            b = android.graphics.BitmapFactory.decodeStream(in);
+        } catch (java.io.IOException e) {
+            return null;
+        } finally {
+            if (in != null) {
+                try {
+                    in.close();
+                } catch (java.io.IOException ignored) {
+                    // nothing to do
+                }
+            }
+        }
+        if (b != null) PHOTOS.put(path, b);
+        return b;
     }
 
-    /** Rounded square with the pictogram (or an "add picture" icon if there is none). */
+    static boolean hasPhoto(String catalogKey) {
+        Catalog.Item it = Catalog.get(catalogKey);
+        return it != null && it.photo() != null;
+    }
+
+    /** Rounded box with the real photo (or an "add picture" icon if there is none). */
     static FrameLayout thumbnail(Context c, String key, int sizeDp) {
+        return photoBox(c, key, 0, sizeDp, dp(c, 12));
+    }
+
+    static FrameLayout photoBox(Context c, String key, int frame, int iconDp, float radius) {
         FrameLayout box = new FrameLayout(c);
-        box.setBackground(rounded(color(c, R.color.pict_bg), dp(c, 12)));
+        box.setBackground(rounded(color(c, R.color.pict_bg), radius));
+        box.setClipToOutline(true);
         ImageView img = new ImageView(c);
-        int res = pictogram(c, key);
-        int pad;
-        if (res != 0) {
-            img.setImageResource(res);
-            pad = dp(c, 2);
-            box.setContentDescription("Картинка тренажёра. Нажмите, чтобы выбрать другую");
+        android.graphics.Bitmap b = photo(c, key, frame);
+        if (b != null) {
+            img.setImageBitmap(b);
+            img.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            box.setContentDescription("Фото упражнения. Нажмите, чтобы выбрать другое");
         } else {
             img.setImageResource(R.drawable.ic_photo_add);
             img.setImageTintList(ColorStateList.valueOf(color(c, R.color.accent)));
-            pad = dp(c, sizeDp / 4f);
-            box.setContentDescription("Выбрать картинку тренажёра");
+            int pad = dp(c, iconDp / 4f);
+            img.setPadding(pad, pad, pad, pad);
+            box.setContentDescription("Выбрать фото упражнения");
         }
-        img.setPadding(pad, pad, pad, pad);
         box.addView(img, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
-        box.setForeground(ripple(c, null, rounded(0xFFFFFFFF, dp(c, 12))));
+        box.setForeground(ripple(c, null, rounded(0xFFFFFFFF, radius)));
         box.setClickable(true);
         box.setTag("thumb:" + key);
         return box;
@@ -347,10 +383,10 @@ final class Ui {
 
         final android.widget.GridView grid = new android.widget.GridView(a);
         grid.setTag("pickerGrid");
-        grid.setNumColumns(3);
+        grid.setNumColumns(2);
         grid.setVerticalSpacing(dp(a, 6));
         grid.setHorizontalSpacing(dp(a, 6));
-        LinearLayout.LayoutParams glp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(a, 400));
+        LinearLayout.LayoutParams glp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(a, 440));
         glp.topMargin = dp(a, 8);
         box.addView(grid, glp);
 
@@ -389,8 +425,8 @@ final class Ui {
                     ((ImageView) th.getChildAt(0)).setImageTintList(
                             ColorStateList.valueOf(color(a, R.color.text_secondary)));
                 }
-                cell.addView(th, lp(dp(a, 76), dp(a, 76)));
-                TextView t = text(a, it == null ? "Без картинки" : it.title, 12, R.color.text, false);
+                cell.addView(th, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(a, 96)));
+                TextView t = text(a, it == null ? "Без фото" : it.title, 13, R.color.text, false);
                 t.setGravity(Gravity.CENTER);
                 t.setMaxLines(3);
                 t.setEllipsize(android.text.TextUtils.TruncateAt.END);
@@ -429,7 +465,7 @@ final class Ui {
         });
 
         final AlertDialog dialog = new AlertDialog.Builder(a)
-                .setTitle("Картинка для «" + ex.name + "»")
+                .setTitle("Фото для «" + ex.name + "»")
                 .setView(box)
                 .setNegativeButton("Отмена", null)
                 .create();

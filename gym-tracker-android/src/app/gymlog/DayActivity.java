@@ -22,7 +22,6 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
-import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.AdapterView;
@@ -218,13 +217,44 @@ public class DayActivity extends BaseActivity {
 
     // ---------------------------------------------------------------- add exercise
 
-    /** Rows of the list in the "add" dialog: section titles, saved machines, reference exercises. */
+    /** Called when something is picked in the "add" dialog. */
+    interface Picker {
+        void pick(Object o);
+    }
+
+    /**
+     * Rows of the list in the "add" dialog: section titles (String), saved machines
+     * (Model.Exercise) and rows of two photo tiles from the reference (Catalog.Item[]).
+     */
     static final class AddAdapter extends BaseAdapter {
         final Activity a;
         final List<Object> rows = new ArrayList<>();
+        Picker picker;
 
         AddAdapter(Activity a) {
             this.a = a;
+        }
+
+        /** All reference exercises currently shown, in order. */
+        List<Catalog.Item> catalogItems() {
+            List<Catalog.Item> out = new ArrayList<>();
+            for (Object o : rows) {
+                if (o instanceof Catalog.Item[]) {
+                    for (Catalog.Item it : (Catalog.Item[]) o) out.add(it);
+                }
+            }
+            return out;
+        }
+
+        /** Index of the row that shows this reference exercise, or -1. */
+        int rowOf(String key) {
+            for (int i = 0; i < rows.size(); i++) {
+                Object o = rows.get(i);
+                if (o instanceof Catalog.Item[]) {
+                    for (Catalog.Item it : (Catalog.Item[]) o) if (it.key.equals(key)) return i;
+                }
+            }
+            return -1;
         }
 
         @Override
@@ -244,7 +274,7 @@ public class DayActivity extends BaseActivity {
 
         @Override
         public boolean isEnabled(int i) {
-            return !(rows.get(i) instanceof String);
+            return rows.get(i) instanceof Model.Exercise;
         }
 
         @Override
@@ -260,39 +290,78 @@ public class DayActivity extends BaseActivity {
                 h.setPadding(0, Ui.dp(a, 12), 0, Ui.dp(a, 4));
                 return h;
             }
-            LinearLayout row = Ui.horizontal(a);
-            int rp = Ui.dp(a, 6);
-            row.setPadding(0, rp, 0, rp);
-            String catalogKey = o instanceof Model.Exercise ? ((Model.Exercise) o).catalog : ((Catalog.Item) o).key;
-            FrameLayout th = Ui.thumbnail(a, catalogKey, 48);
-            th.setClickable(false);
-            th.setForeground(null);
-            row.addView(th, Ui.lp(Ui.dp(a, 48), Ui.dp(a, 48)));
-            LinearLayout texts = Ui.vertical(a);
-            LinearLayout.LayoutParams tl = Ui.lpWeight(1);
-            tl.leftMargin = Ui.dp(a, 12);
-            row.addView(texts, tl);
             if (o instanceof Model.Exercise) {
-                texts.addView(Ui.text(a, ((Model.Exercise) o).name, 16, R.color.text, false), Ui.matchWrap());
-            } else {
-                final Catalog.Item it = (Catalog.Item) o;
-                texts.addView(Ui.text(a, it.title, 15, R.color.text, false), Ui.matchWrap());
-                TextView m = Ui.text(a, it.muscles, 12, R.color.text_secondary, false);
-                m.setMaxLines(1);
-                m.setEllipsize(TextUtils.TruncateAt.END);
-                texts.addView(m, Ui.matchWrap());
-                ImageButton video = Ui.iconButton(a, R.drawable.ic_play, R.color.down, "Видео с техникой");
-                video.setFocusable(false);
-                video.setTag("video:" + it.key);
-                video.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View v) {
-                        openVideo(a, it);
-                    }
-                });
-                row.addView(video, Ui.lp(Ui.dp(a, 44), Ui.dp(a, 44)));
+                Model.Exercise ex = (Model.Exercise) o;
+                LinearLayout row = Ui.horizontal(a);
+                int rp = Ui.dp(a, 6);
+                row.setPadding(0, rp, 0, rp);
+                FrameLayout th = Ui.thumbnail(a, ex.catalog, 48);
+                th.setClickable(false);
+                th.setForeground(null);
+                row.addView(th, Ui.lp(Ui.dp(a, 56), Ui.dp(a, 44)));
+                TextView t = Ui.text(a, ex.name, 16, R.color.text, false);
+                LinearLayout.LayoutParams tl = Ui.lpWeight(1);
+                tl.leftMargin = Ui.dp(a, 12);
+                row.addView(t, tl);
+                return row;
+            }
+            Catalog.Item[] pair = (Catalog.Item[]) o;
+            LinearLayout row = Ui.horizontal(a);
+            row.setGravity(Gravity.TOP);
+            row.setPadding(0, Ui.dp(a, 4), 0, Ui.dp(a, 4));
+            for (int k = 0; k < 2; k++) {
+                LinearLayout.LayoutParams lp = Ui.lpWeight(1);
+                if (k == 0) lp.rightMargin = Ui.dp(a, 4); else lp.leftMargin = Ui.dp(a, 4);
+                if (k < pair.length) row.addView(tile(pair[k]), lp);
+                else row.addView(new View(a), lp);
             }
             return row;
+        }
+
+        /** Photo + caption; tap = add, the red ▶ = video with the technique. */
+        private View tile(final Catalog.Item it) {
+            LinearLayout t = Ui.vertical(a);
+            t.setTag("tile:" + it.key);
+            float r = Ui.dp(a, 12);
+            t.setBackground(Ui.ripple(a, Ui.rounded(Ui.color(a, R.color.input_bg), r), Ui.rounded(0xFFFFFFFF, r)));
+            t.setClickable(true);
+            t.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    if (picker != null) picker.pick(it);
+                }
+            });
+            FrameLayout photo = Ui.photoBox(a, it.key, 0, 48, r);
+            photo.setClickable(false);
+            photo.setForeground(null);
+            ImageButton video = Ui.iconButton(a, R.drawable.ic_play, R.color.down, "Видео с техникой");
+            video.setBackground(Ui.circle(0xE6FFFFFF));
+            int vp = Ui.dp(a, 4);
+            video.setPadding(vp, vp, vp, vp);
+            video.setFocusable(false);
+            video.setTag("video:" + it.key);
+            video.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    openVideo(a, it);
+                }
+            });
+            FrameLayout.LayoutParams vl = new FrameLayout.LayoutParams(Ui.dp(a, 34), Ui.dp(a, 34),
+                    Gravity.TOP | Gravity.END);
+            vl.setMargins(0, Ui.dp(a, 4), Ui.dp(a, 4), 0);
+            photo.addView(video, vl);
+            t.addView(photo, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(a, 104)));
+            TextView title = Ui.text(a, it.title, 13, R.color.text, true);
+            title.setMaxLines(2);
+            title.setEllipsize(TextUtils.TruncateAt.END);
+            int p = Ui.dp(a, 6);
+            title.setPadding(p, p, p, 0);
+            t.addView(title, Ui.matchWrap());
+            TextView eq = Ui.text(a, Catalog.equipmentTitle(it.equipment())
+                    + (it.bodyweight() ? " · доп. вес" : ""), 11, R.color.text_secondary, false);
+            eq.setPadding(p, 0, p, p);
+            t.addView(eq, Ui.matchWrap());
+            return t;
         }
     }
 
@@ -302,6 +371,29 @@ public class DayActivity extends BaseActivity {
         } catch (ActivityNotFoundException e) {
             Toast.makeText(a, "Не найдено приложение для открытия ссылки", Toast.LENGTH_LONG).show();
         }
+    }
+
+    private TextView chip(String label, String tag) {
+        TextView chip = Ui.text(this, label, 14, R.color.accent, true);
+        chip.setTag(tag);
+        int cp = Ui.dp(this, 12);
+        chip.setPadding(cp, Ui.dp(this, 6), cp, Ui.dp(this, 6));
+        chip.setBackground(Ui.ripple(this, Ui.rounded(Ui.color(this, R.color.accent_soft), Ui.dp(this, 16)),
+                Ui.rounded(0xFFFFFFFF, Ui.dp(this, 16))));
+        return chip;
+    }
+
+    private static void selectChip(Activity a, TextView chip, boolean selected) {
+        chip.setBackground(Ui.ripple(a, Ui.rounded(Ui.color(a, selected ? R.color.accent : R.color.accent_soft),
+                Ui.dp(a, 16)), Ui.rounded(0xFFFFFFFF, Ui.dp(a, 16))));
+        chip.setTextColor(Ui.color(a, selected ? R.color.on_accent : R.color.accent));
+    }
+
+    private static HorizontalScrollView chipRow(Activity a, LinearLayout chips) {
+        HorizontalScrollView sc = new HorizontalScrollView(a);
+        sc.setHorizontalScrollBarEnabled(false);
+        sc.addView(chips);
+        return sc;
     }
 
     AlertDialog showAddDialog() {
@@ -315,7 +407,7 @@ public class DayActivity extends BaseActivity {
         }
 
         LinearLayout box = Ui.vertical(this);
-        int p = Ui.dp(this, 20);
+        int p = Ui.dp(this, 16);
         box.setPadding(p, Ui.dp(this, 8), p, 0);
 
         final EditText input = new EditText(this);
@@ -327,18 +419,11 @@ public class DayActivity extends BaseActivity {
         input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(60)});
         box.addView(input, Ui.matchWrap());
 
-        // Muscle group chips: tap to see all exercises of the group.
-        HorizontalScrollView chipsScroll = new HorizontalScrollView(this);
-        chipsScroll.setHorizontalScrollBarEnabled(false);
-        LinearLayout chips = Ui.horizontal(this);
+        // Muscle group chips: tap to see all exercises of the group as photos.
+        LinearLayout groups = Ui.horizontal(this);
         for (final Catalog.Group g : Catalog.GROUPS) {
-            TextView chip = Ui.text(this, g.title, 14, R.color.accent, true);
-            chip.setTag("chip:" + g.key);
-            int cp = Ui.dp(this, 12);
-            chip.setPadding(cp, Ui.dp(this, 6), cp, Ui.dp(this, 6));
-            chip.setBackground(Ui.ripple(this, Ui.rounded(Ui.color(this, R.color.accent_soft), Ui.dp(this, 16)),
-                    Ui.rounded(0xFFFFFFFF, Ui.dp(this, 16))));
-            chip.setOnClickListener(new View.OnClickListener() {
+            TextView c = chip(g.title, "chip:" + g.key);
+            c.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
                     input.setText(g.title);
@@ -347,19 +432,46 @@ public class DayActivity extends BaseActivity {
             });
             LinearLayout.LayoutParams cl = Ui.lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
             cl.rightMargin = Ui.dp(this, 6);
-            chips.addView(chip, cl);
+            groups.addView(c, cl);
         }
-        chipsScroll.addView(chips);
-        LinearLayout.LayoutParams csl = Ui.matchWrap();
-        csl.topMargin = Ui.dp(this, 8);
-        box.addView(chipsScroll, csl);
+        LinearLayout.LayoutParams gl = Ui.matchWrap();
+        gl.topMargin = Ui.dp(this, 8);
+        box.addView(chipRow(this, groups), gl);
+
+        // Equipment filter: all / machine / cable / barbell / dumbbells / own weight.
+        final String[] equip = {null};
+        final List<TextView> equipChips = new ArrayList<>();
+        LinearLayout eqRow = Ui.horizontal(this);
+        final AddAdapter adapter = new AddAdapter(this);
+        final Runnable[] filterRef = new Runnable[1];
+        String[][] eqs = new String[Catalog.EQUIPMENT.length + 1][];
+        eqs[0] = new String[]{null, "Всё оборудование"};
+        System.arraycopy(Catalog.EQUIPMENT, 0, eqs, 1, Catalog.EQUIPMENT.length);
+        for (final String[] e : eqs) {
+            final TextView c = chip(e[1], "equip:" + (e[0] == null ? "all" : e[0]));
+            equipChips.add(c);
+            c.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    equip[0] = e[0];
+                    for (TextView other : equipChips) selectChip(DayActivity.this, other, other == c);
+                    filterRef[0].run();
+                }
+            });
+            LinearLayout.LayoutParams cl = Ui.lp(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            cl.rightMargin = Ui.dp(this, 6);
+            eqRow.addView(c, cl);
+        }
+        selectChip(this, equipChips.get(0), true);
+        LinearLayout.LayoutParams el = Ui.matchWrap();
+        el.topMargin = Ui.dp(this, 6);
+        box.addView(chipRow(this, eqRow), el);
 
         final ListView lv = new ListView(this);
         lv.setTag("addList");
         lv.setDivider(null);
-        final AddAdapter adapter = new AddAdapter(this);
         lv.setAdapter(adapter);
-        box.addView(lv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 320)));
+        box.addView(lv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 420)));
 
         final Runnable filter = new Runnable() {
             @Override
@@ -381,21 +493,38 @@ public class DayActivity extends BaseActivity {
                     adapter.rows.addAll(mine);
                 }
                 List<Catalog.Item> ref = new ArrayList<>();
-                for (Catalog.Item it : Matcher.suggest(text, 15)) {
-                    if (!usedKeys.contains(it.key)) ref.add(it);
-                }
-                if (!ref.isEmpty()) {
+                String title;
+                if (q.isEmpty()) {
+                    title = "Популярные упражнения";
+                    for (Catalog.Item it : Catalog.all()) {
+                        if (it.technique.length > 0 && !usedKeys.contains(it.key)) ref.add(it);
+                    }
+                } else {
                     Catalog.Group g = Catalog.group(group);
-                    adapter.rows.add(g != null ? "Справочник: " + g.title.toLowerCase(new java.util.Locale("ru"))
-                            + " (" + ref.size() + ")" : "Из справочника");
-                    adapter.rows.addAll(ref);
+                    title = g != null ? "Справочник: " + g.title.toLowerCase(new java.util.Locale("ru")) : "Из справочника";
+                    for (Catalog.Item it : Matcher.suggest(text, 40)) {
+                        if (!usedKeys.contains(it.key)) ref.add(it);
+                    }
                 }
-                if (adapter.rows.isEmpty() && q.isEmpty()) {
-                    adapter.rows.add("Введите название или нажмите на группу мышц выше");
+                if (equip[0] != null) {
+                    List<Catalog.Item> f = new ArrayList<>();
+                    for (Catalog.Item it : ref) if (equip[0].equals(it.equipment())) f.add(it);
+                    ref = f;
+                }
+                if (q.isEmpty() && ref.size() > 24) ref = ref.subList(0, 24);
+                if (!ref.isEmpty()) {
+                    adapter.rows.add(title + " (" + ref.size() + ")");
+                    for (int i = 0; i < ref.size(); i += 2) {
+                        adapter.rows.add(i + 1 < ref.size()
+                                ? new Catalog.Item[]{ref.get(i), ref.get(i + 1)} : new Catalog.Item[]{ref.get(i)});
+                    }
+                } else if (!q.isEmpty() && mine.isEmpty()) {
+                    adapter.rows.add("В справочнике не нашлось — нажмите «Добавить», чтобы сохранить своё название");
                 }
                 adapter.notifyDataSetChanged();
             }
         };
+        filterRef[0] = filter;
         filter.run();
 
         final AlertDialog dialog = new AlertDialog.Builder(this)
@@ -405,18 +534,9 @@ public class DayActivity extends BaseActivity {
                 .setPositiveButton("Добавить", null)
                 .create();
 
-        input.addTextChangedListener(new TextWatcher() {
-            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
-            @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
+        adapter.picker = new Picker() {
             @Override
-            public void afterTextChanged(Editable s) {
-                filter.run();
-            }
-        });
-        lv.setOnItemClickListener(new AdapterView.OnItemClickListener() {
-            @Override
-            public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
-                Object o = adapter.getItem(position);
+            public void pick(Object o) {
                 if (o instanceof Model.Exercise) {
                     dialog.dismiss();
                     addExercise(((Model.Exercise) o).id);
@@ -428,6 +548,20 @@ public class DayActivity extends BaseActivity {
                     addExercise(exId);
                 }
             }
+        };
+        input.addTextChangedListener(new TextWatcher() {
+            @Override public void beforeTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
+            @Override
+            public void afterTextChanged(Editable s) {
+                filter.run();
+            }
+        });
+        lv.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+            @Override
+            public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                adapter.picker.pick(adapter.getItem(position));
+            }
         });
         final Runnable submit = new Runnable() {
             @Override
@@ -438,7 +572,7 @@ public class DayActivity extends BaseActivity {
                     return;
                 }
                 if (Matcher.groupOf(name) != null) {
-                    input.setError("Это группа мышц — выберите упражнение из списка ниже");
+                    input.setError("Это группа мышц — выберите упражнение из фото ниже");
                     return;
                 }
                 dialog.dismiss();
@@ -464,9 +598,6 @@ public class DayActivity extends BaseActivity {
                         });
             }
         });
-        if (saved.isEmpty() && dialog.getWindow() != null) {
-            dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
-        }
         dialog.show();
         return dialog;
     }

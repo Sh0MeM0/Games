@@ -16,7 +16,7 @@ VERSION=$(grep -o 'android:versionName="[^"]*"' AndroidManifest.xml | cut -d'"' 
 echo "== aapt2: resources"
 aapt2 compile --dir res -o $B/res.zip
 aapt2 link -o $B/base.apk -I $SDK/framework-res-34.apk --manifest AndroidManifest.xml \
-  --java $B/gen $B/res.zip
+  -A assets --java $B/gen $B/res.zip
 
 echo "== javac"
 javac -proc:none --release 8 -encoding UTF-8 -Xlint:-options -nowarn \

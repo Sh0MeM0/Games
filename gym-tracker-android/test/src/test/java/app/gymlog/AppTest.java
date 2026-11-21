@@ -182,7 +182,6 @@ public class AppTest {
         dlg = d2.showAddDialog();
         idle();
         ListView lv = (ListView) findByTag(dlg.getWindow().getDecorView(), "addList");
-        assertEquals(2, lv.getAdapter().getCount());
         assertEquals("Ваши тренажёры", lv.getAdapter().getItem(0));
         assertEquals("Жим лёжа", ((Model.Exercise) lv.getAdapter().getItem(1)).name);
         lv.performItemClick(null, 1, 1);

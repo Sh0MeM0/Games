@@ -168,11 +168,14 @@ public class MatcherTest {
 
     @Test
     public void everyCatalogItemHasContent() {
+        int withTechnique = 0;
         for (Catalog.Item it : Catalog.all()) {
             assertEquals(it.key, Matcher.best(it.title).key);
-            if (it.technique.length == 0 || it.about.isEmpty() || it.muscles.isEmpty()) {
-                throw new AssertionError("empty content: " + it.key);
-            }
+            if (it.photo() == null) throw new AssertionError("no photo: " + it.key);
+            if (it.muscles.isEmpty()) throw new AssertionError("no muscles: " + it.key);
+            if (it.technique.length > 0) withTechnique++;
         }
+        assertTrue(Catalog.all().size() >= 200);
+        assertEquals(91, withTechnique);
     }
 }

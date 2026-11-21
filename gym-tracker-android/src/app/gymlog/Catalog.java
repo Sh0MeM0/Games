@@ -8,7 +8,7 @@ import java.util.Map;
 
 /**
  * Built-in reference of common gym exercises: names and synonyms (used for automatic
- * matching), a pictogram (res/drawable/ex_KEY.xml) and short general technique notes.
+ * matching), real photos (assets/ex, see PhotoData) and short general technique notes.
  * The notes are general guidance, not medical advice.
  */
 public final class Catalog {
@@ -30,7 +30,7 @@ public final class Catalog {
     public static final class Item {
         public final String key;
         public final String title;
-        public final String[] synonyms;
+        public String[] synonyms;
         public final String muscles;
         public final String about;
         public final String[] technique;
@@ -39,8 +39,10 @@ public final class Catalog {
         String[] groups = new String[0];
         /** Own body weight is the load: the weight column means "additional weight". */
         boolean bodyweight;
-        /** Pictogram key: res/drawable/ex_PICT.xml (several variants may share one picture). */
-        String pict;
+        /** Photo set in assets/ex/PHOTO_0.jpg (start) and PHOTO_1.jpg (end), or null. */
+        String photo;
+        /** machine, cable, barbell, dumbbell, body or other. */
+        String equipment = "other";
 
         Item(String key, String title, String[] synonyms, String muscles, String about,
              String[] technique, String[] mistakes) {
@@ -51,7 +53,6 @@ public final class Catalog {
             this.about = about;
             this.technique = technique;
             this.mistakes = mistakes;
-            this.pict = key;
         }
 
         /** Query for a video search, e.g. "техника Жим штанги лёжа". */
@@ -59,8 +60,12 @@ public final class Catalog {
             return "техника " + title;
         }
 
-        public String pict() {
-            return pict;
+        public String photo() {
+            return photo;
+        }
+
+        public String equipment() {
+            return equipment;
         }
 
         public boolean bodyweight() {
@@ -110,13 +115,44 @@ public final class Catalog {
         ITEMS.put(key, new Item(key, title, synonyms, muscles, about, technique, mistakes));
     }
 
-    /** Groups, "own body weight" flag and shared picture for an item. */
-    private static void meta(String key, String groups, boolean bodyweight, String pict) {
+    /** Groups and the "own body weight" flag of an item. */
+    private static void meta(String key, String groups, boolean bodyweight) {
         Item it = ITEMS.get(key);
         if (it == null) throw new IllegalStateException(key);
         it.groups = groups.split(" ");
         it.bodyweight = bodyweight;
-        if (pict != null) it.pict = pict;
+    }
+
+    /** Photo for an item; the English name becomes one more synonym. Used by {@link PhotoData}. */
+    static void setPhoto(String key, String photo, String equipment, String englishName) {
+        Item it = ITEMS.get(key);
+        if (it == null) throw new IllegalStateException(key);
+        it.photo = photo;
+        it.equipment = "other".equals(equipment) && it.bodyweight ? "body" : equipment;
+        String[] s = java.util.Arrays.copyOf(it.synonyms, it.synonyms.length + 1);
+        s[s.length - 1] = englishName.toLowerCase(java.util.Locale.ROOT);
+        it.synonyms = s;
+    }
+
+    /** An exercise known only by name, photos and muscles (no written technique). */
+    static void addPhotoItem(String key, String title, String[] synonyms, String muscles, String groups,
+                             boolean bodyweight, String photo, String equipment, String englishName) {
+        if (ITEMS.containsKey(key)) throw new IllegalStateException("duplicate " + key);
+        add(key, title, synonyms, muscles, "", new String[0], new String[0]);
+        meta(key, groups, bodyweight);
+        Item it = ITEMS.get(key);
+        it.photo = photo;
+        it.equipment = "other".equals(equipment) && bodyweight ? "body" : equipment;
+    }
+
+    /** Equipment buckets for the filter in the "add" dialog: key, title. */
+    public static final String[][] EQUIPMENT = {
+            {"machine", "Тренажёр"}, {"cable", "Блок"}, {"barbell", "Штанга"}, {"dumbbell", "Гантели"},
+            {"body", "Свой вес"}};
+
+    public static String equipmentTitle(String key) {
+        for (String[] e : EQUIPMENT) if (e[0].equals(key)) return e[1];
+        return "Другое";
     }
 
     public static Item get(String key) {
@@ -233,7 +269,7 @@ public final class Catalog {
                         "Плавно верните руки вперёд, не округляя спину."),
                 a("Раскачивание корпусом вперёд-назад.", "Круглая спина."));
         add("bent_over_row", "Тяга штанги в наклоне",
-                a("тяга штанги в наклоне", "тяга в наклоне", "тяга штанги к поясу", "тяга штанги в наклоне обратным хватом", "barbell row"),
+                a("тяга штанги в наклоне", "тяга в наклоне", "тяга штанги к поясу", "barbell row"),
                 "широчайшие, трапеции, ромбовидные, задние дельты, бицепс",
                 "Тяга штанги к поясу в наклоне корпуса.",
                 a("Возьмите штангу, наклонитесь вперёд с прямой спиной, колени слегка согнуты.",
@@ -241,7 +277,7 @@ public final class Catalog {
                         "Сведите лопатки вверху и плавно опустите штангу."),
                 a("Круглая спина.", "Рывки корпусом вверх."));
         add("one_arm_row", "Тяга гантели одной рукой",
-                a("тяга гантели одной рукой", "тяга гантели в наклоне", "тяга гантели к поясу", "one arm row",
+                a("тяга гантели одной рукой", "тяга гантели к поясу", "one arm row",
                         "dumbbell row"),
                 "широчайшие, ромбовидные, задние дельты, бицепс",
                 "Тяга гантели к поясу с упором коленом и рукой в скамью.",
@@ -321,7 +357,7 @@ public final class Catalog {
                         "Медленно разогните ноги, не бросая вес."),
                 a("Отрыв таза от скамьи.", "Слишком быстрая негативная фаза."));
         add("lunges", "Выпады",
-                a("выпады", "выпады с гантелями", "выпады со штангой", "выпады вперёд", "выпады назад", "шагающие выпады", "lunges"),
+                a("выпады", "выпады с гантелями", "выпады вперёд", "выпады назад", "lunges"),
                 "квадрицепсы, ягодичные",
                 "Шаг вперёд (или назад) с опусканием до угла около 90° в обоих коленях.",
                 a("Встаньте прямо, гантели в руках.",
@@ -401,7 +437,7 @@ public final class Catalog {
                         "Медленно опустите."),
                 a("Раскачивание корпусом и рывки.", "Подъём выше плеч с поднятием трапеций."));
         add("upright_row", "Тяга штанги к подбородку",
-                a("тяга к подбородку", "тяга штанги к подбородку", "протяжка", "тяга гантелей к подбородку", "upright row"),
+                a("тяга к подбородку", "тяга штанги к подбородку", "протяжка", "upright row"),
                 "средние дельты, трапеции",
                 "Тяга штанги вдоль корпуса вверх с разведением локтей в стороны.",
                 a("Возьмите штангу хватом примерно на ширине плеч или шире.",
@@ -681,7 +717,7 @@ public final class Catalog {
                 a("Наклон корпуса в сторону.", "Подъём выше плеча."));
         add("front_raise", "Подъём рук перед собой",
                 a("подъём рук перед собой", "подъём гантелей перед собой", "махи перед собой", "передняя дельта",
-                        "подъём штанги перед собой", "front raise"),
+                        "front raise"),
                 "передние дельты",
                 "Подъём гантелей, блина или штанги перед собой до уровня плеч.",
                 a("Встаньте прямо, вес у бёдер.",
@@ -928,98 +964,99 @@ public final class Catalog {
                         "Начинайте и заканчивайте лёгким темпом."),
                 a("Опора всем весом на ручки.", "Слишком высокое сопротивление."));
 
-        // ------------------------------------------------------------ groups, own-weight flag, shared pictures
-        meta("bench_press", "chest triceps", false, null);
-        meta("close_grip_bench", "triceps chest", false, "bench_press");
-        meta("smith_bench", "chest", false, null);
-        meta("dumbbell_press", "chest", false, null);
-        meta("incline_press", "chest shoulders", false, null);
-        meta("incline_db_press", "chest shoulders", false, null);
-        meta("decline_press", "chest", false, null);
-        meta("dumbbell_fly", "chest", false, null);
-        meta("pec_deck", "chest", false, null);
-        meta("cable_crossover", "chest", false, null);
-        meta("low_cable_fly", "chest", false, null);
-        meta("chest_press_machine", "chest", false, null);
-        meta("db_pullover", "chest back", false, null);
-        meta("dips", "chest triceps", true, null);
-        meta("pushups", "chest triceps", true, null);
-        meta("lat_pulldown", "back", false, null);
-        meta("close_grip_pulldown", "back biceps", false, null);
-        meta("reverse_grip_pulldown", "back biceps", false, "close_grip_pulldown");
-        meta("straight_arm_pulldown", "back", false, null);
-        meta("seated_row", "back", false, null);
-        meta("wide_seated_row", "back shoulders", false, "seated_row");
-        meta("one_arm_cable_row", "back", false, "seated_row");
-        meta("machine_row", "back", false, null);
-        meta("chest_supported_row", "back", false, null);
-        meta("bent_over_row", "back", false, null);
-        meta("tbar_row", "back", false, null);
-        meta("one_arm_row", "back", false, null);
-        meta("pullups", "back biceps", true, null);
-        meta("chinups", "back biceps", true, "pullups");
-        meta("deadlift", "back legs glutes", false, null);
-        meta("sumo_deadlift", "legs glutes back", false, null);
-        meta("romanian_deadlift", "legs glutes back", false, null);
-        meta("hyperextension", "back glutes", true, null);
-        meta("squat", "legs glutes", false, null);
-        meta("front_squat", "legs", false, null);
-        meta("smith_squat", "legs glutes", false, null);
-        meta("goblet_squat", "legs glutes", false, null);
-        meta("leg_press", "legs glutes", false, null);
-        meta("hack_squat", "legs", false, null);
-        meta("lunges", "legs glutes", false, null);
-        meta("bulgarian_split_squat", "legs glutes", false, null);
-        meta("leg_extension", "legs", false, null);
-        meta("leg_curl", "legs", false, null);
-        meta("seated_leg_curl", "legs", false, null);
-        meta("calf_raise", "calves", false, null);
-        meta("seated_calf_raise", "calves", false, null);
-        meta("hip_adduction", "legs", false, null);
-        meta("hip_abduction", "glutes", false, null);
-        meta("hip_thrust", "glutes", false, null);
-        meta("cable_kickback", "glutes", false, null);
-        meta("overhead_press", "shoulders", false, null);
-        meta("db_shoulder_press", "shoulders", false, null);
-        meta("arnold_press", "shoulders", false, "db_shoulder_press");
-        meta("machine_shoulder_press", "shoulders", false, null);
-        meta("lateral_raise", "shoulders", false, null);
-        meta("cable_lateral_raise", "shoulders", false, null);
-        meta("front_raise", "shoulders", false, null);
-        meta("upright_row", "shoulders traps", false, null);
-        meta("rear_delt", "shoulders", false, null);
-        meta("bent_over_lateral", "shoulders", false, "rear_delt");
-        meta("face_pull", "shoulders", false, null);
-        meta("shrugs", "traps", false, null);
-        meta("barbell_shrugs", "traps", false, null);
-        meta("smith_shrugs", "traps", false, null);
-        meta("barbell_curl", "biceps", false, null);
-        meta("dumbbell_curl", "biceps", false, null);
-        meta("hammer_curl", "biceps forearms", false, null);
-        meta("preacher_curl", "biceps", false, null);
-        meta("concentration_curl", "biceps", false, null);
-        meta("cable_curl", "biceps", false, null);
-        meta("reverse_curl", "biceps forearms", false, "barbell_curl");
-        meta("wrist_curl", "forearms", false, null);
-        meta("triceps_pushdown", "triceps", false, null);
-        meta("rope_pushdown", "triceps", false, null);
-        meta("reverse_pushdown", "triceps", false, "triceps_pushdown");
-        meta("one_arm_pushdown", "triceps", false, null);
-        meta("overhead_cable_ext", "triceps", false, null);
-        meta("french_press", "triceps", false, null);
-        meta("db_overhead_ext", "triceps", false, null);
-        meta("db_kickback", "triceps", false, null);
-        meta("bench_dips", "triceps", true, null);
-        meta("triceps_machine", "triceps", false, null);
-        meta("crunches", "abs", true, null);
-        meta("cable_crunch", "abs", false, null);
-        meta("hanging_leg_raise", "abs", true, null);
-        meta("lying_leg_raise", "abs", true, null);
-        meta("plank", "abs", true, null);
-        meta("treadmill", "cardio", false, null);
-        meta("exercise_bike", "cardio", false, null);
-        meta("elliptical", "cardio", false, null);
-        meta("rowing_machine", "cardio", false, null);
+        // ------------------------------------------------------------ groups and own-weight flag
+        meta("bench_press", "chest triceps", false);
+        meta("close_grip_bench", "triceps chest", false);
+        meta("smith_bench", "chest", false);
+        meta("dumbbell_press", "chest", false);
+        meta("incline_press", "chest shoulders", false);
+        meta("incline_db_press", "chest shoulders", false);
+        meta("decline_press", "chest", false);
+        meta("dumbbell_fly", "chest", false);
+        meta("pec_deck", "chest", false);
+        meta("cable_crossover", "chest", false);
+        meta("low_cable_fly", "chest", false);
+        meta("chest_press_machine", "chest", false);
+        meta("db_pullover", "chest back", false);
+        meta("dips", "chest triceps", true);
+        meta("pushups", "chest triceps", true);
+        meta("lat_pulldown", "back", false);
+        meta("close_grip_pulldown", "back biceps", false);
+        meta("reverse_grip_pulldown", "back biceps", false);
+        meta("straight_arm_pulldown", "back", false);
+        meta("seated_row", "back", false);
+        meta("wide_seated_row", "back shoulders", false);
+        meta("one_arm_cable_row", "back", false);
+        meta("machine_row", "back", false);
+        meta("chest_supported_row", "back", false);
+        meta("bent_over_row", "back", false);
+        meta("tbar_row", "back", false);
+        meta("one_arm_row", "back", false);
+        meta("pullups", "back biceps", true);
+        meta("chinups", "back biceps", true);
+        meta("deadlift", "back legs glutes", false);
+        meta("sumo_deadlift", "legs glutes back", false);
+        meta("romanian_deadlift", "legs glutes back", false);
+        meta("hyperextension", "back glutes", true);
+        meta("squat", "legs glutes", false);
+        meta("front_squat", "legs", false);
+        meta("smith_squat", "legs glutes", false);
+        meta("goblet_squat", "legs glutes", false);
+        meta("leg_press", "legs glutes", false);
+        meta("hack_squat", "legs", false);
+        meta("lunges", "legs glutes", false);
+        meta("bulgarian_split_squat", "legs glutes", false);
+        meta("leg_extension", "legs", false);
+        meta("leg_curl", "legs", false);
+        meta("seated_leg_curl", "legs", false);
+        meta("calf_raise", "calves", false);
+        meta("seated_calf_raise", "calves", false);
+        meta("hip_adduction", "legs", false);
+        meta("hip_abduction", "glutes", false);
+        meta("hip_thrust", "glutes", false);
+        meta("cable_kickback", "glutes", false);
+        meta("overhead_press", "shoulders", false);
+        meta("db_shoulder_press", "shoulders", false);
+        meta("arnold_press", "shoulders", false);
+        meta("machine_shoulder_press", "shoulders", false);
+        meta("lateral_raise", "shoulders", false);
+        meta("cable_lateral_raise", "shoulders", false);
+        meta("front_raise", "shoulders", false);
+        meta("upright_row", "shoulders traps", false);
+        meta("rear_delt", "shoulders", false);
+        meta("bent_over_lateral", "shoulders", false);
+        meta("face_pull", "shoulders", false);
+        meta("shrugs", "traps", false);
+        meta("barbell_shrugs", "traps", false);
+        meta("smith_shrugs", "traps", false);
+        meta("barbell_curl", "biceps", false);
+        meta("dumbbell_curl", "biceps", false);
+        meta("hammer_curl", "biceps forearms", false);
+        meta("preacher_curl", "biceps", false);
+        meta("concentration_curl", "biceps", false);
+        meta("cable_curl", "biceps", false);
+        meta("reverse_curl", "biceps forearms", false);
+        meta("wrist_curl", "forearms", false);
+        meta("triceps_pushdown", "triceps", false);
+        meta("rope_pushdown", "triceps", false);
+        meta("reverse_pushdown", "triceps", false);
+        meta("one_arm_pushdown", "triceps", false);
+        meta("overhead_cable_ext", "triceps", false);
+        meta("french_press", "triceps", false);
+        meta("db_overhead_ext", "triceps", false);
+        meta("db_kickback", "triceps", false);
+        meta("bench_dips", "triceps", true);
+        meta("triceps_machine", "triceps", false);
+        meta("crunches", "abs", true);
+        meta("cable_crunch", "abs", false);
+        meta("hanging_leg_raise", "abs", true);
+        meta("lying_leg_raise", "abs", true);
+        meta("plank", "abs", true);
+        meta("treadmill", "cardio", false);
+        meta("exercise_bike", "cardio", false);
+        meta("elliptical", "cardio", false);
+        meta("rowing_machine", "cardio", false);
+        PhotoData.apply();
         for (Item it : ITEMS.values()) {
             if (it.groups.length == 0) throw new IllegalStateException("no group: " + it.key);
         }

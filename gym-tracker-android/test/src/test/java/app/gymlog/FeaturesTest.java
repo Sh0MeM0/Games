@@ -85,8 +85,10 @@ public class FeaturesTest {
         db.renameExercise(mine, "Жим лёжа узким хватом");
         assertEquals("leg_press", db.exercise(mine).catalog);
         assertTrue(db.exercise(mine).catalogManual);
-        assertTrue(Ui.pictogram(RuntimeEnvironment.application, "bench_press") != 0);
-        assertEquals(0, Ui.pictogram(RuntimeEnvironment.application, null));
+        assertTrue(Ui.hasPhoto("bench_press"));
+        assertNotNull(Ui.photo(RuntimeEnvironment.application, "bench_press", 0));
+        assertNotNull(Ui.photo(RuntimeEnvironment.application, "bench_press", 1));
+        assertNull(Ui.photo(RuntimeEnvironment.application, null, 0));
     }
 
     @Test
@@ -154,6 +156,9 @@ public class FeaturesTest {
         View root = a.getWindow().getDecorView();
         assertNotNull(findText(root, "Техника"));
         assertNotNull(findText(root, "Частые ошибки"));
+        assertNotNull(root.findViewWithTag("photo:0"));
+        assertNotNull(root.findViewWithTag("photo:1"));
+        assertTrue(((TextView) root.findViewWithTag("attribution")).getText().toString().contains("Free Exercise DB"));
         ((Button) root.findViewWithTag("video")).performClick();
         Intent i = shadowOf(a).getNextStartedActivity();
         assertEquals(Intent.ACTION_VIEW, i.getAction());

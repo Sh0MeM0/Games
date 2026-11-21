@@ -56,18 +56,38 @@ public class ExerciseInfoActivity extends BaseActivity {
 
         LinearLayout top = Ui.card(this);
         top.setGravity(Gravity.CENTER_HORIZONTAL);
-        FrameLayout pic = Ui.thumbnail(this, ex.catalog, 200);
-        pic.setOnClickListener(new View.OnClickListener() {
+        View.OnClickListener pick = new View.OnClickListener() {
             @Override
             public void onClick(View v) {
                 pickPicture();
             }
-        });
-        top.addView(pic, Ui.lp(Ui.dp(this, 200), Ui.dp(this, 200)));
+        };
+        if (Ui.hasPhoto(ex.catalog)) {
+            // Start and end of the movement, side by side.
+            LinearLayout photos = Ui.horizontal(this);
+            for (int f = 0; f < 2; f++) {
+                LinearLayout col = Ui.vertical(this);
+                FrameLayout ph = Ui.photoBox(this, ex.catalog, f, 48, Ui.dp(this, 12));
+                ph.setTag("photo:" + f);
+                ph.setOnClickListener(pick);
+                col.addView(ph, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 130)));
+                TextView cap = Ui.text(this, f == 0 ? "Начало" : "Конец", 12, R.color.text_secondary, false);
+                cap.setGravity(Gravity.CENTER);
+                col.addView(cap, Ui.matchWrap());
+                LinearLayout.LayoutParams lp = Ui.lpWeight(1);
+                if (f == 0) lp.rightMargin = Ui.dp(this, 4); else lp.leftMargin = Ui.dp(this, 4);
+                photos.addView(col, lp);
+            }
+            top.addView(photos, Ui.matchWrap());
+        } else {
+            FrameLayout pic = Ui.thumbnail(this, ex.catalog, 120);
+            pic.setOnClickListener(pick);
+            top.addView(pic, Ui.lp(Ui.dp(this, 120), Ui.dp(this, 120)));
+        }
         String hint = item == null
-                ? "Картинка не выбрана. Нажмите на значок выше, чтобы выбрать подходящий тренажёр из справочника."
-                : (ex.catalogManual ? "Картинка выбрана вами." : "Картинка подобрана автоматически по названию.")
-                  + " Если не подходит — нажмите на неё и выберите другую.";
+                ? "Фото не выбрано. Нажмите на значок выше и выберите упражнение из справочника."
+                : (ex.catalogManual ? "Фото выбрано вами." : "Фото подобрано автоматически по названию.")
+                  + " Если не подходит — нажмите на него и выберите другое.";
         TextView h = Ui.text(this, hint, 13, R.color.text_secondary, false);
         h.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams hl = Ui.matchWrap();
@@ -77,8 +97,9 @@ public class ExerciseInfoActivity extends BaseActivity {
 
         if (item == null) return;
 
-        section("Что это", item.about);
+        if (!item.about.isEmpty()) section("Что это", item.about);
         section("Какие мышцы работают", Fmt.capitalize(item.muscles) + ".");
+        section("Оборудование", Catalog.equipmentTitle(item.equipment()) + ".");
         if (Db.isExtra(ex.catalog, ex.weightMode)) {
             section("Как записывать", "Здесь работает собственный вес, поэтому графа веса — «Доп. вес»: "
                     + "пишите только утяжеление (например, 10 — это +10 кг) или оставляйте пустым. "
@@ -89,13 +110,18 @@ public class ExerciseInfoActivity extends BaseActivity {
             if (i > 0) tech.append("\n\n");
             tech.append(i + 1).append(". ").append(item.technique[i]);
         }
-        section("Техника", tech.toString());
+        if (item.technique.length > 0) {
+            section("Техника", tech.toString());
+        } else {
+            section("Техника", "Подробного описания техники для этого упражнения в приложении нет: "
+                    + "смотрите фото начала и конца движения выше и видео по кнопке ниже.");
+        }
         StringBuilder mist = new StringBuilder();
         for (int i = 0; i < item.mistakes.length; i++) {
             if (i > 0) mist.append('\n');
             mist.append("•  ").append(item.mistakes[i]);
         }
-        section("Частые ошибки", mist.toString());
+        if (item.mistakes.length > 0) section("Частые ошибки", mist.toString());
 
         Button video = Ui.softButton(this, "Найти видео с техникой на YouTube");
         video.setTag("video");
@@ -110,7 +136,10 @@ public class ExerciseInfoActivity extends BaseActivity {
         content.addView(video, vl);
 
         TextView note = Ui.text(this, "Это общие рекомендации, а не консультация врача или тренера. "
-                + "При травмах, боли или заболеваниях обратитесь к специалисту.", 12, R.color.text_secondary, false);
+                + "При травмах, боли или заболеваниях обратитесь к специалисту."
+                + (item.photo() != null ? "\n\nФото: Free Exercise DB (github.com/yuhonas/free-exercise-db), "
+                + "опубликовано как общественное достояние (Unlicense)." : ""), 12, R.color.text_secondary, false);
+        note.setTag("attribution");
         LinearLayout.LayoutParams nl = Ui.matchWrap();
         nl.topMargin = Ui.dp(this, 14);
         content.addView(note, nl);
