@@ -66,6 +66,23 @@ DXF занял 26,5 с, DWG — 34,9 с. Время 0.4.0 измерено на 
 Остаются неточности в подписях с подстрочными индексами («qₛ, МПа»,
 «fₛ, кПа») и в геологических индексах («1,bIIIpz»).
 
+### Windows portable 0.4.1
+
+Собран `scripts/update_portable.py` из проверенного portable 0.3.0, как и 0.4.0.
+По сравнению с опубликованным portable 0.4.0 (SHA-256 `526298f5…`, совпал с
+опубликованным) изменились только 9 файлов — модули `app/pdf2office`
+(`__init__`, `cad`, `extract`, `neural`, `recognition`, `text_quality`), `README.md`,
+`docs/VALIDATION.md`, `uninstall-files.nsh` — и добавлен `vector_text.py`; остальные
+6 270 файлов (Python, Qt, Tesseract, LibreDWG, модели, лаунчеры) совпадают по CRC-32.
+
+Запустить Windows-сборку под Wine в этой среде **не удалось**: Wine 9.0
+завершается с `free(): invalid pointer` уже на `wine cmd`. Поэтому Python-часть
+проверена под CPython 3.12.3 (ветка 3.12, как во встроенном runtime) с теми же
+версиями numpy 2.2.6, OpenCV 4.11.0.86, PyMuPDF 1.26.6, ezdxf 1.4.4, fontTools
+4.60.1, ONNX Runtime 1.31.1, что в portable: тесты `test_vector_text`, `test_cad`,
+`test_text_quality` — 58 прошли (3 пропущены: интеграция DWG без `dxf2dwg`), а
+синтетические CAD-чертежи дали те же результаты, что в таблице выше.
+
 ## 0.4.0
 
 Дата: 13 ноября 2026 года. Среда: Linux x64 (4 ядра), Python 3.13, Tesseract 5.3.4
