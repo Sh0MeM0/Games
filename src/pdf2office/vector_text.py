@@ -346,6 +346,9 @@ class VectorText:
         self.rejections: list[tuple[str, str, tuple]] = []
         # Letter pieces of every accepted phrase (diagnostics and tests).
         self.accepted: list[tuple[TextSpan, np.ndarray]] = []
+        # The letters and frame each decided reading was placed on.
+        self._placed: dict[int, _Match] = {}
+        self._cluster_cache: dict[tuple, list] = {}
 
     # ------------------------------------------------------ outline lettering
     def outline_letters(self) -> np.ndarray:
@@ -507,10 +510,54 @@ class VectorText:
             self.claimed[members] = True
             taken.append((proposal_span, members))
         for proposal_span, members in self._without_patterns(taken):
-            result.append(proposal_span)
-            self.accepted.append((proposal_span, members))
-            self.replaced += 1
+            for part, part_members in self._split_wide(proposal_span, members):
+                result.append(part)
+                self.accepted.append((part, part_members))
+                self.replaced += 1
+        self._placed.clear()
+        self._cluster_cache.clear()
         return result
+
+    def _split_wide(self, span: TextSpan, members: np.ndarray) -> list[tuple[TextSpan, np.ndarray]]:
+        """Separate labels that one reading joined across wide gaps.
+
+        The numbers of a scale or the cells of a table row stand far apart
+        on the drawing. As one CAD text they would be spaced by the font's
+        space instead and drift off their ticks; where the gap between
+        words is far wider than a word space each word becomes its own
+        text on its own letters.
+        """
+        match = self._placed.get(id(span))
+        tokens = span.text.split()
+        if match is None or len(tokens) < 2:
+            return [(span, members)]
+        band = self._band(match)
+        if band is None:
+            return [(span, members)]
+        height = band[2]
+        # Numbers written apart are separate labels (a scale, a row of
+        # values); words only where the gap is far wider than a space.
+        numeric = all(re.fullmatch(r"[-–+±]?[\d.,:/]+", token) for token in tokens)
+        limit = (0.45 if numeric else 1.2) * height
+        clusters = sorted(self._split_marks(match, self._clusters(match)), key=lambda item: item[2][0])
+        groups = [list(clusters[0][0])]
+        reach = clusters[0][2][2]
+        for cluster_members, _, (a0, _b0, a1, _b1) in clusters[1:]:
+            if a0 - reach > limit:
+                groups.append([])
+            groups[-1].extend(cluster_members)
+            reach = max(reach, a1)
+        if len(groups) < 2 or len(groups) != len(tokens):
+            return [(span, members)]
+        source = (span.engine or "").replace(" (вектор)", "")
+        parts = []
+        for token, group in zip(tokens, groups):
+            group = np.asarray(group, int)
+            extents = self._extents(group, match.frame)
+            part = _Match(match.span, group, match.frame, match.kind,
+                          (extents[:, 0].min(), extents[:, 1].min(), extents[:, 2].max(), extents[:, 3].max()))
+            parts.append((self._span(token, span.confidence or 0.0, source, part), group))
+        return parts
 
     def _without_patterns(self, taken: list) -> list:
         """Drop "0", "O" or "8" readings that are part of a hatch pattern.
@@ -610,6 +657,26 @@ class VectorText:
         return (span.confidence or 0) * agreed * max(1, sum(c.isalnum() for c in span.text))
 
     def _extents(self, members, frame: _Frame) -> np.ndarray:
+        """(u0, v0, u1, v1) of each piece in the frame of a phrase."""
+        members = np.asarray(members, int)
+        ux, uy = frame.u
+        if (abs(ux) < 1e-12 or abs(uy) < 1e-12) and len(members):
+            # Horizontal or vertical frame (nearly all lettering): the page
+            # boxes give the extents exactly, without touching the points.
+            box = self.box[members]
+            ox, oy = frame.origin
+            if abs(uy) < 1e-12:
+                sign = 1.0 if ux > 0 else -1.0
+                us = (box[:, 0] - ox, box[:, 2] - ox)
+                vs = (box[:, 1] - oy, box[:, 3] - oy)
+            else:
+                sign = 1.0 if uy > 0 else -1.0
+                us = (box[:, 1] - oy, box[:, 3] - oy)
+                vs = (-(box[:, 2] - ox), -(box[:, 0] - ox))
+                vs = (vs[0], vs[1])
+            u0, u1 = (us[0], us[1]) if sign > 0 else (-us[1], -us[0])
+            v0, v1 = (vs[0], vs[1]) if sign > 0 else (-vs[1], -vs[0])
+            return np.column_stack([u0, v0, u1, v1])
         extents = np.empty((len(members), 4))
         for row, member in enumerate(members):
             local = frame.local(self.points[member])
@@ -797,41 +864,31 @@ class VectorText:
         """Group letter pieces into characters: pieces that touch form one.
 
         Outline fonts are often printed as several adjacent filled pieces per
-        letter (a "3" as three stacked arcs); touching pieces are one letter.
-        Returns (member indices, page box, extent in the phrase frame).
+        letter (a "3" as three stacked arcs); touching pieces printed one
+        after another are one letter. Returns (member indices, page box,
+        extent in the phrase frame). Results are cached per phrase.
         """
-        members = [int(member) for member in match.members]
-        extents = self._extents(members, match.frame)
+        members = np.asarray(match.members, int)
+        key = (members.tobytes(), match.frame.origin.tobytes(), match.frame.u.tobytes(), match.frame.height)
+        cached = self._cluster_cache.get(key)
+        if cached is not None:
+            return cached
+        if not len(members):
+            return []
         boxes = self.box[members]
         # Pieces of one letter share their edges exactly; neighbouring
         # letters of a tight font may be only ~0.3 pt apart.
         tolerance = 0.005 * match.frame.height + 0.05
-        parent = list(range(len(members)))
-
-        def root(index: int) -> int:
-            while parent[index] != index:
-                parent[index] = parent[parent[index]]
-                index = parent[index]
-            return index
-
-        order = self.order[members]
-        for first in range(len(members)):
-            a = boxes[first]
-            for second in range(first + 1, len(members)):
-                b = boxes[second]
-                if (a[0] <= b[2] + tolerance and b[0] <= a[2] + tolerance
-                        and a[1] <= b[3] + tolerance and b[1] <= a[3] + tolerance
-                        and abs(int(order[first]) - int(order[second])) <= LETTER_ORDER_GAP):
-                    parent[root(first)] = root(second)
-        groups: dict[int, list[int]] = {}
-        for index in range(len(members)):
-            groups.setdefault(root(index), []).append(index)
+        labels = _touching_groups(boxes, np.full(len(members), tolerance), self.order[members])
+        extents = self._extents(members, match.frame)
         result = []
-        for indices in groups.values():
+        for label in dict.fromkeys(labels.tolist()):
+            indices = np.flatnonzero(labels == label)
             box = (boxes[indices, 0].min(), boxes[indices, 1].min(), boxes[indices, 2].max(), boxes[indices, 3].max())
             extent = (extents[indices, 0].min(), extents[indices, 1].min(),
                       extents[indices, 2].max(), extents[indices, 3].max())
-            result.append(([members[i] for i in indices], box, extent))
+            result.append(([int(members[i]) for i in indices], box, extent))
+        self._cluster_cache[key] = result
         return result
 
     def _runs(self, match: _Match) -> list[_Match]:
@@ -1056,7 +1113,9 @@ class VectorText:
         text = self._roman_from_geometry(trimmed, text)
         # Only the pieces that remain after trimming and band refinement are
         # this phrase's letters; everything else stays geometry.
-        return self._span(text, choice[1], choice[2], trimmed), trimmed.members
+        span = self._span(text, choice[1], choice[2], trimmed)
+        self._placed[id(span)] = trimmed
+        return span, trimmed.members
 
     # Runs of bars standing apart from other letters ("I-I, II-II"), not the
     # "l" of a word or the "II" inside an index such as "gtIIsz".
@@ -1598,10 +1657,13 @@ class VectorText:
             self.claimed[members] = True
             taken.append((span, members))
         for span, members in self._without_patterns(taken):
-            self.accepted.append((span, members))
-            self.replaced += 1
+            for part, part_members in self._split_wide(span, members):
+                self.accepted.append((part, part_members))
+                self.replaced += 1
+                result.append(part)
             recovered += 1
-            result.append(span)
+        self._placed.clear()
+        self._cluster_cache.clear()
         if recovered and messages is not None:
             messages.append(f"Дочитано {recovered} надписей, пропущенных при поиске строк (одиночные буквы в кружках, "
                             "подписи у близко расположенных строк).")
