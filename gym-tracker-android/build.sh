@@ -2,7 +2,13 @@
 # Builds a signed APK without the Android SDK/Gradle.
 # Needs: JDK 17+ (javac), and the Ubuntu 24.04 packages: aapt dalvik-exchange zipalign apksigner
 #   sudo apt-get install -y aapt dalvik-exchange zipalign apksigner
+#
+#   ./build.sh             public build  -> release/dnevnik-zala-<version>.apk
+#   ./build.sh --personal  also packs private/assets (personal catalog, git-ignored)
+#                          -> private/release/dnevnik-zala-<version>-personal.apk (never commit or share)
 set -euo pipefail
+PERSONAL=0
+[ "${1:-}" = "--personal" ] && PERSONAL=1
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 SDK=.sdk
@@ -15,8 +21,13 @@ VERSION=$(grep -o 'android:versionName="[^"]*"' AndroidManifest.xml | cut -d'"' 
 
 echo "== aapt2: resources"
 aapt2 compile --dir res -o $B/res.zip
+EXTRA_ASSETS=""
+if [ $PERSONAL = 1 ]; then
+  [ -f private/assets/extra/catalog.json ] || { echo "private/assets/extra/catalog.json missing: run tools/atletiq_personal.py"; exit 1; }
+  EXTRA_ASSETS="-A private/assets"
+fi
 aapt2 link -o $B/base.apk -I $SDK/framework-res-34.apk --manifest AndroidManifest.xml \
-  -A assets --java $B/gen $B/res.zip
+  -A assets $EXTRA_ASSETS --java $B/gen $B/res.zip
 
 echo "== javac"
 javac -proc:none --release 8 -encoding UTF-8 -Xlint:-options -nowarn \
@@ -39,7 +50,12 @@ fi
 apksigner sign --ks keystore/gymlog.jks --ks-pass pass:gymlog-key --key-pass pass:gymlog-key \
   --ks-key-alias gymlog --out $B/app.apk $B/aligned.apk
 apksigner verify --min-sdk-version 26 $B/app.apk
-mkdir -p release
-OUT=release/dnevnik-zala-$VERSION.apk
+if [ $PERSONAL = 1 ]; then
+  mkdir -p private/release
+  OUT=private/release/dnevnik-zala-$VERSION-personal.apk
+else
+  mkdir -p release
+  OUT=release/dnevnik-zala-$VERSION.apk
+fi
 cp $B/app.apk "$OUT"
 echo "APK: $ROOT/$OUT ($(stat -c %s "$OUT") bytes)"

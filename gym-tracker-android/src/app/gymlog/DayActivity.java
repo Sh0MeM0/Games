@@ -357,7 +357,7 @@ public class DayActivity extends BaseActivity {
             int p = Ui.dp(a, 6);
             title.setPadding(p, p, p, 0);
             t.addView(title, Ui.matchWrap());
-            TextView eq = Ui.text(a, Catalog.equipmentTitle(it.equipment())
+            TextView eq = Ui.text(a, it.equipmentLabel()
                     + (it.bodyweight() ? " · доп. вес" : ""), 11, R.color.text_secondary, false);
             eq.setPadding(p, 0, p, p);
             t.addView(eq, Ui.matchWrap());

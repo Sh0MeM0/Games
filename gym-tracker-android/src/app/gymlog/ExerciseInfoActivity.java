@@ -65,13 +65,16 @@ public class ExerciseInfoActivity extends BaseActivity {
         if (Ui.hasPhoto(ex.catalog)) {
             // Start and end of the movement, side by side.
             LinearLayout photos = Ui.horizontal(this);
-            for (int f = 0; f < 2; f++) {
+            int frames = item != null ? item.frames() : 1;
+            for (int f = 0; f < frames; f++) {
                 LinearLayout col = Ui.vertical(this);
                 FrameLayout ph = Ui.photoBox(this, ex.catalog, f, 48, Ui.dp(this, 12));
                 ph.setTag("photo:" + f);
                 ph.setOnClickListener(pick);
-                col.addView(ph, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(this, 130)));
-                TextView cap = Ui.text(this, f == 0 ? "Начало" : "Конец", 12, R.color.text_secondary, false);
+                col.addView(ph, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                        Ui.dp(this, frames == 1 ? 200 : 130)));
+                TextView cap = Ui.text(this, frames == 1 ? "" : f == 0 ? "Начало" : "Конец", 12,
+                        R.color.text_secondary, false);
                 cap.setGravity(Gravity.CENTER);
                 col.addView(cap, Ui.matchWrap());
                 LinearLayout.LayoutParams lp = Ui.lpWeight(1);
@@ -99,7 +102,7 @@ public class ExerciseInfoActivity extends BaseActivity {
 
         if (!item.about.isEmpty()) section("Что это", item.about);
         section("Какие мышцы работают", Fmt.capitalize(item.muscles) + ".");
-        section("Оборудование", Catalog.equipmentTitle(item.equipment()) + ".");
+        section("Оборудование", item.equipmentLabel() + ".");
         if (Db.isExtra(ex.catalog, ex.weightMode)) {
             section("Как записывать", "Здесь работает собственный вес, поэтому графа веса — «Доп. вес»: "
                     + "пишите только утяжеление (например, 10 — это +10 кг) или оставляйте пустым. "
@@ -123,7 +126,8 @@ public class ExerciseInfoActivity extends BaseActivity {
         }
         if (item.mistakes.length > 0) section("Частые ошибки", mist.toString());
 
-        Button video = Ui.softButton(this, "Найти видео с техникой на YouTube");
+        Button video = Ui.softButton(this, item.videoId() != null
+                ? "Смотреть видео упражнения (YouTube)" : "Найти видео с техникой на YouTube");
         video.setTag("video");
         video.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -134,10 +138,27 @@ public class ExerciseInfoActivity extends BaseActivity {
         LinearLayout.LayoutParams vl = Ui.matchWrap();
         vl.topMargin = Ui.dp(this, 14);
         content.addView(video, vl);
+        if (item.sourceUrl() != null) {
+            final String url = item.sourceUrl();
+            Button src = Ui.softButton(this, "Открыть на сайте-источнике");
+            src.setTag("source");
+            src.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    open(Uri.parse(url));
+                }
+            });
+            LinearLayout.LayoutParams sl = Ui.matchWrap();
+            sl.topMargin = Ui.dp(this, 8);
+            content.addView(src, sl);
+        }
 
         TextView note = Ui.text(this, "Это общие рекомендации, а не консультация врача или тренера. "
                 + "При травмах, боли или заболеваниях обратитесь к специалисту."
-                + (item.photo() != null ? "\n\nФото: Free Exercise DB (github.com/yuhonas/free-exercise-db), "
+                + (item.sourceUrl() != null
+                ? "\n\nФото и описание: " + Uri.parse(item.sourceUrl()).getHost()
+                  + ". Личная сборка — не для распространения."
+                : item.photo() != null ? "\n\nФото: Free Exercise DB (github.com/yuhonas/free-exercise-db), "
                 + "опубликовано как общественное достояние (Unlicense)." : ""), 12, R.color.text_secondary, false);
         note.setTag("attribution");
         LinearLayout.LayoutParams nl = Ui.matchWrap();
@@ -167,7 +188,9 @@ public class ExerciseInfoActivity extends BaseActivity {
         });
     }
 
+    /** The exercise's own video if known, otherwise a YouTube search. */
     static Uri videoSearchUri(Catalog.Item item) {
+        if (item.videoId() != null) return Uri.parse("https://www.youtube.com/watch?v=" + item.videoId());
         try {
             return Uri.parse("https://www.youtube.com/results?search_query="
                     + URLEncoder.encode(item.videoQuery(), "UTF-8"));
@@ -177,8 +200,12 @@ public class ExerciseInfoActivity extends BaseActivity {
     }
 
     private void openVideoSearch(Catalog.Item item) {
+        open(videoSearchUri(item));
+    }
+
+    private void open(Uri uri) {
         try {
-            startActivity(new Intent(Intent.ACTION_VIEW, videoSearchUri(item)));
+            startActivity(new Intent(Intent.ACTION_VIEW, uri));
         } catch (ActivityNotFoundException e) {
             Toast.makeText(this, "Не найдено приложение для открытия ссылки", Toast.LENGTH_LONG).show();
         }

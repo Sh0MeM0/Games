@@ -207,4 +207,36 @@ public class FeaturesTest {
         idle();
         assertEquals(1, m.progressBox.getChildCount());
     }
+
+    @Test
+    public void personalCatalogItemsWork() {
+        assertTrue(Catalog.addExtraItem("a_test1", "Тестовое упражнение Зюзя", "грудные", new String[]{"chest"},
+                false, "machine", "Тренажер", new String[]{"Шаг один.", "Шаг два."}, "abcdefghijk", "test1", 1,
+                "https://example.com/uprazhnenie/test.html"));
+        assertTrue(!Catalog.addExtraItem("a_test1", "Дубль", "", new String[]{"chest"}, false, "machine", null,
+                new String[0], null, "x", 1, null));
+        Catalog.Item it = Catalog.get("a_test1");
+        assertEquals("Тренажер", it.equipmentLabel());
+        assertEquals("a_test1", Matcher.best("тестовое упражнение зюзя").key);
+        assertTrue(Catalog.inGroup("chest").contains(it));
+        assertEquals("https://www.youtube.com/watch?v=abcdefghijk", ExerciseInfoActivity.videoSearchUri(it).toString());
+
+        long ex = db.findOrCreateExercise("Тестовое упражнение Зюзя");
+        assertEquals("a_test1", db.exercise(ex).catalog);
+        ExerciseInfoActivity a = Robolectric.buildActivity(ExerciseInfoActivity.class,
+                new Intent(RuntimeEnvironment.application, ExerciseInfoActivity.class)
+                        .putExtra(ExerciseInfoActivity.EXTRA_EXERCISE, ex)).setup().get();
+        idle();
+        View root = a.getWindow().getDecorView();
+        assertNotNull(findText(root, "1. Шаг один.\n\n2. Шаг два."));
+        assertNotNull(findText(root, "Смотреть видео упражнения (YouTube)"));
+        assertNull(root.findViewWithTag("photo:1"));
+        String note = ((TextView) root.findViewWithTag("attribution")).getText().toString();
+        assertTrue(note, note.contains("example.com") && note.contains("Личная сборка"));
+        ((Button) root.findViewWithTag("source")).performClick();
+        assertEquals("https://example.com/uprazhnenie/test.html", shadowOf(a).getNextStartedActivity().getDataString());
+        // the public build has no personal catalog file: loading it is a no-op
+        Extras.load(RuntimeEnvironment.application);
+        assertEquals(0, Extras.sCount);
+    }
 }

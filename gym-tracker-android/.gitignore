@@ -6,3 +6,5 @@ test/build/
 test/.gradle/
 # Signing key: not published (public repository)
 keystore/
+# Personal build with atletiq.com content: never commit
+private/

@@ -43,6 +43,16 @@ public final class Catalog {
         String photo;
         /** machine, cable, barbell, dumbbell, body or other. */
         String equipment = "other";
+        /** Asset folder of the photos: built-in "ex/", personal extras "extra/img/". */
+        String imageDir = "ex/";
+        /** Number of photos (2 = start and end of the movement). */
+        int frames = 2;
+        /** Exact equipment name from the source (e.g. "Гири"), or null. */
+        String equipmentName;
+        /** YouTube video id of this exercise, or null (then a search is opened). */
+        String videoId;
+        /** Page of the exercise on its source site (personal extras), or null. */
+        String sourceUrl;
 
         Item(String key, String title, String[] synonyms, String muscles, String about,
              String[] technique, String[] mistakes) {
@@ -66,6 +76,27 @@ public final class Catalog {
 
         public String equipment() {
             return equipment;
+        }
+
+        /** "Штанга", "Гири", "Тренажёр"... */
+        public String equipmentLabel() {
+            return equipmentName != null ? equipmentName : equipmentTitle(equipment);
+        }
+
+        public String imageDir() {
+            return imageDir;
+        }
+
+        public int frames() {
+            return frames;
+        }
+
+        public String videoId() {
+            return videoId;
+        }
+
+        public String sourceUrl() {
+            return sourceUrl;
         }
 
         public boolean bodyweight() {
@@ -143,6 +174,29 @@ public final class Catalog {
         Item it = ITEMS.get(key);
         it.photo = photo;
         it.equipment = "other".equals(equipment) && bodyweight ? "body" : equipment;
+    }
+
+    /**
+     * An exercise from the optional personal catalog (assets/extra/catalog.json, see Extras).
+     * Returns false if the key is already taken.
+     */
+    static synchronized boolean addExtraItem(String key, String title, String muscles, String[] groups,
+                                             boolean bodyweight, String equipment, String equipmentName,
+                                             String[] steps, String videoId, String photo, int frames,
+                                             String url) {
+        if (ITEMS.containsKey(key) || groups.length == 0) return false;
+        add(key, title, new String[]{title.toLowerCase(new java.util.Locale("ru"))}, muscles, "", steps, new String[0]);
+        Item it = ITEMS.get(key);
+        it.groups = groups;
+        it.bodyweight = bodyweight;
+        it.photo = photo;
+        it.imageDir = "extra/img/";
+        it.frames = frames;
+        it.equipment = equipment;
+        it.equipmentName = equipmentName;
+        it.videoId = videoId;
+        it.sourceUrl = url;
+        return true;
     }
 
     /** Equipment buckets for the filter in the "add" dialog: key, title. */
