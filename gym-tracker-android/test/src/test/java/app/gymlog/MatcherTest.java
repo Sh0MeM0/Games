@@ -167,6 +167,17 @@ public class MatcherTest {
     }
 
     @Test
+    public void everyPhotoFileExists() {
+        java.io.File dir = new java.io.File("../assets/ex");
+        for (Catalog.Item it : Catalog.all()) {
+            for (int f = 0; f < 2; f++) {
+                java.io.File file = new java.io.File(dir, it.photo() + "_" + f + ".webp");
+                assertTrue(file.getPath(), file.isFile() && file.length() > 1000);
+            }
+        }
+    }
+
+    @Test
     public void everyCatalogItemHasContent() {
         int withTechnique = 0;
         for (Catalog.Item it : Catalog.all()) {
@@ -175,7 +186,7 @@ public class MatcherTest {
             if (it.muscles.isEmpty()) throw new AssertionError("no muscles: " + it.key);
             if (it.technique.length > 0) withTechnique++;
         }
-        assertTrue(Catalog.all().size() >= 200);
+        assertTrue(Catalog.all().size() >= 470);
         assertEquals(91, withTechnique);
     }
 }

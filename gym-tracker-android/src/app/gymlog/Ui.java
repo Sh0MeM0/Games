@@ -294,11 +294,11 @@ final class Ui {
                 }
             };
 
-    /** Real photo of the exercise (frame 0 = start, 1 = end) from assets/ex, or null. */
+    /** Real photo of the exercise (frame 0 = start, 1 = end) from assets/ex (WebP), or null. */
     static android.graphics.Bitmap photo(Context c, String catalogKey, int frame) {
         Catalog.Item it = Catalog.get(catalogKey);
         if (it == null || it.photo() == null) return null;
-        String path = "ex/" + it.photo() + "_" + frame + ".jpg";
+        String path = "ex/" + it.photo() + "_" + frame + ".webp";
         android.graphics.Bitmap b = PHOTOS.get(path);
         if (b != null) return b;
         java.io.InputStream in = null;

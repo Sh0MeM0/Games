@@ -7,8 +7,8 @@ two photos: start (0.jpg) and end (1.jpg) of the movement.
 
 This script
   1. maps every exercise of Catalog.java to a photo set (EXISTING),
-  2. adds more exercises with Russian names (NEW),
-  3. downloads the photos, scales them down to assets/ex/<id>_0.jpg and _1.jpg,
+  2. adds more exercises with Russian names (NEW here, MORE in tools/more_exercises.py),
+  3. downloads the photos, scales them down and stores them as WebP: assets/ex/<id>_0.webp and _1.webp,
   4. writes src/app/gymlog/PhotoData.java.
 
 Usage: python3 tools/photo_catalog.py [path/to/exercises.json]
@@ -22,7 +22,16 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW = 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main/'
-WIDTH = 360
+WIDTH = 340      # px; enough for the tiles and the info screen
+QUALITY = 60     # WebP quality: about 40% smaller than the JPEGs at the same look
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from more_exercises import MORE  # noqa: E402
+
+# dataset primary muscle -> app muscle group
+GROUP_OF = {'abdominals': 'abs', 'abductors': 'glutes', 'adductors': 'legs', 'biceps': 'biceps',
+            'calves': 'calves', 'chest': 'chest', 'forearms': 'forearms', 'glutes': 'glutes',
+            'hamstrings': 'legs', 'lats': 'back', 'lower back': 'back', 'middle back': 'back', 'neck': 'traps',
+            'quadriceps': 'legs', 'shoulders': 'shoulders', 'traps': 'traps', 'triceps': 'triceps'}
 
 MUSCLES = {
     'abdominals': 'мышцы пресса', 'abductors': 'отводящие мышцы бедра', 'adductors': 'приводящие мышцы бедра',
@@ -220,8 +229,18 @@ NEW = [
 
 
 def fetch(url):
-    with urllib.request.urlopen(url, timeout=60) as r:
-        return r.read()
+    import time
+    import urllib.error
+    for attempt in range(8):
+        try:
+            with urllib.request.urlopen(url, timeout=60) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            if e.code not in (429, 500, 502, 503, 504) or attempt == 7:
+                raise
+            wait = int(e.headers.get('Retry-After') or 0) or min(120, 10 * 2 ** attempt)
+            print('HTTP %d, waiting %d s' % (e.code, wait), flush=True)
+            time.sleep(wait)
 
 
 def main():
@@ -231,10 +250,14 @@ def main():
     else:
         data = json.loads(fetch(RAW + 'dist/exercises.json'))
     by_id = {x['id']: x for x in data}
-    used = list(dict.fromkeys(list(EXISTING.values()) + [n[1] for n in NEW]))
+    used = list(dict.fromkeys(list(EXISTING.values()) + [n[1] for n in NEW] + list(MORE)))
     missing = [i for i in used if i not in by_id]
     if missing:
         raise SystemExit('unknown photo ids: %s' % missing)
+    already = set(EXISTING.values()) | {n[1] for n in NEW}
+    dup = [i for i in MORE if i in already]
+    if dup:
+        raise SystemExit('already used: %s' % dup)
     keys = [n[0] for n in NEW]
     assert len(keys) == len(set(keys)), 'duplicate keys'
 
@@ -242,15 +265,21 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
     for pid in used:
         for frame in (0, 1):
-            path = os.path.join(out_dir, '%s_%d.jpg' % (pid, frame))
+            path = os.path.join(out_dir, '%s_%d.webp' % (pid, frame))
             if os.path.exists(path):
                 continue
-            raw = fetch(RAW + 'exercises/' + by_id[pid]['images'][frame])
+            cache = os.path.join(ROOT, '.sdk', 'photo-cache', '%s_%d.jpg' % (pid, frame))
+            if os.path.exists(cache):
+                raw = open(cache, 'rb').read()
+            else:
+                raw = fetch(RAW + 'exercises/' + by_id[pid]['images'][frame])
+                os.makedirs(os.path.dirname(cache), exist_ok=True)
+                open(cache, 'wb').write(raw)
             img = Image.open(io.BytesIO(raw)).convert('RGB')
             h = round(img.height * WIDTH / img.width)
-            img.resize((WIDTH, h), Image.LANCZOS).save(path, 'JPEG', quality=72, optimize=True, progressive=False)
+            img.resize((WIDTH, h), Image.LANCZOS).save(path, 'WEBP', quality=QUALITY, method=6)
     for f in os.listdir(out_dir):
-        if f.rsplit('_', 1)[0] not in used:
+        if not f.endswith('.webp') or f.rsplit('_', 1)[0] not in used:
             os.remove(os.path.join(out_dir, f))
 
     def muscles(x):
@@ -273,11 +302,25 @@ def main():
         lines.append('        Catalog.addPhotoItem(%s, %s, new String[]{%s}, %s, %s, %s, %s, %s, %s);' % (
             js(key), js(title), ', '.join(js(s) for s in syns), js(muscles(x)), js(groups),
             'true' if body else 'false', js(pid), js(EQUIP[x.get('equipment')]), js(x['name'])))
+    for pid, title in MORE.items():
+        x = by_id[pid]
+        prim = x['primaryMuscles'][0]
+        groups = ['cardio'] if x['category'] == 'cardio' else [GROUP_OF[prim]]
+        for sec in x.get('secondaryMuscles', []):
+            if sec in ('chest', 'glutes') and GROUP_OF[sec] not in groups:
+                groups.append(GROUP_OF[sec])
+        n = pid.replace('-', '_')
+        body = (x.get('equipment') in ('body only', None) and x['category'] != 'cardio') or any(
+            w in n for w in ('Push_Up', 'Pushup', 'Chin', 'Pull_Up', '_Dip'))
+        key = 'x_' + ''.join(ch if ch.isalnum() else '_' for ch in pid.lower())
+        lines.append('        Catalog.addPhotoItem(%s, %s, new String[]{%s}, %s, %s, %s, %s, %s, %s);' % (
+            js(key), js(title), ', '.join(js(s) for s in [title.lower(), x['name'].lower()]), js(muscles(x)),
+            js(' '.join(groups)), 'true' if body else 'false', js(pid), js(EQUIP[x.get('equipment')]), js(x['name'])))
     lines += ['    }', '}', '']
     with open(os.path.join(ROOT, 'src', 'app', 'gymlog', 'PhotoData.java'), 'w', encoding='utf-8') as f:
         f.write('\n'.join(lines))
     total = sum(os.path.getsize(os.path.join(out_dir, f)) for f in os.listdir(out_dir))
-    print('photo sets: %d, new exercises: %d, assets: %.1f MB' % (len(used), len(NEW), total / 1e6))
+    print('photo sets: %d, exercises added here: %d + %d, assets: %.1f MB' % (len(used), len(NEW), len(MORE), total / 1e6))
 
 
 if __name__ == '__main__':

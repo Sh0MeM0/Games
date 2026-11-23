@@ -117,18 +117,36 @@ public final class Matcher {
     }
 
     public static double score(String name, Catalog.Item item) {
-        List<String> q = tokens(name);
-        double best = phraseScore(q, tokens(item.title));
-        for (String s : item.synonyms) best = Math.max(best, phraseScore(q, tokens(s)));
+        return score(tokens(name), item);
+    }
+
+    /** Title and synonyms of each item, already split into word stems (computed once). */
+    private static final java.util.Map<Catalog.Item, List<List<String>>> PHRASES = new java.util.HashMap<>();
+
+    private static synchronized List<List<String>> phrases(Catalog.Item item) {
+        List<List<String>> p = PHRASES.get(item);
+        if (p == null) {
+            p = new ArrayList<>();
+            p.add(tokens(item.title));
+            for (String s : item.synonyms) p.add(tokens(s));
+            PHRASES.put(item, p);
+        }
+        return p;
+    }
+
+    private static double score(List<String> q, Catalog.Item item) {
+        double best = 0;
+        for (List<String> t : phrases(item)) best = Math.max(best, phraseScore(q, t));
         return best;
     }
 
     /** All catalog items, best match first. */
     public static List<Match> rank(String name) {
         List<Match> out = new ArrayList<>();
+        List<String> q = tokens(name == null ? "" : name);
         int order = 0;
         for (Catalog.Item it : Catalog.all()) {
-            out.add(new Match(it, score(name == null ? "" : name, it) - order++ * 1e-9));
+            out.add(new Match(it, score(q, it) - order++ * 1e-9));
         }
         Collections.sort(out, new Comparator<Match>() {
             @Override
