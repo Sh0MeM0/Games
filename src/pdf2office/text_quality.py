@@ -90,6 +90,8 @@ def _degreek(token: str) -> str:
 
 def fix_mixed_scripts(text: str) -> str:
     """Make each word use one alphabet when the evidence is unambiguous."""
+    # The single low quotation mark is a comma to every reader of a drawing.
+    text = text.replace("\u201a", ",")
     if not text or not any(c.isalpha() for c in text):
         return text
     tokens = [_cyrillic_capitals(_degreek(token)) for token in re.split(r"(\s+)", text)]
