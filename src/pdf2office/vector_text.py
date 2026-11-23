@@ -596,7 +596,7 @@ class VectorText:
         x0, y0, x1, y1 = b[:, 0].min(), b[:, 1].min(), b[:, 2].max(), b[:, 3].max()
         size = max(x1 - x0, y1 - y0, 1e-6)
         own = self._shape_signatures(members, size)
-        reach = 6 * size
+        reach = 8 * size
         box = self.box
         near = np.flatnonzero((box[:, 2] >= x0 - reach) & (box[:, 0] <= x1 + reach) & (box[:, 3] >= y0 - reach)
                               & (box[:, 1] <= y1 + reach) & self.filled & ~self.shadow & free)
