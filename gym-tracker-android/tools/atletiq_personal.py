@@ -34,7 +34,7 @@ CACHE = os.path.join(PRIVATE, 'atletiq', 'cache')
 OUT = os.path.join(PRIVATE, 'assets', 'extra')
 BASE = 'https://atletiq.com'
 UA = 'Mozilla/5.0 (compatible; personal-gym-log/1.0)'
-WIDTH, QUALITY = 280, 52
+WIDTH, QUALITY = 280, 50
 DELAY = 0.7
 
 # site muscle id -> app group
@@ -120,9 +120,15 @@ def parse_page(h, site_id):
         if m:
             steps = lines[i + 1:i + 1 + int(m.group(1))]
     video = re.search(r'ytimg\.com/vi/([\w-]{11})', h)
-    photos = re.findall(r'content/exercises/%s/([a-z]+_[12]_v\d+\.(?:jpg|jpeg|png|webp))' % site_id, h)
-    p1 = next((p for p in photos if '_1_' in p), None)
-    p2 = next((p for p in photos if '_2_' in p), None)
+    # names vary: male_1_v3.jpg, male_1.jpg, female_1.jpg, img_male_1.jpg, .jpeg/.png
+    photos = list(dict.fromkeys(re.findall(
+        r'content/exercises/%s/((?:img_)?(?:male|female)_[12](?:_v\d+)?\.(?:jpg|jpeg|png|webp))' % site_id, h)))
+    p1 = next((p for p in photos if re.search(r'_1(?:_v\d+)?\.', p)), None)
+    # the end photo of the same person and version as the start photo
+    p2 = None
+    if p1:
+        want = re.sub(r'_1((?:_v\d+)?\.)', r'_2\1', p1)
+        p2 = want if want in photos else next((p for p in photos if re.search(r'_2(?:_v\d+)?\.', p)), None)
     return {'main': main, 'helpers': helpers, 'steps': steps, 'video': video.group(1) if video else None,
             'p1': p1, 'p2': p2}
 
@@ -201,7 +207,9 @@ def main():
         sid = it['site_id']
         f0, f1 = os.path.join(img_dir, sid + '_0.webp'), os.path.join(img_dir, sid + '_1.webp')
         if not os.path.exists(f0):
-            raw = fetch(BASE + it['thumb'], binary=True)
+            # the full photo compresses better than the site's already compressed preview
+            raw = fetch('%s/content/exercises/%s/%s' % (BASE, sid, info['p1']), binary=True) if info['p1'] else None
+            raw = raw or fetch(BASE + it['thumb'], binary=True)
             if raw:
                 save_webp(raw, f0)
         if not os.path.exists(f1) and info['p2']:
