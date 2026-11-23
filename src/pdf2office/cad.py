@@ -252,6 +252,103 @@ def _add_fill(msp, paths, transform, attributes):
                 )
 
 
+THICK_LINE_MM = 0.4     # paper line weight from which a line counts as thick
+SMALL_FILL_MM = 6.0     # filled shapes up to this size: markers, symbols, letter outlines
+_JOIN_DIGITS = 3        # endpoints equal to 0.001 pt are joined
+
+
+def _key_point(point) -> tuple[float, float]:
+    return round(point[0], _JOIN_DIGITS), round(point[1], _JOIN_DIGITS)
+
+
+def _join_chains(lines: list[list[tuple[float, float]]]) -> list[tuple[list[tuple[float, float]], bool]]:
+    """Join polylines that meet end to end into longer ones.
+
+    Only where exactly two lines meet: a T-junction or a crossing stays a
+    break, so no shape changes. Returns (points, closed) chains.
+    """
+    ends: dict[tuple[float, float], list[tuple[int, int]]] = {}
+    for index, points in enumerate(lines):
+        ends.setdefault(_key_point(points[0]), []).append((index, 0))
+        ends.setdefault(_key_point(points[-1]), []).append((index, 1))
+    used = [False] * len(lines)
+
+    def follow(index: int, from_start: bool) -> list[tuple[float, float]]:
+        """Points from line ``index`` onwards, continuing through degree-2 joints."""
+        chain = list(lines[index]) if from_start else list(reversed(lines[index]))
+        used[index] = True
+        while True:
+            joint = ends.get(_key_point(chain[-1]), [])
+            if len(joint) != 2:
+                return chain
+            nxt = [(other, side) for other, side in joint if not used[other]]
+            if not nxt:
+                return chain
+            other, side = nxt[0]
+            points = lines[other] if side == 0 else list(reversed(lines[other]))
+            used[other] = True
+            chain.extend(points[1:])
+
+    result = []
+    # Open chains start where the line ends at no or several neighbours.
+    for index, points in enumerate(lines):
+        if used[index]:
+            continue
+        if len(ends[_key_point(points[0])]) != 2:
+            result.append((follow(index, True), False))
+        elif len(ends[_key_point(points[-1])]) != 2:
+            result.append((follow(index, False), False))
+    for index in range(len(lines)):
+        if not used[index]:
+            chain = follow(index, True)
+            closed = len(chain) > 2 and _key_point(chain[0]) == _key_point(chain[-1])
+            if closed:
+                chain = chain[:-1]
+            result.append((chain, closed))
+    return result
+
+
+def _cad_drawings(drawings):
+    """Clean drawing geometry for CAD without changing what is drawn.
+
+    Exact duplicates (shapes printed twice) are written once, and plain
+    straight lines of the same style that meet end to end become one
+    polyline, as a draughtsman would draw them; PDF exports usually emit
+    every segment separately.
+    """
+    from .models import Drawing, Segment
+
+    seen = set()
+    unique = []
+    for drawing in drawings:
+        key = (drawing.stroke, drawing.fill, round(drawing.width, 4), tuple(drawing.dashes), drawing.closed,
+               round(drawing.dash_offset, 4),
+               tuple((segment.kind, tuple(_key_point(point) for point in segment.points)) for segment in drawing.segments))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(drawing)
+    groups: dict[tuple, list[list[tuple[float, float]]]] = {}
+    kept = []
+    for drawing in unique:
+        plain = (drawing.fill is None and drawing.stroke is not None and not drawing.closed and not drawing.dashes
+                 and drawing.segments and all(segment.kind == "line" for segment in drawing.segments)
+                 and all(_same_point(a.points[-1], b.points[0]) for a, b in zip(drawing.segments, drawing.segments[1:])))
+        if not plain:
+            kept.append(drawing)
+            continue
+        points = [tuple(drawing.segments[0].points[0])] + [tuple(segment.points[-1]) for segment in drawing.segments]
+        groups.setdefault((drawing.stroke, round(drawing.width, 4)), []).append(points)
+    for (stroke, width), lines in groups.items():
+        for chain, closed in _join_chains(lines):
+            segments = [Segment("line", (a, b)) for a, b in zip(chain, chain[1:])]
+            if closed:
+                segments.append(Segment("line", (chain[-1], chain[0])))
+            if segments:
+                kept.append(Drawing(segments, stroke=stroke, width=width, closed=closed))
+    return kept
+
+
 def _write_dxf(pages, output, scale, font_overrides, image_directory, font_catalog=None, for_libredwg=False):
     if not pages:
         raise CadConversionError("Нет страниц для сохранения чертежа.")
@@ -273,27 +370,47 @@ def _write_dxf(pages, output, scale, font_overrides, image_directory, font_catal
     x_offset = 0.0
     styles = {}
     linetypes = {}
+    from ezdxf.lldxf.const import VALID_DXF_LINEWEIGHTS
+
+    allowed_weights = [value for value in VALID_DXF_LINEWEIGHTS if value >= 0]
     for page in pages:
-        layers = {kind: f"PAGE_{page.number}_{kind}" for kind in ("GEOMETRY", "TEXT", "RASTER_REFERENCE")}
-        for layer in layers.values():
-            doc.layers.new(layer)
+        # Layers by kind of object, so a drawing can be switched and edited
+        # by kind: thin and thick lines, dashed lines, fills, small filled
+        # symbols (markers, unread letter outlines), text and raster.
+        kinds = ("GEOMETRY", "GEOMETRY_THICK", "GEOMETRY_DASHED", "FILL", "FILL_SMALL", "TEXT", "RASTER_REFERENCE")
+        layers = {kind: f"PAGE_{page.number}_{kind}" for kind in kinds}
+        layer_weights = {"GEOMETRY_THICK": 50}
+
+        def use_layer(kind: str) -> str:
+            name = layers[kind]
+            if name not in doc.layers:
+                attributes = {"color": 7}
+                if kind in layer_weights:
+                    attributes["lineweight"] = layer_weights[kind]
+                doc.layers.new(name, dxfattribs=attributes)
+            return name
 
         def transform(point):
             return x_offset + point[0] * factor, (page.height - point[1]) * factor
 
-        for drawing in page.drawings:
+        for drawing in _cad_drawings(page.drawings):
             paths = _split_paths(drawing.segments)
             if not paths:
                 continue
             if drawing.fill is not None:
-                _add_fill(msp, paths, transform, {"layer": layers["GEOMETRY"], "color": _color_index(drawing.fill)})
+                xs = [point[0] for segment in drawing.segments for point in segment.points]
+                ys = [point[1] for segment in drawing.segments for point in segment.points]
+                size_mm = max(max(xs) - min(xs), max(ys) - min(ys)) * POINT_TO_MM
+                layer = use_layer("FILL_SMALL" if size_mm <= SMALL_FILL_MM else "FILL")
+                _add_fill(msp, paths, transform, {"layer": layer, "color": _color_index(drawing.fill)})
             if drawing.stroke is not None:
-                # DXF lineweights are hundredths of millimetres from a fixed set.
-                from ezdxf.lldxf.const import VALID_DXF_LINEWEIGHTS
-
-                allowed = [value for value in VALID_DXF_LINEWEIGHTS if value >= 0]
-                lineweight = min(allowed, key=lambda value: abs(value - drawing.width * factor * 100))
-                attributes = {"layer": layers["GEOMETRY"], "color": _color_index(drawing.stroke), "lineweight": lineweight}
+                # DXF lineweights are hundredths of millimetres from a fixed
+                # set: the printed width on paper, whatever the CAD scale.
+                paper_mm = drawing.width * POINT_TO_MM
+                lineweight = min(allowed_weights, key=lambda value: abs(value - paper_mm * 100))
+                kind = "GEOMETRY_DASHED" if drawing.dashes and any(drawing.dashes) else \
+                    "GEOMETRY_THICK" if paper_mm >= THICK_LINE_MM else "GEOMETRY"
+                attributes = {"layer": use_layer(kind), "color": _color_index(drawing.stroke), "lineweight": lineweight}
                 dashes = tuple(drawing.dashes)
                 if dashes:
                     if len(dashes) % 2:
@@ -317,6 +434,7 @@ def _write_dxf(pages, output, scale, font_overrides, image_directory, font_catal
         for span in page.texts:
             if not span.text:
                 continue
+            text_layer = use_layer("TEXT")
             family = _font_name(span.font, overrides)
             lookup = Path(family).stem if Path(family).suffix.lower() in {".ttf", ".otf", ".ttc"} else family
             match = catalog.resolve(lookup, bold=span.bold, italic=span.italic)
@@ -346,7 +464,7 @@ def _write_dxf(pages, output, scale, font_overrides, image_directory, font_catal
                     # In DXF caret notation, "^ " represents a literal ^.
                     fragment.replace("^", "^ "),
                     dxfattribs={
-                        "layer": layers["TEXT"],
+                        "layer": text_layer,
                         "insert": transform(position),
                         "height": max(height * factor, 0.01),
                         "width": width,
@@ -374,6 +492,7 @@ def _write_dxf(pages, output, scale, font_overrides, image_directory, font_catal
             # Relative filename survives moving a drawing together with its
             # adjacent image directory, including after the temporary DXF goes.
             relative = f"{image_directory.name}/{image_path.name}"
+            use_layer("RASTER_REFERENCE")
             image_def = doc.add_image_def(relative, size_in_pixel=pixel_size)
             x0, y0, x1, y1 = raster.bbox
             msp.add_image(

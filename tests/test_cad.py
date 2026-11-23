@@ -327,7 +327,7 @@ def test_actual_libredwg_roundtrip_preserves_geometry_and_cyrillic(tmp_path):
         assert actual.dxf.style == original.dxf.style
         assert doc.styles.get(actual.dxf.style).get_extended_font_data() == expected.styles.get(original.dxf.style).get_extended_font_data()
     assert len(msp.query("SPLINE")[0].control_points) == 4
-    assert msp.query("HATCH")[0].dxf.layer == "PAGE_1_GEOMETRY"
+    assert msp.query("HATCH")[0].dxf.layer == "PAGE_1_FILL"
     dashed = doc.linetypes.get(msp.query("LINE")[0].dxf.linetype)
     assert [tag.value for tag in dashed.pattern_tags.tags if tag.code == 49] == pytest.approx([4 * POINT_TO_MM, -2 * POINT_TO_MM])
     polyline = msp.query("LWPOLYLINE")[0]
@@ -398,3 +398,52 @@ def test_actual_libredwg_image_and_curved_hatch_roundtrip(tmp_path):
     hatch = doc.modelspace().query("HATCH")[1]
     assert len(hatch.paths[0].edges[0].control_points) == 4
     assert not doc.audit().errors
+
+
+def _line(a, b, width=0.54, dashes=()):
+    return Drawing([Segment("line", (a, b))], stroke=(0, 0, 0), width=width, dashes=dashes)
+
+
+@pytest.mark.parametrize("scale", [1.0, 100.0])
+def test_lineweight_is_printed_width_and_layers_follow_kind(tmp_path, scale):
+    p = PdfPage(1, 300, 300, [], [
+        _line((10, 10), (100, 10), width=1.44),            # 0.51 mm: thick
+        _line((10, 20), (100, 20), width=0.36),            # 0.13 mm: thin
+        _line((10, 30), (100, 30), width=0.36, dashes=(3, 2)),
+        Drawing([Segment("line", ((50, 50), (55, 50))), Segment("line", ((55, 50), (55, 55))),
+                 Segment("line", ((55, 55), (50, 50)))], fill=(0, 0, 0), closed=True),   # a small marker
+        Drawing([Segment("line", ((100, 100), (200, 100))), Segment("line", ((200, 100), (200, 200))),
+                 Segment("line", ((200, 200), (100, 100)))], fill=(0, 0, 0), closed=True),
+    ], [])
+    output = tmp_path / "weights.dxf"
+    export_dxf([p], output, scale=scale)
+    msp = ezdxf.readfile(output).modelspace()
+    lines = sorted(msp.query("LINE"), key=lambda entity: entity.dxf.start.y, reverse=True)
+    assert [line.dxf.lineweight for line in lines] == [50, 13, 13]
+    assert [line.dxf.layer for line in lines] == ["PAGE_1_GEOMETRY_THICK", "PAGE_1_GEOMETRY", "PAGE_1_GEOMETRY_DASHED"]
+    hatches = sorted(msp.query("HATCH"), key=lambda entity: len(list(entity.paths)))
+    assert {hatch.dxf.layer for hatch in hatches} == {"PAGE_1_FILL_SMALL", "PAGE_1_FILL"}
+
+
+def test_connected_segments_become_one_polyline_and_duplicates_go(tmp_path):
+    p = PdfPage(1, 300, 300, [], [
+        _line((10, 10), (50, 10)), _line((50, 10), (50, 60)), _line((50, 60), (90, 60)),
+        _line((10, 10), (50, 10)),                          # printed twice
+        # a T-junction stays three lines
+        _line((150, 10), (150, 50)), _line((150, 50), (150, 90)), _line((150, 50), (190, 50)),
+        # a square of four segments closes
+        _line((10, 200), (40, 200)), _line((40, 200), (40, 230)), _line((40, 230), (10, 230)), _line((10, 230), (10, 200)),
+    ], [])
+    output = tmp_path / "joined.dxf"
+    export_dxf([p], output)
+    msp = ezdxf.readfile(output).modelspace()
+    polylines = list(msp.query("LWPOLYLINE"))
+    shapes = sorted((len(polyline), polyline.closed) for polyline in polylines)
+    assert (4, False) in shapes      # the zigzag: 3 segments, 4 points
+    assert (4, True) in shapes       # the square
+    # At the T-junction no line continues through the joint.
+    t_entities = [entity for entity in msp.query("LINE LWPOLYLINE")
+                  if min(point[0] for point in (entity.get_points("xy") if entity.dxftype() == "LWPOLYLINE"
+                                                 else [entity.dxf.start, entity.dxf.end])) > 140 * POINT_TO_MM]
+    assert len(t_entities) == 3
+    assert len(polylines) + len(msp.query("LINE")) == 5
