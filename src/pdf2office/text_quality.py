@@ -45,11 +45,54 @@ def _script_letters(word: str) -> tuple[int, int]:
     return (sum(1 for c in word if _is_cyrillic(c)), sum(1 for c in word if _is_latin(c)))
 
 
+_CAPITAL_LOOKALIKES = set("АВЕКМНОРСТХABEKMHOPCTX")
+
+
+def _cyrillic_capitals(token: str) -> str:
+    """"PA3PE3" -> "РАЗРЕЗ": capitals mixed with 3/0 inside one word.
+
+    In printed Russian capitals the letter З and the digit 3 (О and 0) look
+    the same. A word of at least three capitals with such digits and no
+    other digits, and with Cyrillic evidence or only look-alike letters, is
+    a Russian word; codes such as "C3" or "M20" (fewer letters, or other
+    digits) are left untouched.
+    """
+    letters = [c for c in token if c.isalpha()]
+    digits = [c for c in token if c.isdigit()]
+    if len(letters) < 3 or not digits or any(d not in "30" for d in digits):
+        return token
+    if not all(c.isupper() for c in letters):
+        return token
+    if not all(c in _CAPITAL_LOOKALIKES or "\u0400" <= c <= "\u04ff" for c in letters):
+        return token
+    core = token.strip(".,:;-()")
+    if not core or not core[0].isalpha() and core[0] not in "30":
+        return token
+    return token.translate(_TO_CYRILLIC).replace("3", "З").replace("0", "О")
+
+
+# Greek letters that readers put into Cyrillic or Latin words ("κПа", "Mπa").
+_GREEK_LOOKALIKE = str.maketrans("αβεηικνοπρτυχΑΒΕΗΙΚΜΝΟΠΡΤΥΧ", "авенікvопртухАВЕНІКМNОПРТYХ")
+
+
+def _is_greek(character: str) -> bool:
+    return "\u0370" <= character <= "\u03ff"
+
+
+def _degreek(token: str) -> str:
+    """Greek look-alikes inside a Cyrillic or Latin word become Cyrillic."""
+    if not any(_is_greek(c) for c in token):
+        return token
+    if not any(_is_cyrillic(c) or _is_latin(c) for c in token):
+        return token  # a Greek symbol on its own (φ, γ, Δ) is kept
+    return token.translate(_GREEK_LOOKALIKE)
+
+
 def fix_mixed_scripts(text: str) -> str:
     """Make each word use one alphabet when the evidence is unambiguous."""
     if not text or not any(c.isalpha() for c in text):
         return text
-    tokens = re.split(r"(\s+)", text)
+    tokens = [_cyrillic_capitals(_degreek(token)) for token in re.split(r"(\s+)", text)]
     # Pass 1: words that mix alphabets follow their unambiguous letters, or
     # failing that, the clear majority of their letters ("Осb" -> "Ось").
     for index, token in enumerate(tokens):
@@ -81,6 +124,47 @@ def fix_mixed_scripts(text: str) -> str:
         elif cyrillic_letters and not evidence_cyrillic and total_latin >= 2 * max(1, total_cyrillic):
             tokens[index] = token.translate(_TO_LATIN)
     return "".join(tokens)
+
+
+def prefer_page_script(spans) -> int:
+    """Lone look-alike letters follow the alphabet of their page.
+
+    A single "M", "C" or "P" looks the same in Latin and Cyrillic, and the
+    readers do not always agree on it. All lone readings of one such letter
+    on a page are the same shape, so they get one alphabet: the one most of
+    them were read in, where the clearly dominant alphabet of the page
+    (unambiguous letters, two to one) counts as one more vote. "X" is left alone (it is also the
+    Roman numeral ten), as are words with digits ("C3", "M20"). Only OCR
+    spans are changed (``span.text`` in place); returns the number changed.
+    """
+    cyrillic = latin = 0
+    votes: dict[str, list[int]] = {}
+    lone = []
+    for span in spans:
+        found = _evidence(span.text)
+        cyrillic += found[0]
+        latin += found[1]
+        core = span.text.strip().strip(".,:;()«»\"'")
+        if len(core) == 1 and (core in _LATIN_LOOKALIKE or core in _CYRILLIC_LOOKALIKE) and core not in "XxХх":
+            key = core.translate(_TO_CYRILLIC)
+            tally = votes.setdefault(key, [0, 0])
+            tally[0 if _is_cyrillic(core) else 1] += 1
+            if getattr(span, "from_ocr", False):
+                lone.append((span, core, key))
+    page = "cyrillic" if cyrillic >= 2 * max(1, latin) else "latin" if latin >= 2 * max(1, cyrillic) else None
+    changed = 0
+    for span, core, key in lone:
+        as_cyrillic, as_latin = votes[key]
+        # The page's alphabet counts as one more vote.
+        score = as_cyrillic - as_latin + (1 if page == "cyrillic" else -1 if page == "latin" else 0)
+        if score == 0:
+            continue
+        script = "cyrillic" if score > 0 else "latin"
+        target = core.translate(_TO_CYRILLIC) if script == "cyrillic" else core.translate(_TO_LATIN)
+        if target != core:
+            span.text = span.text.replace(core, target)
+            changed += 1
+    return changed
 
 
 # Relative letter frequencies (per mille) of Russian and English prose; used

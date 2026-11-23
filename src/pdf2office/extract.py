@@ -263,8 +263,49 @@ def _overlaps_native(rect: fitz.Rect, native: list[TextSpan]) -> bool:
     return any((rect & fitz.Rect(span.bbox)).get_area() > rect.get_area() * 0.2 for span in native)
 
 
+def _tesseract_check_environment(executable: Path | None, language: str, warnings: list[str], check_cancel=None):
+    if executable is None:
+        message = "Tesseract не найден: текст распознан только нейросетью, без проверки по словарю."
+        if message not in warnings:
+            warnings.append(message)
+        return None
+    from .scans import _ocr_environment
+    # Missing language data is a configuration error and is reported.
+    return _ocr_environment(executable, language, check_cancel)
+
+
+def _outline_lettering_ocr(vector, letters, engine, environment, language: str, warnings: list[str], *,
+                           check_cancel=None, progress=None) -> list[TextSpan]:
+    """Read outline lettering from an image of the filled letters alone.
+
+    Lines, circles, scale ticks and hatching are strokes in CAD-exported PDFs;
+    they are absent from this image, so they can neither hide a digit nor be
+    read as one. Recognised phrases replace exactly the letters they came from.
+    """
+    import numpy as np
+    from .recognition import recognise
+
+    rendered = vector.render(letters)
+    if rendered is None:
+        return []
+    gray, dpi = rendered
+    if progress:
+        progress(f"Векторные надписи: распознавание контуров букв ({gray.shape[1]}×{gray.shape[0]}, {dpi:.0f} dpi)")
+    scale = 72.0 / dpi
+    # Tesseract checks each phrase once, on the clean image of its own
+    # letters (VectorText.apply), not twice.
+    # The image is already drawn at the detector's preferred letter size, so
+    # it is analysed as is (nominal 300 dpi: no further enlargement).
+    spans = recognise(gray, 300.0, lambda points: np.asarray(points, float) * scale, engine=engine,
+                      environment=None, language=language, messages=None,
+                      check_cancel=check_cancel, progress=progress)
+    return vector.apply(spans, kinds=("fill",), engine=engine, environment=environment, language=language,
+                        messages=warnings, check_cancel=check_cancel, progress=progress)
+
+
 def _neural_page_ocr(page: fitz.Page, native: list[TextSpan], executable: Path | None, language: str,
-                     warnings: list[str], engine, *, check_cancel=None, progress=None) -> tuple[list[TextSpan], Image.Image]:
+                     warnings: list[str], engine, *, check_cancel=None, progress=None,
+                     environment=None) -> tuple[list[TextSpan], Image.Image]:
     """Neural OCR of a rendered PDF page, cross-checked by Tesseract if present."""
     import numpy as np
     from .recognition import recognise
@@ -275,13 +316,8 @@ def _neural_page_ocr(page: fitz.Page, native: list[TextSpan], executable: Path |
     pixmap = page.get_pixmap(dpi=dpi, colorspace=fitz.csRGB, alpha=False)
     image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
     scale = np.array((page.rect.width / image.width, page.rect.height / image.height))
-    environment = None
-    if executable is not None:
-        from .scans import _ocr_environment
-        # Missing language data is a configuration error and is reported.
-        environment = _ocr_environment(executable, language, check_cancel)
-    else:
-        warnings.append("Tesseract не найден: текст распознан только нейросетью, без проверки по словарю.")
+    if environment is None:
+        environment = _tesseract_check_environment(executable, language, warnings, check_cancel)
     gray = np.asarray(image.convert("L"))
     spans = recognise(gray, dpi, lambda points: points * scale, engine=engine, environment=environment,
                       language=language, messages=warnings, check_cancel=check_cancel, progress=progress)
@@ -839,20 +875,53 @@ def extract_pdf(path: Path, pages: str = "", password: str = "", ocr_mode: str =
                         message = f"Нейросетевой OCR недоступен ({unavailable_reason()}); используется только Tesseract."
                         if message not in warnings:
                             warnings.append(message)
+                native_for_ocr = [] if ocr_mode == "always" else texts
+                # Text drawn as vector geometry is matched with its letters,
+                # which are then removed: the result never shows it twice.
+                from .vector_text import VectorText
+                vector = VectorText(page) if page.drawings else None
+                letters = vector.outline_letters() if vector is not None else []
+                keep_boxes = [image.bbox for image in images]
+                if ocr_mode == "always":
+                    keep_boxes += [span.bbox for span in texts]
+                recognized = []
+                outline_done = False
+                environment = None
                 if engine is not None:
                     if executable is None:
                         try:
                             executable = _find_tesseract(tesseract_path)
                         except PdfExtractionError:
                             executable = False
-                    recognized, rendered = _neural_page_ocr(source, [] if ocr_mode == "always" else texts,
-                                                            executable or None, ocr_language, warnings, engine,
-                                                            check_cancel=check_cancel, progress=progress)
-                else:
-                    executable = executable or _find_tesseract(tesseract_path)
-                    recognized, rendered = _ocr(source, [] if ocr_mode == "always" else texts,
-                                               executable, ocr_language, warnings,
+                    environment = _tesseract_check_environment(executable or None, ocr_language, warnings, check_cancel)
+                    if vector is not None and len(letters) >= 20:
+                        recognized += _outline_lettering_ocr(vector, letters, engine, environment, ocr_language,
+                                                             warnings, check_cancel=check_cancel, progress=progress)
+                        outline_done = True
+                if not outline_done or images or (ocr_mode == "always" and texts):
+                    if engine is not None:
+                        spans, rendered = _neural_page_ocr(source, native_for_ocr, executable or None, ocr_language,
+                                                           warnings, engine, check_cancel=check_cancel,
+                                                           progress=progress, environment=environment)
+                    else:
+                        executable = executable or _find_tesseract(tesseract_path)
+                        spans, rendered = _ocr(source, native_for_ocr, executable, ocr_language, warnings,
                                                check_cancel=check_cancel, progress=progress)
+                    if vector is not None:
+                        spans = vector.apply(spans, keep_boxes=keep_boxes, engine=engine, environment=environment,
+                                             language=ocr_language, messages=warnings,
+                                             check_cancel=check_cancel, progress=progress)
+                    recognized += spans
+                if vector is not None:
+                    if outline_done:
+                        # Letters the text detector missed (a lone letter in
+                        # a circle, two lines joined into one box).
+                        recognized += vector.recover(engine, environment=environment, language=ocr_language,
+                                                     messages=warnings, check_cancel=check_cancel,
+                                                     progress=progress)
+                    vector.finish(warnings)
+                from .text_quality import prefer_page_script
+                prefer_page_script(recognized if ocr_mode == "always" else texts + recognized)
                 if ocr_mode == "always":
                     page.texts = recognized
                     if texts:

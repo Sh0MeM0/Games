@@ -140,11 +140,17 @@ def parallel_map(function, items):
 def tesseract_readings(gray: np.ndarray, segments: list[OcrSegment], environment, language: str, *,
                        check_cancel=None, progress=None) -> list[tuple | None]:
     """Read every phrase with Tesseract, batching phrases into strip images."""
+    crops = [_strip_crop(gray, segment) for segment in segments]
+    return tesseract_read_crops(crops, environment, language, check_cancel=check_cancel, progress=progress)
+
+
+def tesseract_read_crops(crops: list[np.ndarray], environment, language: str, *,
+                         check_cancel=None, progress=None) -> list[tuple | None]:
+    """Tesseract readings (text, confidence, [(word, confidence)]) of upright crops."""
     from .extract import PdfExtractionError, _run_tesseract
 
     executable, options, cwd, _ = environment
-    crops = [_strip_crop(gray, segment) for segment in segments]
-    readings: list[tuple[str, float] | None] = [None] * len(segments)
+    readings: list[tuple[str, float] | None] = [None] * len(crops)
     batches, current, height = [], [], 0
     for index, crop in enumerate(crops):
         if current and height + crop.shape[0] + STRIP_GAP > STRIP_MAX_HEIGHT:
@@ -166,7 +172,8 @@ def tesseract_readings(gray: np.ndarray, segments: list[OcrSegment], environment
             rows.append((y, y + crop.shape[0], index))
             y += crop.shape[0] + STRIP_GAP
         stream = io.BytesIO()
-        Image.fromarray(strip).save(stream, format="PNG")
+        # A transient image: fast compression costs nothing in quality.
+        Image.fromarray(strip).save(stream, format="PNG", compress_level=1)
         run = _run_tesseract([str(executable), "stdin", "stdout", *options, "-l", language,
                               "--dpi", "300", "--psm", "6", "-c", "tessedit_create_tsv=1"],
                              input_data=stream.getvalue(), cwd=cwd, check_cancel=check_cancel)
@@ -204,8 +211,58 @@ def tesseract_readings(gray: np.ndarray, segments: list[OcrSegment], environment
     return readings
 
 
+def read_crops(engine: NeuralOcr, crops: list[np.ndarray], environment, language: str, *,
+               check_cancel=None) -> list[tuple | None]:
+    """Read clean upright phrase images with the network and Tesseract.
+
+    Each result is (text, confidence, engine, extent, positions): ``extent``
+    is (first, last, pitch) of the network's character centres as fractions
+    of the image width, ``positions`` the network's own text with one centre
+    per character (or None).
+    """
+    if not crops:
+        return []
+    neural = engine.recognise_crops(crops)
+    tesseract: list = [None] * len(crops)
+    if environment is not None:
+        tesseract = tesseract_read_crops(crops, environment, language, check_cancel=check_cancel)
+    result = []
+    for (text, confidence, characters), reading in zip(neural, tesseract):
+        words, current = [], []
+        for character, _centre, probability in characters:
+            if character == " ":
+                if current:
+                    words.append(current)
+                current = []
+            else:
+                current.append((character, probability))
+        if current:
+            words.append(current)
+        neural_words = [("".join(c for c, _ in word), min(p for _, p in word)) for word in words]
+        if not text.strip() and reading is None:
+            result.append(None)
+            continue
+        chosen = choose_reading(" ".join(word for word, _ in neural_words) or text, confidence,
+                                reading, neural_words)
+        # Where the network saw characters, as fractions of the crop width.
+        centres = [centre for character, centre, _ in characters if character != " "]
+        extent = None
+        if centres:
+            pitch = float(np.median(np.diff(centres))) if len(centres) > 1 else None
+            extent = (min(centres), max(centres), pitch)
+        # The network's own text with one position per character, so word
+        # spaces it dropped can be restored from the drawing.
+        positions = (text, [centre for _, centre, _ in characters]) if len(characters) == len(text) else None
+        result.append((*chosen, extent, positions))
+    return result
+
+
+_LOOKALIKES = str.maketrans("AaBCcEeHKMOoPpTXxy", "АаВСсЕеНКМОоРрТХху")
+
+
 def _normalized(text: str) -> str:
-    return re.sub(r"\s+", "", text).replace("ё", "е").replace("Ё", "Е")
+    # Latin and Cyrillic look-alikes ("C"/"С") are the same reading.
+    return re.sub(r"\s+", "", text).replace("ё", "е").replace("Ё", "Е").translate(_LOOKALIKES)
 
 
 def choose_reading(neural_text: str, neural_conf: float, tesseract, neural_words=None) -> tuple[str, float, str]:
@@ -219,8 +276,11 @@ def choose_reading(neural_text: str, neural_conf: float, tesseract, neural_words
     tess_text, tess_conf = tesseract[0], tesseract[1]
     tess_words = tesseract[2] if len(tesseract) > 2 else None
     if _normalized(tess_text) == _normalized(neural_text):
-        # Same characters: Tesseract's word spacing is the more reliable one.
-        return tess_text, max(neural_conf, tess_conf), "neural+tesseract"
+        # Same characters: Tesseract's word spacing is the more reliable one;
+        # between look-alike alphabets the Cyrillic reading is kept.
+        cyrillic = lambda value: sum("\u0400" <= c <= "\u04ff" for c in value)
+        text = tess_text if cyrillic(tess_text) >= cyrillic(neural_text) else neural_text
+        return text, max(neural_conf, tess_conf), "neural+tesseract"
     # Word by word first: where the network was unsure of a character, or
     # produced a word shape print never has, and Tesseract (with its
     # dictionary) offers a comparable word, take Tesseract's word.

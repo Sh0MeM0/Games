@@ -132,23 +132,37 @@ class NeuralOcr:
         return output[0, 0, :height, :width]
 
     def probability_map(self, gray: np.ndarray, *, check_cancel=None, progress=None) -> np.ndarray:
-        """Return a uint8 text probability map of the same size as ``gray``."""
+        """Return a uint8 text probability map of the same size as ``gray``.
+
+        On a page with large blank areas the network runs only over the inked
+        regions, each with a white margin: the blank paper around them is the
+        same white the network would otherwise see, so the result is
+        unchanged while the work drops with the inked share of the page.
+        """
         height, width = gray.shape
         result = np.zeros((height, width), np.uint8)
-        tiles = [(top, left) for top in range(0, height, DET_TILE) for left in range(0, width, DET_TILE)]
-        for number, (top, left) in enumerate(tiles, start=1):
+        regions = _ink_regions(gray)
+        if regions is None:
+            regions = [(0, 0, width, height)]
+        tiles = []
+        for rx0, ry0, rx1, ry1 in regions:
+            for top in range(ry0, ry1, DET_TILE):
+                for left in range(rx0, rx1, DET_TILE):
+                    tiles.append((top, left, min(ry1, top + DET_TILE), min(rx1, left + DET_TILE), rx0, ry0, rx1, ry1))
+        for number, (top, left, bottom, right, rx0, ry0, rx1, ry1) in enumerate(tiles, start=1):
             _check(check_cancel)
-            bottom, right = min(height, top + DET_TILE), min(width, left + DET_TILE)
-            y0, x0 = max(0, top - DET_HALO), max(0, left - DET_HALO)
-            y1, x1 = min(height, bottom + DET_HALO), min(width, right + DET_HALO)
+            y0, x0 = max(ry0, top - DET_HALO), max(rx0, left - DET_HALO)
+            y1, x1 = min(ry1, bottom + DET_HALO), min(rx1, right + DET_HALO)
             crop = gray[y0:y1, x0:x1]
             if int(crop.min()) > 215:
                 continue
-            if progress and len(tiles) > 1:
+            if progress and len(tiles) > 1 and number % 4 == 1:
                 progress(f"Нейросеть: поиск строк текста, участок {number} из {len(tiles)}")
             probability = self._probability(crop)
             core = probability[top - y0:bottom - y0, left - x0:right - x0]
-            result[top:bottom, left:right] = np.clip(core * 255.0 + 0.5, 0, 255).astype(np.uint8)
+            values = np.clip(core * 255.0 + 0.5, 0, 255).astype(np.uint8)
+            target = result[top:bottom, left:right]
+            np.maximum(target, values, out=target)
         return result
 
     @staticmethod
@@ -279,6 +293,11 @@ class NeuralOcr:
                 results[index] = (text, float(np.mean(scores)) if scores else 0.0, characters)
         return results
 
+    def recognise_crops(self, crops: list[np.ndarray]) -> list[tuple[str, float, list]]:
+        """Recognise upright single-line crops (thread-safe)."""
+        with self._lock:
+            return self._recognise(crops)
+
     # ------------------------------------------------------------- pipeline
     def detect(self, gray: np.ndarray, dpi: float, *, check_cancel=None, progress=None) -> list[np.ndarray]:
         """Return reading-order quads of text lines in ``gray`` pixel units."""
@@ -338,14 +357,32 @@ class NeuralOcr:
                 crops.append(crop)
             if progress:
                 progress(f"Нейросеть: распознавание {len(crops)} строк текста")
+            turned_lines = []
             for number, flipped in enumerate(self._flipped(crops, quads)):
                 if flipped:
                     quads[number] = np.roll(quads[number], 2, axis=0)
                     crops[number] = cv2.rotate(crops[number], cv2.ROTATE_180)
+                    turned_lines.append(number)
             recognised = []
             for start in range(0, len(crops), 64):
                 _check(check_cancel)
                 recognised.extend(self._recognise(crops[start:start + 64]))
+            # Digits read upside down are digits again ("0,9" turned is "6'0"),
+            # so the classifier alone cannot decide for short numbers. A
+            # horizontal line it turned is read upright as well; upside-down
+            # text is rare on a page, so the upright reading wins unless the
+            # turned one is clearly more confident.
+            horizontal_turned = [number for number in turned_lines
+                                 if abs((quads[number][1] - quads[number][0])[0])
+                                 >= abs((quads[number][1] - quads[number][0])[1])]
+            if horizontal_turned:
+                _check(check_cancel)
+                upright = self._recognise([cv2.rotate(crops[number], cv2.ROTATE_180) for number in horizontal_turned])
+                for number, alternative in zip(horizontal_turned, upright):
+                    if alternative[0].strip() and alternative[1] >= recognised[number][1] - 0.02:
+                        recognised[number] = alternative
+                        quads[number] = np.roll(quads[number], 2, axis=0)
+                        crops[number] = cv2.rotate(crops[number], cv2.ROTATE_180)
             # Vertical labels read either way on drawings, and short ones defeat
             # the direction classifier. Read them in both directions and keep
             # the more confident reading.
@@ -359,6 +396,27 @@ class NeuralOcr:
                         recognised[number] = alternative
                         quads[number] = np.roll(quads[number], 2, axis=0)
                         crops[number] = cv2.rotate(crops[number], cv2.ROTATE_180)
+            # A tall box around one or two characters ("5", "17" in a circle)
+            # is upright text, not a vertical label. Read it upright as well
+            # and keep the vertical reading only when it is clearly better.
+            short = []
+            for number, quad in enumerate(quads):
+                direction = quad[1] - quad[0]
+                length = float(np.hypot(*direction))
+                height = float(np.hypot(*(quad[3] - quad[0])))
+                if abs(direction[1]) > abs(direction[0]) and length < 2.6 * max(height, 1e-6):
+                    upright = np.roll(quad, -1, axis=0)
+                    if (upright[1] - upright[0])[0] < 0:
+                        upright = np.roll(quad, 1, axis=0)
+                    short.append((number, upright))
+            if short:
+                _check(check_cancel)
+                upright_crops = [self.rectify(gray, upright) for _, upright in short]
+                for (number, upright), crop, reading in zip(short, upright_crops, self._recognise(upright_crops)):
+                    if reading[0].strip() and reading[1] >= recognised[number][1] - 0.05:
+                        recognised[number] = reading
+                        quads[number] = upright
+                        crops[number] = crop
             segments = []
             for number, (text, confidence, characters) in enumerate(recognised):
                 if not text.strip() or confidence < min_confidence:
@@ -366,6 +424,47 @@ class NeuralOcr:
                 segments.extend(_segments(text, confidence, characters, quads[number],
                                           crops[number], min_confidence))
             return segments
+
+
+def _ink_regions(gray: np.ndarray, step: int = 8, margin: int = 48) -> list[tuple[int, int, int, int]] | None:
+    """Rectangles (x0, y0, x1, y1) covering all ink with a white margin.
+
+    Returns None when ink is spread over most of the page (a noisy scan):
+    then the whole page is processed as before.
+    """
+    height, width = gray.shape
+    if height * width < 4_000_000:
+        return None
+    blocks = cv2.resize((gray < 200).astype(np.uint8) * 255, (max(1, width // step), max(1, height // step)),
+                        interpolation=cv2.INTER_AREA) > 0
+    reach = max(1, margin // step)
+    grown = cv2.dilate(blocks.astype(np.uint8), np.ones((2 * reach + 1, 2 * reach + 1), np.uint8))
+    if grown.mean() > 0.6:
+        return None
+    count, _, stats, _ = cv2.connectedComponentsWithStats(grown, connectivity=8)
+    boxes = []
+    for x, y, w, h, _area in stats[1:]:
+        boxes.append([x * step, y * step, min(width, (x + w) * step + step), min(height, (y + h) * step + step)])
+    # Merge overlapping rectangles so no area is processed twice.
+    merged = True
+    while merged:
+        merged = False
+        boxes.sort()
+        result = []
+        for box in boxes:
+            for other in result:
+                if box[0] <= other[2] and other[0] <= box[2] and box[1] <= other[3] and other[1] <= box[3]:
+                    other[0], other[1] = min(other[0], box[0]), min(other[1], box[1])
+                    other[2], other[3] = max(other[2], box[2]), max(other[3], box[3])
+                    merged = True
+                    break
+            else:
+                result.append(box)
+        boxes = result
+    covered = sum((b[2] - b[0]) * (b[3] - b[1]) for b in boxes)
+    if covered > 0.7 * height * width:
+        return None
+    return [tuple(int(v) for v in box) for box in boxes]
 
 
 def _ink_extent(crop: np.ndarray) -> tuple[np.ndarray, int, int]:
