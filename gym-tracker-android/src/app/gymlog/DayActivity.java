@@ -554,7 +554,9 @@ public class DayActivity extends BaseActivity {
             @Override public void onTextChanged(CharSequence s, int a, int b, int c) {}
             @Override
             public void afterTextChanged(Editable s) {
-                filter.run();
+                // search after a short pause in typing: the reference can hold 1500+ exercises
+                input.removeCallbacks(filter);
+                input.postDelayed(filter, 150);
             }
         });
         lv.setOnItemClickListener(new AdapterView.OnItemClickListener() {
