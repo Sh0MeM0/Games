@@ -123,6 +123,9 @@ namespace Kzm.AutoCAD.Services
                 }
 
                 // ---- 3. The objects ----
+                // The copies are not edits of the user: the watcher of the node labels stays quiet until the records are written
+                // (as when a cartogram is drawn), so it does not go through every copied node afterwards.
+                using var quiet = NodeSync.Quiet();
                 var mapping = new IdMapping();
                 if (ids.Count > 0)
                     source.WblockCloneObjects(new ObjectIdCollection(ids.ToArray()), SymbolUtilityServices.GetBlockModelSpaceId(target), mapping,
