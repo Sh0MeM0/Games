@@ -34,7 +34,7 @@ CACHE = os.path.join(PRIVATE, 'atletiq', 'cache')
 OUT = os.path.join(PRIVATE, 'assets', 'extra')
 BASE = 'https://atletiq.com'
 UA = 'Mozilla/5.0 (compatible; personal-gym-log/1.0)'
-WIDTH, QUALITY = 280, 50
+WIDTH, QUALITY = 224, 38
 DELAY = 0.7
 
 # site muscle id -> app group

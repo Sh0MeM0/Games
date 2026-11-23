@@ -26,6 +26,26 @@ final class Extras {
         InputStream in = null;
         try {
             in = c.getAssets().open("extra/catalog.json");
+            sCount = loadFrom(in);
+        } catch (java.io.FileNotFoundException e) {
+            // public build: no personal catalog
+        } catch (Exception e) {
+            android.util.Log.w("gymlog", "personal catalog not loaded", e);
+        } finally {
+            if (in != null) {
+                try {
+                    in.close();
+                } catch (java.io.IOException ignored) {
+                    // nothing to do
+                }
+            }
+        }
+    }
+
+    /** Adds the exercises of a catalog.json stream to the reference; returns how many were added. */
+    static int loadFrom(InputStream in) throws Exception {
+        int added = 0;
+        {
             ByteArrayOutputStream bos = new ByteArrayOutputStream();
             byte[] buf = new byte[16384];
             int n;
@@ -47,21 +67,10 @@ final class Extras {
                         o.isNull("equipmentTitle") ? null : o.optString("equipmentTitle", null), steps,
                         o.isNull("video") ? null : o.optString("video", null), id, o.optInt("frames", 1),
                         o.isNull("url") ? null : o.optString("url", null))) {
-                    sCount++;
-                }
-            }
-        } catch (java.io.FileNotFoundException e) {
-            // public build: no personal catalog
-        } catch (Exception e) {
-            android.util.Log.w("gymlog", "personal catalog not loaded", e);
-        } finally {
-            if (in != null) {
-                try {
-                    in.close();
-                } catch (java.io.IOException ignored) {
-                    // nothing to do
+                    added++;
                 }
             }
         }
+        return added;
     }
 }
