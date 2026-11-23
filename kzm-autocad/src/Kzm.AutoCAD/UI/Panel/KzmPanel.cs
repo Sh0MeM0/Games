@@ -93,7 +93,15 @@ namespace Kzm.AutoCAD.UI.Panel
             toolbar.Items.Add(Button("Настройки", "Настройки чертежа и шаблон по умолчанию", ShowSettings));
             toolbar.Items.Add(Button("Убрать пометки", "Удалить пометки проверки со слоя КЗМ_ПРОВЕРКА", ClearMarks));
             toolbar.Items.Add(Button("Обновить", "Перечитать данные чертежа", RefreshAll));
-            toolbar.Items.Add(Button("?", "Порядок работы и подсказки", ShowStart));
+            // «?»: справка по шагам с картинками (в браузере) и страница «Порядок работы».
+            var help = new ToolStripDropDownButton("?") { ToolTipText = "Справка и порядок работы", ShowDropDownArrow = false };
+            help.DropDownItems.Add("Справка с картинками", null, (s, e) =>
+            {
+                string problem = HelpFile.Open();
+                if (problem != null) PanelMessages.Error(problem);
+            });
+            help.DropDownItems.Add("Порядок работы", null, (s, e) => ShowStart());
+            toolbar.Items.Add(help);
 
             // Size first: WinForms rejects a SplitterDistance larger than the default 150×100 control.
             var split = new SplitContainer { Size = new Size(380, 900), Orientation = Orientation.Horizontal, FixedPanel = FixedPanel.Panel1 };
@@ -269,6 +277,7 @@ namespace Kzm.AutoCAD.UI.Panel
             }
             if (Snapshot.Projects.Count > 0) projectButton.DropDownItems.Add(new ToolStripSeparator());
             projectButton.DropDownItems.Add("Новый проект…", null, (s, e) => ShowProjects());
+            projectButton.DropDownItems.Add("Проект из другого чертежа…", null, (s, e) => ShowProjects());
             projectButton.DropDownItems.Add("Переименовать / закрыть…", null, (s, e) => ShowProjects()).Enabled = project != null;
             projectButton.DropDownItems.Add("Закрыть проект", null, (s, e) => CloseProject()).Enabled = project != null;
             foreach (var item in projectOnly) item.Enabled = project != null && Document != null;

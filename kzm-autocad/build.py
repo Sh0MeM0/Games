@@ -20,7 +20,7 @@ import zipfile
 from menu_package import build_classic_menu, COMMANDS, GROUP
 
 ROOT = Path(__file__).resolve().parent
-VERSION = '0.9.1'
+VERSION = '0.10.0'
 NAME = 'Картограмма земляных масс'
 # year: (series for PackageContents.xml, target framework of the build)
 TARGETS = {
@@ -110,6 +110,11 @@ def main():
                          (ROOT / 'THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_NOTICES.md'),
                          (ROOT / 'packaging/NSIS-COPYRIGHT.txt', 'NSIS-COPYRIGHT.txt')):
         shutil.copy2(source, bundle / name)
+    # Справка с картинками (замечание 35): Help\index.html и Help\img\*.png; генераторы картинок не копируются.
+    (bundle / 'Help' / 'img').mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / 'help' / 'index.html', bundle / 'Help' / 'index.html')
+    for source in sorted((ROOT / 'help' / 'img').glob('*.png')):
+        shutil.copy2(source, bundle / 'Help' / 'img' / source.name)
     for source in sorted((ROOT / 'examples').glob('*.lsp')):
         (bundle / 'Examples').mkdir(exist_ok=True)
         shutil.copy2(source, bundle / 'Examples' / source.name)

@@ -30,7 +30,7 @@ namespace Kzm.AutoCAD.Commands
             ("KZM_SETTINGS", "открыть панель на настройках чертежа"),
             ("KZM_CLEARMARKS", "удалить пометки проверки (слой КЗМ_ПРОВЕРКА)"),
             ("KZM_MENU", "восстановить верхнее меню «Картограмма» и вкладку ленты"),
-            ("KZM_HELP", "этот список"),
+            ("KZM_HELP", "справка с картинками и этот список"),
         };
 
         [CommandMethod("KZM", CommandFlags.Modal)]
@@ -105,6 +105,8 @@ namespace Kzm.AutoCAD.Commands
             foreach (var (name, description) in CommandList)
                 editor.WriteMessage("\n  " + name.PadRight(16) + " — " + description);
             editor.WriteMessage("\nОсновная работа — в панели «КЗМ» (команда KZM, меню «Картограмма» или вкладка ленты «КЗМ»).\n");
+            string problem = UI.HelpFile.Open();
+            editor.WriteMessage(problem == null ? "Справка с картинками открыта в браузере.\n" : "КЗМ: " + problem + "\n");
         }
 
         [CommandMethod("KZM_MENU", CommandFlags.Session)]

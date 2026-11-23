@@ -81,7 +81,7 @@ namespace Kzm.AutoCAD.Services
         internal const string HatchMark = "H";
         /// <summary>Boundary polyline drawn by points for this cartogram (not part of the drawing that is rebuilt).</summary>
         internal const string BoundaryMark = "BOUNDARY";
-        private const string StatementsSuffix = ".statements";
+        internal const string StatementsSuffix = ".statements";
         internal const string WorkingTag = "РАБОЧАЯ";
         internal const string ProjectTag = "ПРОЕКТНАЯ";
         internal const string FactTag = "ФАКТИЧЕСКАЯ";

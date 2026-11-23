@@ -77,12 +77,15 @@ namespace Kzm.AutoCAD.Services
                 using (var transaction = database.TransactionManager.StartOpenCloseTransaction())
                 {
                     snapshot.Settings = KzmStore.ReadSettings(database, transaction);
-                    snapshot.Projects.AddRange(KzmStore.ReadProjects(database, transaction));
-                    string projectId = KzmStore.ReadCurrentProjectId(database, transaction);
+                    // Every record is decoded once (before 0.10 the surfaces were read five times per refresh).
+                    var allSurfaces = KzmStore.ReadSurfaces(database, transaction);
+                    var allCartograms = KzmStore.ReadCartograms(database, transaction);
+                    snapshot.Projects.AddRange(KzmStore.ReadProjects(database, transaction, allSurfaces, allCartograms));
+                    string projectId = KzmStore.ReadCurrentProjectId(database, transaction, snapshot.Projects, allSurfaces, allCartograms);
                     snapshot.Project = snapshot.Projects.FirstOrDefault(project => project.Id == projectId);
-                    snapshot.CurrentId = KzmStore.ReadCurrentSurfaceId(database, transaction);
+                    snapshot.CurrentId = KzmStore.ReadCurrentSurfaceId(database, transaction, snapshot.Project?.Id, allSurfaces);
                     // Only the points of the open project are read (the drawing may hold other projects).
-                    var projectSurfaces = new HashSet<string>(KzmStore.ReadSurfaces(database, transaction)
+                    var projectSurfaces = new HashSet<string>(allSurfaces
                         .Where(surface => snapshot.Project != null && ProjectInfo.Of(surface.ProjectId) == snapshot.Project.Id)
                         .Select(surface => surface.Id), StringComparer.Ordinal);
                     var points = PointBlocks.Read(database, transaction, snapshot.Settings, id => projectSurfaces.Contains(id));
@@ -90,8 +93,7 @@ namespace Kzm.AutoCAD.Services
                     var pointSurface = points.ToDictionary(point => point.Id, point => point.Data.SurfaceId);
                     var pairs = KzmStore.ReadConflicts(database, transaction).Where(pair => pair.IsAlive).ToList();
                     // Only the open project is shown in the panel.
-                    var surfaces = KzmStore.ReadSurfaces(database, transaction)
-                        .Where(surface => snapshot.Project != null && ProjectInfo.Of(surface.ProjectId) == snapshot.Project.Id).ToList();
+                    var surfaces = allSurfaces.Where(surface => snapshot.Project != null && ProjectInfo.Of(surface.ProjectId) == snapshot.Project.Id).ToList();
                     var lines = KzmStore.ReadAllLines(database, transaction);
                     // Each surface is fingerprinted once and reused by all cartograms.
                     var signatures = new Dictionary<string, SurfaceSignature>(StringComparer.Ordinal);
@@ -116,8 +118,7 @@ namespace Kzm.AutoCAD.Services
                             Signature = signature.ForTriangles(),
                         });
                     }
-                    foreach (var cartogram in KzmStore.ReadCartograms(database, transaction)
-                                 .Where(c => snapshot.Project != null && ProjectInfo.Of(c.ProjectId) == snapshot.Project.Id))
+                    foreach (var cartogram in allCartograms.Where(c => snapshot.Project != null && ProjectInfo.Of(c.ProjectId) == snapshot.Project.Id))
                     {
                         int edits = cartogram.Built ? CartogramService.CountLabelEdits(database, transaction, cartogram.Id) : 0;
                         bool outdated = cartogram.Built && (edits > 0 || cartogram.OldDrawing || cartogram.BuiltFingerprint != CartogramService.FingerprintOf(database, transaction,

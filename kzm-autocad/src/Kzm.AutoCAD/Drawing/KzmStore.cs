@@ -137,14 +137,16 @@ namespace Kzm.AutoCAD.Drawing
         private static string CurrentKey(string projectId) => ProjectInfo.Of(projectId) == ProjectInfo.LegacyId ? "id" : ProjectInfo.Of(projectId);
 
         /// <summary>The current surface of the open project (null when none or it belongs to another project).</summary>
-        internal static string ReadCurrentSurfaceId(Database database, Transaction transaction)
+        internal static string ReadCurrentSurfaceId(Database database, Transaction transaction) =>
+            ReadCurrentSurfaceId(database, transaction, ReadCurrentProjectId(database, transaction), ReadSurfaces(database, transaction));
+
+        /// <summary>The same with the open project and the surfaces already read.</summary>
+        internal static string ReadCurrentSurfaceId(Database database, Transaction transaction, string project, List<SurfaceInfo> surfaces)
         {
             var root = Root(database, transaction, false);
-            if (root == null || !root.Contains(CurrentName)) return null;
-            string project = ReadCurrentProjectId(database, transaction);
-            if (project == null) return null;
+            if (root == null || !root.Contains(CurrentName) || project == null) return null;
             string id = ReadPairs(root, CurrentName, transaction).Where(pair => pair.Key == CurrentKey(project)).Select(pair => pair.Value).FirstOrDefault();
-            var surface = ReadSurfaces(database, transaction).FirstOrDefault(s => s.Id == id);
+            var surface = surfaces.FirstOrDefault(s => s.Id == id);
             return surface != null && ProjectInfo.Of(surface.ProjectId) == project ? id : null;
         }
 
@@ -163,7 +165,11 @@ namespace Kzm.AutoCAD.Drawing
         // ---------- projects ----------
 
         /// <summary>Projects of the drawing; «Проект 1» stands for the data of versions before 0.6 if there are any.</summary>
-        internal static List<ProjectInfo> ReadProjects(Database database, Transaction transaction)
+        internal static List<ProjectInfo> ReadProjects(Database database, Transaction transaction) =>
+            ReadProjects(database, transaction, ReadSurfaces(database, transaction), ReadCartograms(database, transaction));
+
+        /// <summary>The same with the surfaces and cartograms already read (the panel reads every record once).</summary>
+        internal static List<ProjectInfo> ReadProjects(Database database, Transaction transaction, List<SurfaceInfo> surfaces, List<CartogramInfo> cartograms)
         {
             var result = new List<ProjectInfo>();
             var root = Root(database, transaction, false);
@@ -174,14 +180,16 @@ namespace Kzm.AutoCAD.Drawing
                     result.Add(ProjectInfo.Decode(entry.Key, ReadPairs(dictionary, entry.Key, transaction)
                         .GroupBy(pair => pair.Key).ToDictionary(group => group.Key, group => group.Last().Value, StringComparer.Ordinal)));
             }
-            if (result.All(project => project.Id != ProjectInfo.LegacyId) && HasLegacyData(database, transaction))
+            if (result.All(project => project.Id != ProjectInfo.LegacyId) && HasLegacyData(surfaces, cartograms))
                 result.Add(new ProjectInfo { Id = ProjectInfo.LegacyId, Name = ProjectInfo.LegacyName });
             return result.OrderBy(project => project.Name, StringComparer.CurrentCultureIgnoreCase).ToList();
         }
 
+        private static bool HasLegacyData(List<SurfaceInfo> surfaces, List<CartogramInfo> cartograms) =>
+            surfaces.Any(s => ProjectInfo.Of(s.ProjectId) == ProjectInfo.LegacyId) || cartograms.Any(c => ProjectInfo.Of(c.ProjectId) == ProjectInfo.LegacyId);
+
         private static bool HasLegacyData(Database database, Transaction transaction) =>
-            ReadSurfaces(database, transaction).Any(s => ProjectInfo.Of(s.ProjectId) == ProjectInfo.LegacyId) ||
-            ReadCartograms(database, transaction).Any(c => ProjectInfo.Of(c.ProjectId) == ProjectInfo.LegacyId);
+            HasLegacyData(ReadSurfaces(database, transaction), ReadCartograms(database, transaction));
 
         internal static void WriteProject(Database database, Transaction transaction, ProjectInfo project)
         {
@@ -200,14 +208,23 @@ namespace Kzm.AutoCAD.Drawing
         /// </summary>
         internal static string ReadCurrentProjectId(Database database, Transaction transaction)
         {
+            var surfaces = ReadSurfaces(database, transaction);
+            var cartograms = ReadCartograms(database, transaction);
+            return ReadCurrentProjectId(database, transaction, ReadProjects(database, transaction, surfaces, cartograms), surfaces, cartograms);
+        }
+
+        /// <summary>The same with the records already read.</summary>
+        internal static string ReadCurrentProjectId(Database database, Transaction transaction, List<ProjectInfo> projects, List<SurfaceInfo> surfaces,
+            List<CartogramInfo> cartograms)
+        {
             var root = Root(database, transaction, false);
             if (root != null && root.Contains(CurrentProjectName))
             {
                 string id = ReadPairs(root, CurrentProjectName, transaction).Where(pair => pair.Key == "id").Select(pair => pair.Value).FirstOrDefault();
                 if (string.IsNullOrEmpty(id)) return null;
-                return ReadProjects(database, transaction).Any(project => project.Id == id) ? id : null;
+                return projects.Any(project => project.Id == id) ? id : null;
             }
-            return HasLegacyData(database, transaction) ? ProjectInfo.LegacyId : null;
+            return HasLegacyData(surfaces, cartograms) ? ProjectInfo.LegacyId : null;
         }
 
         internal static void WriteCurrentProjectId(Database database, Transaction transaction, string projectId)
