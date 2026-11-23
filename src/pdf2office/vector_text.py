@@ -182,6 +182,12 @@ def _dotted(text: str) -> bool:
 HATCH_LIKE = set("0OoОо8ВBQDCcСс°")
 
 
+def _same_shape(a, b) -> bool:
+    """Two shape signatures (size, holes, aspect, fill) of one pattern."""
+    return (a[1] == b[1] and 0.6 <= a[0] / max(b[0], 1e-6) <= 1.6 and abs(a[2] - b[2]) <= 0.25
+            and abs(a[3] - b[3]) <= 0.15)
+
+
 def _hatch_like_text(text: str) -> bool:
     alnum = [c for c in text if c.isalnum()]
     return 1 <= len(alnum) <= 2 and all(c in HATCH_LIKE for c in alnum)
@@ -262,6 +268,10 @@ def plausible_text(text: str, kind: str, confidence: float, agreed: bool) -> boo
         # Single-line lettering looks like hatching; demand strong evidence.
         return len(alnum) >= 2 and confidence >= (0.85 if agreed else 0.97)
     if len(alnum) == 1:
+        character = alnum[0]
+        if agreed and character.isalpha() and character not in SYMBOL_LIKE and character not in HATCH_LIKE:
+            # A letter no symbol imitates ("П", "Г"), read alike by both readers.
+            return confidence >= 0.5
         return confidence >= (0.6 if agreed else 0.9)
     return confidence >= 0.5
 
@@ -519,7 +529,7 @@ class VectorText:
         dropped = set()
         for index in suspicious:
             span, members = taken[index]
-            if self._similar_shapes(members, free) >= 3:
+            if self._similar_shapes(members, free) >= 4:
                 dropped.add(index)
                 self.claimed[members] = False
                 self.rejected += 1
@@ -527,11 +537,19 @@ class VectorText:
         return [item for index, item in enumerate(taken) if index not in dropped]
 
     def _similar_shapes(self, members: np.ndarray, free: np.ndarray) -> int:
-        """Unread filled shapes of about the same size around ``members``."""
+        """Unread filled shapes around ``members`` that look like its parts.
+
+        Compared are the number of holes, the proportions and how much of
+        its box the shape fills: the rings of a gravel hatch match each
+        other, while a marker, a filled column or another letter does not.
+        A closed ring printed as a path of its own is also compared alone,
+        so two touching rings are two rings, not one "8".
+        """
         b = self.box[members]
         x0, y0, x1, y1 = b[:, 0].min(), b[:, 1].min(), b[:, 2].max(), b[:, 3].max()
         size = max(x1 - x0, y1 - y0, 1e-6)
-        reach = 5 * size
+        own = self._shape_signatures(members, size)
+        reach = 6 * size
         box = self.box
         near = np.flatnonzero((box[:, 2] >= x0 - reach) & (box[:, 0] <= x1 + reach) & (box[:, 3] >= y0 - reach)
                               & (box[:, 1] <= y1 + reach) & self.filled & ~self.shadow & free)
@@ -539,17 +557,52 @@ class VectorText:
         if not len(near):
             return 0
         sizes = np.maximum(box[near, 2] - box[near, 0], box[near, 3] - box[near, 1])
-        near = near[sizes <= 2.5 * size]
+        near = near[sizes <= 2.0 * size]
         if not len(near):
             return 0
         labels = _touching_groups(box[near], np.full(len(near), 0.05 + 0.005 * size), self.order[near])
         count = 0
         for label in np.unique(labels):
-            group = box[near[labels == label]]
-            extent = max(group[:, 2].max() - group[:, 0].min(), group[:, 3].max() - group[:, 1].min())
-            if 0.5 * size <= extent <= 2.0 * size:
+            group = near[labels == label]
+            theirs = self._shape_signatures(group, size)
+            if any(_same_shape(a, b) for a in theirs for b in own):
                 count += 1
         return count
+
+    def _shape_signatures(self, members: np.ndarray, size: float) -> list:
+        """Signatures of a shape: as a whole, per letter, per closed path."""
+        signatures = [self._signature(members)]
+        b = self.box[members]
+        labels = _touching_groups(b, np.full(len(members), 0.05 + 0.005 * size), self.order[members])
+        if len(np.unique(labels)) > 1:
+            signatures += [self._signature(members[labels == label]) for label in np.unique(labels)]
+        drawings = self.drawing[members]
+        if len(np.unique(drawings)) > 1:
+            for number in np.unique(drawings):
+                signature = self._signature(members[drawings == number])
+                if signature[1] >= 1:  # a closed ring of its own
+                    signatures.append(signature)
+        return signatures
+
+    def _signature(self, members) -> tuple[float, int, float, float]:
+        """(size, holes, width/height, filled share of the box) of a shape."""
+        b = self.box[members]
+        x0, y0, x1, y1 = b[:, 0].min(), b[:, 1].min(), b[:, 2].max(), b[:, 3].max()
+        w, h = max(x1 - x0, 1e-6), max(y1 - y0, 1e-6)
+        scale = 40.0 / max(w, h)
+        canvas = np.zeros((int(math.ceil(h * scale)) + 4, int(math.ceil(w * scale)) + 4), np.uint8)
+        by_drawing: dict[int, list[np.ndarray]] = {}
+        for member in members:
+            local = (self.points[member] - (x0, y0)) * scale + 2
+            by_drawing.setdefault(int(self.drawing[member]), []).append(np.round(local * 16).astype(np.int32))
+        for contours in by_drawing.values():
+            layer = np.zeros_like(canvas)
+            cv2.fillPoly(layer, contours, 255, shift=4)
+            canvas |= layer
+        contours, hierarchy = cv2.findContours(canvas, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+        holes = 0 if hierarchy is None else int(np.sum(hierarchy[0][:, 3] >= 0))
+        fill = float(np.count_nonzero(canvas)) / max(w * h * scale * scale, 1e-6)
+        return max(w, h), holes, w / h, fill
 
     @staticmethod
     def _quality(span: TextSpan) -> float:

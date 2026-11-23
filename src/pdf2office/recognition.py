@@ -265,6 +265,24 @@ def _normalized(text: str) -> str:
     return re.sub(r"\s+", "", text).replace("ё", "е").replace("Ё", "Е").translate(_LOOKALIKES)
 
 
+# Latin letter pairs Tesseract's English model reads isolated Cyrillic
+# capitals as ("П" -> "IT"); used only to compare short readings.
+_TESSERACT_CYRILLIC = (("IT", "П"), ("II", "П"), ("TI", "П"), ("JI", "Л"), ("bI", "Ы"), ("bl", "Ы"),
+                       ("IO", "Ю"), ("LU", "Ш"))
+
+
+def _same_reading(neural_text: str, tess_text: str) -> bool:
+    if _normalized(tess_text) == _normalized(neural_text):
+        return True
+    compact = re.sub(r"\s+", "", neural_text)
+    if len(compact) > 3 or not any("\u0400" <= c <= "\u04ff" for c in compact):
+        return False
+    converted = tess_text
+    for latin, cyrillic in _TESSERACT_CYRILLIC:
+        converted = converted.replace(latin, cyrillic)
+    return _normalized(converted) == _normalized(neural_text)
+
+
 def choose_reading(neural_text: str, neural_conf: float, tesseract, neural_words=None) -> tuple[str, float, str]:
     """Pick or merge two readings of one phrase: (text, confidence, engine).
 
@@ -281,6 +299,9 @@ def choose_reading(neural_text: str, neural_conf: float, tesseract, neural_words
         cyrillic = lambda value: sum("\u0400" <= c <= "\u04ff" for c in value)
         text = tess_text if cyrillic(tess_text) >= cyrillic(neural_text) else neural_text
         return text, max(neural_conf, tess_conf), "neural+tesseract"
+    if _same_reading(neural_text, tess_text):
+        # The same short Cyrillic text, written by Tesseract in Latin pairs.
+        return neural_text, max(neural_conf, tess_conf), "neural+tesseract"
     # Word by word first: where the network was unsure of a character, or
     # produced a word shape print never has, and Tesseract (with its
     # dictionary) offers a comparable word, take Tesseract's word.
