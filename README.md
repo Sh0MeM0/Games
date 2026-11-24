@@ -7,9 +7,9 @@
 
 ## Скачать portable
 
-Обновление 0.4.0 распространяется только как portable:
+Обновление 0.4.1 распространяется только как portable:
 
-- [Скачать portable для Windows x64](https://github.com/Sh0MeM0/Games/archive/refs/heads/pdfmaster-portable-v0.4.0.zip)
+- [Скачать portable для Windows x64](https://github.com/Sh0MeM0/Games/archive/refs/heads/pdfmaster-portable-v0.4.1.zip)
 
 Распакуйте скачанный архив **целиком** и запустите `RESTORE.cmd`. Он соберёт
 portable ZIP из частей и проверит SHA-256. Части нужны из-за
