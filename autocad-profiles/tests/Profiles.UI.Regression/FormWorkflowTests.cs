@@ -23,6 +23,59 @@ internal static class FormWorkflowTests
         Check("row fill is explicit, preserves manual input and survives template switches", FillRow);
         Check("cross-section width dialog and elevation button fill inserted columns and persist", ApproximateCrossSection);
         Check("station picker assigns existing station without rounding its precision", StationPicker);
+        Check("drainage collector shows its columns and title fields and keeps the outlet mark", DrainageCollector);
+        Check("an empty profile switched to drainage takes the collector sheet scales", DrainageScales);
+    }
+
+    private static void DrainageCollector()
+    {
+        using (var form = new ProfilesForm(ProfileKind.Longitudinal, SampleProjects.Drainage()))
+        {
+            Prepare(form);
+            var grid = Field<DataGridView>(form, "longGrid");
+            // Mono applies DisplayIndex differently from .NET; check the set of columns, not their order.
+            var visible = grid.Columns.Cast<DataGridViewColumn>().Where(column => column.Visible).Select(column => column.Name).OrderBy(name => name).ToArray();
+            Require(visible.SequenceEqual(new[] { "FillMissing", "Station", "Ground", "PeatDepth", "ProjectBottom", "PipeDescription", "PointName" }.OrderBy(name => name)),
+                "drainage columns: " + string.Join(", ", visible));
+            Require(grid.Columns["ProjectBottom"].HeaderText == "Дрена (проект), м", "drainage heading is missing");
+            Require(grid.Columns["PipeDescription"].HeaderText == "Диаметр, мм", "diameter heading is missing");
+            Require(Field<Label>(form, "titleCaption").Text == "Коллектор", "title caption is not the collector");
+            Require(Field<TextBox>(form, "subtitle").Text == "к-л К-1 пк1+25", "receiver was not loaded");
+            Require(Field<TextBox>(form, "outlet").Text == "143.60", "outlet mark was not loaded");
+            Field<TextBox>(form, "outlet").Text = "143,55";
+            Field<TextBox>(form, "subtitle").Text = "р. Каменка пк76+90";
+            var result = (ProfileProject)Call(form, "ReadProject");
+            Require(result.Template == ProfileTemplate.Drainage, "drainage type was lost");
+            Require(result.Settings.OutletElevation == 143.55, "outlet mark was not read");
+            Require(result.Settings.Subtitle == "р. Каменка пк76+90", "receiver was not read");
+            var texts = ProfileEngine.Build(result).Entities.OfType<DrawText>().Select(text => text.Text).ToList();
+            Require(texts.Contains("143.55") && texts.Contains("р. Каменка пк76+90"), "edited marks are not drawn");
+            // Returning to a channel restores its own headings.
+            Field<ComboBox>(form, "templatePicker").SelectedIndex = 1;
+            Call(form, "ApplyTemplateColumns");
+            Require(grid.Columns["ProjectBottom"].HeaderText == "Дно проект, м", "channel heading was not restored");
+            Require(Field<Label>(form, "titleCaption").Text == "Название", "channel title caption was not restored");
+        }
+    }
+
+    private static void DrainageScales()
+    {
+        var empty = new ProfileProject
+        {
+            Kind = ProfileKind.Longitudinal, Template = ProfileTemplate.Reconstruction,
+            Longitudinal = new List<LongitudinalPoint>(), Sections = new List<CrossSection>()
+        };
+        using (var form = new ProfilesForm(ProfileKind.Longitudinal, empty))
+        {
+            Prepare(form);
+            var picker = Field<ComboBox>(form, "templatePicker");
+            picker.SelectedIndex = Enumerable.Range(0, picker.Items.Count).Single(index => picker.Items[index].ToString() == "Дренажный коллектор");
+            Call(form, "TemplateSelectionChanged", form, EventArgs.Empty);
+            var result = (ProfileProject)Call(form, "ReadProject");
+            Require(result.Template == ProfileTemplate.Drainage, "type did not change to drainage");
+            Require(result.Settings.HorizontalScale == 2000 && result.Settings.VerticalScale == 100,
+                "scales " + result.Settings.HorizontalScale + " / " + result.Settings.VerticalScale);
+        }
     }
 
     private static T Field<T>(object target, string name) => (T)target.GetType().GetField(name, Private).GetValue(target);

@@ -20,7 +20,7 @@ public sealed class SectionIdentityAndRoleTests
         document["SchemaVersion"] = 4;
         var first = ProjectFile.Deserialize(document.ToJsonString());
         var second = ProjectFile.Deserialize(document.ToJsonString());
-        Assert.Equal(5, first.SchemaVersion);
+        Assert.Equal(6, first.SchemaVersion);
         Assert.Equal(Guid.Parse(source.ProjectId).ToString("N"), first.ProfileId);
         Assert.Equal(first.ProjectId, first.ProfileId);
         Assert.Equal("Профиль 1", first.ProfileName);

@@ -25,7 +25,7 @@ namespace Profiles.AutoCAD
 
         private bool HasActiveNumericEditor => longGrid.IsCurrentCellInEditMode || crossGrid.IsCurrentCellInEditMode ||
             new[] { horizontal, vertical, datum, metres, textHeight, textWidth, sectionWater, projectBottom, bottomWidth,
-                leftSlope, rightSlope, centerOffset, siltThickness, siltLeft, siltRight, sectionName }.Any(input => input.ContainsFocus);
+                leftSlope, rightSlope, centerOffset, siltThickness, siltLeft, siltRight, sectionName, outlet }.Any(input => input.ContainsFocus);
 
         private void InitializeSharedEditing()
         {

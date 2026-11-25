@@ -54,7 +54,7 @@ namespace Profiles.Core
                 CrossHorizontalScale = settings.CrossHorizontalScale, CrossVerticalScale = settings.CrossVerticalScale,
                 MetresPerDrawingUnit = settings.MetresPerDrawingUnit, Datum = settings.Datum,
                 TextHeightMm = settings.TextHeightMm, TextWidthFactor = settings.TextWidthFactor,
-                ShowEmptyRows = settings.ShowEmptyRows
+                ShowEmptyRows = settings.ShowEmptyRows, Subtitle = settings.Subtitle, OutletElevation = settings.OutletElevation
             };
         }
 

@@ -9,7 +9,7 @@ namespace Profiles.Core
         internal static void Check(ProfileProject project, bool geometry = true)
         {
             if (project == null) Fail("Проект не задан.");
-            if (project.SchemaVersion != 5) Fail("Версия проекта не поддерживается: " + project.SchemaVersion + ". Требуется версия 5.");
+            if (project.SchemaVersion != 6) Fail("Версия проекта не поддерживается: " + project.SchemaVersion + ". Требуется версия 6.");
             if (!Guid.TryParseExact(project.ProjectId, "N", out var identity) && !Guid.TryParseExact(project.ProjectId, "D", out identity)) Fail("Некорректный идентификатор проекта.");
             Text(project.Name, "Название проекта", 200);
             if (!Guid.TryParseExact(project.ProfileId, "N", out var profileIdentity) || profileIdentity == Guid.Empty) Fail("Некорректный идентификатор профиля: требуется непустой GUID без дефисов.");
@@ -22,6 +22,8 @@ namespace Profiles.Core
             if (project.Settings == null || project.Longitudinal == null || project.Sections == null) Fail("В проекте отсутствуют настройки или списки точек.");
             ProfileSettings settings = project.Settings;
             Text(settings.Title, "Название профиля", 200, geometry);
+            Text(settings.Subtitle, "Водоприёмник коллектора", 200, false);
+            Elevation(settings.OutletElevation, "Отметка дна водоприёмника в устье");
             ProfileScales.Validate(settings);
             Range(settings.MetresPerDrawingUnit, 0.000001, 1000000, "Метры в единице чертежа");
             Range(settings.TextHeightMm, 0.5, 20, "Высота текста, мм");

@@ -29,7 +29,7 @@ public sealed class V05RegressionTests
 
         Assert.Equal(original.ProjectId, restored.ProjectId);
         Assert.Equal(previousKind, restored.Kind);
-        Assert.Equal(5, restored.SchemaVersion);
+        Assert.Equal(6, restored.SchemaVersion);
         Assert.Equal(original.Settings.HorizontalScale, restored.Settings.CrossHorizontalScale);
         Assert.Equal(original.Settings.VerticalScale, restored.Settings.CrossVerticalScale);
         double expectedRise = 2 * 333.123456789 / 77.987654321;

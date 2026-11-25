@@ -84,6 +84,7 @@ namespace Profiles.AutoCAD
             templatePicker.Items.Add(new TemplateChoice { Value = ProfileTemplate.Reconstruction, Name = "Подчистка канала" });
             templatePicker.Items.Add(new TemplateChoice { Value = ProfileTemplate.NewChannel, Name = "Новый канал" });
             templatePicker.Items.Add(new TemplateChoice { Value = ProfileTemplate.Nvk, Name = "Сети НВК" });
+            templatePicker.Items.Add(new TemplateChoice { Value = ProfileTemplate.Drainage, Name = "Дренажный коллектор" });
             templatePicker.SelectedIndex = 0;
             templatePicker.SelectionChangeCommitted += TemplateSelectionChanged;
             if (available != null)
@@ -150,7 +151,9 @@ namespace Profiles.AutoCAD
         private void ApplyTemplateColumns()
         {
             string[] visible;
-            if (SelectedTemplate == ProfileTemplate.Nvk)
+            if (SelectedTemplate == ProfileTemplate.Drainage)
+                visible = new[] { "Station", "Ground", "PeatDepth", "ProjectBottom", "PipeDescription", "PointName" };
+            else if (SelectedTemplate == ProfileTemplate.Nvk)
                 visible = new[] { "Station", "Ground", "ProjectGround", "PipeInvert", "PipeDescription", "Foundation", "PointName" };
             else if (SelectedTemplate == ProfileTemplate.NewChannel)
                 visible = new[] { "Station", "Ground", "ProjectBottom", "PeatDepth", "BottomWidth", "LeftSlope", "RightSlope" };
@@ -160,7 +163,33 @@ namespace Profiles.AutoCAD
             foreach (DataGridViewColumn column in longGrid.Columns) column.Visible = visible.Contains(column.Name);
             for (int i = 0; i < visible.Length; i++) longGrid.Columns[visible[i]].DisplayIndex = i;
             longGrid.Columns["Ground"].HeaderText = SelectedTemplate == ProfileTemplate.Nvk ? "Натурная земля, м" : "Земля, м";
+            ApplyDrainageHeadings(SelectedTemplate == ProfileTemplate.Drainage);
             longGrid.Invalidate();
+            UpdateTemplateFields();
+        }
+
+        // The drainage table reuses stored fields under the names of the collector profile sheet.
+        private static readonly string[][] DrainageHeadings =
+        {
+            new[] { "Station", "Расстояние от устья, м", "Расстояние от устья коллектора (ордината 0), м. Строки упорядочиваются по нему." },
+            new[] { "Ground", "Поверхность, м", "Отметка поверхности земли. Строка с ней — ордината съёмки: номер, расстояние и отметка в таблице профиля. Строку без неё можно добавить для перелома дна, смены диаметра или впадения." },
+            new[] { "PeatDepth", "Торф, м", "Толщина торфа от поверхности в ординате; на профиле — голубая штриховка «галочками» с пунктирной границей." },
+            new[] { "ProjectBottom", "Дрена (проект), м", "Проектная отметка дрены в устье, в точках перелома уклона и в конце. Уклон и длина считаются между этими точками; между ними отметка интерполируется." },
+            new[] { "PipeDescription", "Диаметр, мм", "Диаметр трубы с этой точки до следующей смены диаметра, например 125. Длины участков считаются автоматически." },
+            new[] { "PointName", "Впадает коллектор", "Обозначение коллектора, впадающего в этой точке, например 2-1: вертикальная линия с подписью над профилем." }
+        };
+        private readonly Dictionary<string, Tuple<string, string>> standardHeadings = new Dictionary<string, Tuple<string, string>>();
+
+        private void ApplyDrainageHeadings(bool drainage)
+        {
+            foreach (var heading in DrainageHeadings)
+            {
+                var column = longGrid.Columns[heading[0]];
+                if (!standardHeadings.ContainsKey(heading[0])) standardHeadings[heading[0]] = Tuple.Create(column.HeaderText, column.ToolTipText);
+                if (drainage) { column.HeaderText = heading[1]; column.ToolTipText = heading[2]; }
+                else if (heading[0] != "Ground") { column.HeaderText = standardHeadings[heading[0]].Item1; column.ToolTipText = standardHeadings[heading[0]].Item2; }
+                else column.ToolTipText = standardHeadings[heading[0]].Item2;
+            }
         }
 
         private void RegisterProject(ProfileProject project, bool owned = false)
@@ -258,18 +287,23 @@ namespace Profiles.AutoCAD
             TrySaveCurrent(true, forceDrawing: true);
         }
 
-        private ProfileProject BlankProject(string name) => new ProfileProject
+        private ProfileProject BlankProject(string name)
         {
-            ProjectId = Guid.NewGuid().ToString("N"), Name = name, Kind = activeKind, Template = SelectedTemplate,
-            Settings = new ProfileSettings
+            var project = new ProfileProject
             {
-                Title = "ПРОДОЛЬНЫЙ ПРОФИЛЬ",
-                HorizontalScale = 1000, VerticalScale = 100,
-                CrossHorizontalScale = 100, CrossVerticalScale = 100,
-                MetresPerDrawingUnit = 1, TextHeightMm = 2.5, TextWidthFactor = .85
-            },
-            Sections = new List<CrossSection> { NewSection(1) }
-        };
+                ProjectId = Guid.NewGuid().ToString("N"), Name = name, Kind = activeKind, Template = SelectedTemplate,
+                Settings = new ProfileSettings
+                {
+                    Title = "ПРОДОЛЬНЫЙ ПРОФИЛЬ",
+                    HorizontalScale = 1000, VerticalScale = 100,
+                    CrossHorizontalScale = 100, CrossVerticalScale = 100,
+                    MetresPerDrawingUnit = 1, TextHeightMm = 2.5, TextWidthFactor = .85
+                },
+                Sections = new List<CrossSection> { NewSection(1) }
+            };
+            UseTemplateDefaults(project.Settings, project.Template);
+            return project;
+        }
 
         private void DeleteProject()
         {

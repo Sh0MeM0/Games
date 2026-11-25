@@ -154,6 +154,11 @@ namespace Profiles.AutoCAD
                     values.Ground = Elevation(editor, "Натурная поверхность", units);
                     values.ProjectBottom = Elevation(editor, "Проектное дно", units);
                 }
+                else if (project.Template == ProfileTemplate.Drainage)
+                {
+                    values.Ground = Elevation(editor, "Поверхность земли", units);
+                    values.ProjectBottom = Elevation(editor, "Проектная отметка дрены", units);
+                }
                 else
                 {
                     values.Ground = Elevation(editor, "Натурная поверхность", units);

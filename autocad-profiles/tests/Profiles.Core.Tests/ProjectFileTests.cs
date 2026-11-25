@@ -37,8 +37,10 @@ public sealed class ProjectFileTests : IDisposable
         project.Longitudinal[0].ProjectBottom = 0;
         project.Longitudinal[1].Water = 0;
         ProjectFile.Save(FilePath, project);
+        // Without drainage data the file stays readable by modules before 0.9.1.
+        Assert.Contains("\"SchemaVersion\": 5", System.IO.File.ReadAllText(FilePath));
         var restored = ProjectFile.Load(FilePath);
-        Assert.Equal(5, restored.SchemaVersion);
+        Assert.Equal(6, restored.SchemaVersion);
         Assert.Equal(ProfileKind.Longitudinal, restored.Kind);
         Assert.Equal(project.Settings.Title, restored.Settings.Title);
         Assert.Equal(-5, restored.Settings.Datum);

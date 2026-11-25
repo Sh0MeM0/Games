@@ -182,15 +182,18 @@ namespace Profiles.AutoCAD
         internal Func<string, string, string, TemplateSwitchChoice> ChooseTemplateSwitch { get; set; }
 
         internal static string TemplateName(ProfileTemplate template) =>
-            template == ProfileTemplate.NewChannel ? "Новый канал" : template == ProfileTemplate.Nvk ? "Сети НВК" : "Подчистка канала";
+            template == ProfileTemplate.NewChannel ? "Новый канал" : template == ProfileTemplate.Nvk ? "Сети НВК" :
+            template == ProfileTemplate.Drainage ? "Дренажный коллектор" : "Подчистка канала";
 
         private static string TemplateShortName(ProfileTemplate template) =>
-            template == ProfileTemplate.NewChannel ? "новый канал" : template == ProfileTemplate.Nvk ? "НВК" : "подчистка";
+            template == ProfileTemplate.NewChannel ? "новый канал" : template == ProfileTemplate.Nvk ? "НВК" :
+            template == ProfileTemplate.Drainage ? "дренаж" : "подчистка";
 
         /// <summary>The type is shown on every tab, so it is always visible where the data of each type lives.</summary>
         internal static string TabCaption(string name, ProfileTemplate template)
         {
-            string marker = template == ProfileTemplate.NewChannel ? "новый канал" : template == ProfileTemplate.Nvk ? "нвк" : "подчист";
+            string marker = template == ProfileTemplate.NewChannel ? "новый канал" : template == ProfileTemplate.Nvk ? "нвк" :
+                template == ProfileTemplate.Drainage ? "дрен" : "подчист";
             return (name ?? "").IndexOf(marker, StringComparison.OrdinalIgnoreCase) >= 0 ? name : name + " · " + TemplateShortName(template);
         }
 
@@ -254,7 +257,9 @@ namespace Profiles.AutoCAD
                         break;
                     case TemplateSwitchChoice.ChangeCurrent:
                         RememberProfileSection();
-                        LoadProject(ProfileCollection.ChangeTemplate(Project, CurrentProfileId, requested));
+                        var changed = ProfileCollection.ChangeTemplate(Project, CurrentProfileId, requested);
+                        if (!current.HasData) UseTemplateDefaults(changed.Settings, requested);
+                        LoadProject(changed);
                         RestoreProfileSection();
                         SetDirty();
                         if (TrySaveCurrent(true))
@@ -271,6 +276,7 @@ namespace Profiles.AutoCAD
                             name = prefix + " " + number++;
                         var created = ProfileCollection.Add(Project, name);
                         created.Template = requested;
+                        UseTemplateDefaults(created.Settings, requested);
                         LoadProject(created);
                         SetDirty();
                         if (TrySaveCurrent(true))
@@ -282,6 +288,14 @@ namespace Profiles.AutoCAD
                 }
             }
             catch (Exception error) { ShowError(error.Message); }
+        }
+
+        /// <summary>An empty drainage profile starts like the collector sheets: scales 1:2000 / 1:100, width factor 1.0.</summary>
+        private static void UseTemplateDefaults(ProfileSettings settings, ProfileTemplate template)
+        {
+            if (template != ProfileTemplate.Drainage) return;
+            ProfileScales.Set(settings, ProfileKind.Longitudinal, 2000, 100);
+            settings.TextWidthFactor = 1;
         }
 
         private TemplateSwitchChoice AskTemplateSwitch(string requested, string current, string existing)

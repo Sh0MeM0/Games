@@ -240,6 +240,7 @@ namespace Profiles.AutoCAD.UI
             {
                 case 1: return Color.Red;
                 case 3: return Color.Lime;
+                case 4: return Color.FromArgb(0, 175, 175);
                 case 5: return Color.Blue;
                 case 6: return Color.Magenta;
                 case 8: return Color.FromArgb(170, 175, 180);

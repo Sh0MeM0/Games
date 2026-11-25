@@ -29,6 +29,12 @@ namespace Profiles.AutoCAD
         private readonly TextBox textHeight = Input();
         private readonly TextBox textWidth = Input();
         private readonly TextBox sectionName = Input();
+        private readonly TextBox subtitle = new TextBox { Width = Px(280), Margin = new Padding(2, 3, 6, 3), MaxLength = 200 };
+        private readonly TextBox outlet = Input();
+        private Control drainageFields;
+        private const string ChannelNote = "ПК 6+50 = 650 м; 6 = 6 м. Курсив — интерполяция. Пикеты упорядочиваются после ввода; берега — по течению.";
+        private const string DrainageNote = "Строка с отметкой поверхности — ордината съёмки; строка без неё — перелом дна, смена диаметра или впадение коллектора. Курсив — интерполяция.";
+        private readonly Label longNote = Note(ChannelNote);
         private readonly ComboBox sectionStation = new ComboBox { Width = Px(135), DropDownStyle = ComboBoxStyle.DropDown, Margin = new Padding(2, 3, 5, 3) };
         private readonly TextBox sectionWater = Input();
         private readonly TextBox projectBottom = Input();
@@ -189,6 +195,13 @@ namespace Profiles.AutoCAD
             common.Controls.Add(Caption("Ноль профиля, м"), 4, 1);
             common.Controls.Add(datum, 5, 1);
             common.Controls.Add(new Label { Text = "пусто = автоматически", AutoSize = true, ForeColor = Color.DimGray, Margin = new Padding(6, 7, 0, 0) }, 6, 1);
+            // Second title line and outlet mark of a drainage collector («к-л К-2 пк6+75», 145.35).
+            drainageFields = Fields("Водоприёмник", subtitle, "Отметка дна в устье, м", outlet);
+            common.RowCount = 3;
+            common.Controls.Add(drainageFields, 0, 2);
+            common.SetColumnSpan(drainageFields, 8);
+            tips.SetToolTip(subtitle, "Вторая строка заголовка коллектора: куда он впадает, например «к-л К-2 пк6+75» или «р. Каменка пк76+90».");
+            tips.SetToolTip(outlet, "Отметка дна водоприёмника в устье коллектора. Показывается знаком отметки слева от ординаты 0; пусто — без знака.");
             root.Controls.Add(common, 0, 2);
             tips.SetToolTip(datum, "Оставьте пустым: ноль = floor(минимальная отметка) − 1 м. Введённый ноль должен быть ниже всех используемых отметок.");
             tips.SetToolTip(horizontal, "Знаменатель масштаба: например, 1000 для 1:1000. Геометрия создаётся по правилам исходных LISP-шаблонов.");
@@ -229,7 +242,7 @@ namespace Profiles.AutoCAD
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            layout.Controls.Add(Note("ПК 6+50 = 650 м; 6 = 6 м. Курсив — интерполяция. Пикеты упорядочиваются после ввода; берега — по течению."), 0, 0);
+            layout.Controls.Add(longNote, 0, 0);
             layout.Controls.Add(longGrid, 0, 1);
             layout.Controls.Add(GridToolbar(longGrid), 0, 2);
             longPage.Controls.Add(layout);
@@ -534,6 +547,18 @@ namespace Profiles.AutoCAD
         {
             UpdateScopeControls();
             title.Visible = titleCaption.Visible = activeKind == ProfileKind.Longitudinal;
+            UpdateTemplateFields();
+        }
+
+        private void UpdateTemplateFields()
+        {
+            if (drainageFields == null) return;
+            bool drainage = SelectedTemplate == ProfileTemplate.Drainage;
+            titleCaption.Text = drainage ? "Коллектор" : "Название";
+            longNote.Text = drainage ? DrainageNote : ChannelNote;
+            title.AccessibleName = drainage ? "Обозначение коллектора" : "Название профиля";
+            tips.SetToolTip(title, drainage ? "Первая строка заголовка коллектора, например «К-р 4'»." : "");
+            drainageFields.Visible = drainage && activeKind == ProfileKind.Longitudinal;
         }
 
         private ProfileSettings ReadSettings()
@@ -550,7 +575,9 @@ namespace Profiles.AutoCAD
                 MetresPerDrawingUnit = ReadRequiredNumber(metres, "Метров в единице чертежа"),
                 TextHeightMm = ReadRequiredNumber(textHeight, "Высота текста"),
                 TextWidthFactor = ReadRequiredNumber(textWidth, "Коэффициент ширины текста"),
-                ShowEmptyRows = true
+                ShowEmptyRows = true,
+                Subtitle = subtitle.Text.Trim(),
+                OutletElevation = ReadOptionalNumber(outlet, "Отметка дна водоприёмника в устье")
             };
         }
 
@@ -799,6 +826,8 @@ namespace Profiles.AutoCAD
                 SelectTemplate(project.Template);
                 var settings = project.Settings ?? new ProfileSettings();
                 title.Text = settings.Title ?? "";
+                subtitle.Text = settings.Subtitle ?? "";
+                DisplayNumber(outlet, settings.OutletElevation);
                 LoadProfileScales(settings);
                 DisplayNumber(datum, settings.Datum);
                 DisplayNumber(metres, settings.MetresPerDrawingUnit);

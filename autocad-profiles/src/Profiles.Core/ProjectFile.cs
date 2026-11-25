@@ -9,6 +9,7 @@ using System.Text;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
 using Newtonsoft.Json.Linq;
+using Newtonsoft.Json.Serialization;
 
 namespace Profiles.Core
 {
@@ -85,7 +86,7 @@ namespace Profiles.Core
         public static string Serialize(ProfileProject project)
         {
             ProfileValidation.Check(project, geometry: false);
-            string json = JsonConvert.SerializeObject(project, Formatting.Indented, Settings());
+            string json = JsonConvert.SerializeObject(project, Formatting.Indented, Settings(UsesVersionSix(project) ? 6 : 5));
             if (new UTF8Encoding(false, true).GetByteCount(json) > MaximumFileBytes)
                 throw new ProfileValidationException("Размер проекта превышает 10 МБ; разделите его на несколько файлов.");
             return json;
@@ -119,12 +120,13 @@ namespace Profiles.Core
                     if (!(root is JObject) || root["SchemaVersion"]?.Type != JTokenType.Integer)
                         throw new ProfileValidationException("В проекте отсутствует целочисленная SchemaVersion.");
                     int version = root["SchemaVersion"].Value<int>();
-                    if (version < 1 || version > 5)
-                        throw new ProfileValidationException("Версия проекта не поддерживается. Поддерживаются SchemaVersion = 1, 2, 3, 4 и 5; обновите модуль или используйте совместимый файл.");
+                    if (version < 1 || version > 6)
+                        throw new ProfileValidationException("Версия проекта не поддерживается. Поддерживаются SchemaVersion = 1–6; обновите модуль или используйте совместимый файл.");
                     if (version == 1) UpgradeLegacy((JObject)root);
                     if (version <= 2) UpgradeVersionTwo((JObject)root);
                     if (version <= 3) UpgradeVersionThree((JObject)root);
                     if (version <= 4) UpgradeVersionFour((JObject)root);
+                    if (version <= 5) UpgradeVersionFive((JObject)root);
                     return Materialize(root);
                 }
             }
@@ -195,7 +197,8 @@ namespace Profiles.Core
             Title = source.Title, HorizontalScale = source.HorizontalScale, VerticalScale = source.VerticalScale,
             CrossHorizontalScale = source.CrossHorizontalScale, CrossVerticalScale = source.CrossVerticalScale,
             MetresPerDrawingUnit = source.MetresPerDrawingUnit, Datum = source.Datum,
-            TextHeightMm = source.TextHeightMm, TextWidthFactor = source.TextWidthFactor, ShowEmptyRows = source.ShowEmptyRows
+            TextHeightMm = source.TextHeightMm, TextWidthFactor = source.TextWidthFactor, ShowEmptyRows = source.ShowEmptyRows,
+            Subtitle = source.Subtitle, OutletElevation = source.OutletElevation
         };
 
         private static LongitudinalPoint CopyPoint(LongitudinalPoint source) => new LongitudinalPoint
@@ -330,6 +333,68 @@ namespace Profiles.Core
             root["SchemaVersion"] = 5;
         }
 
+        private static readonly string[] VersionSixSettings = { "Subtitle", "OutletElevation" };
+
+        /// <summary>Only drainage data needs schema 6; everything else stays readable by modules before 0.9.1.</summary>
+        internal static bool UsesVersionSix(ProfileProject project)
+        {
+            Func<ProfileTemplate, ProfileSettings, bool> uses = (template, settings) => template == ProfileTemplate.Drainage ||
+                !string.IsNullOrEmpty(settings.Subtitle) || settings.OutletElevation.HasValue;
+            return uses(project.Template, project.Settings) || project.AdditionalProfiles.Any(profile => uses(profile.Template, profile.Settings));
+        }
+
+        private static void UpgradeVersionFive(JObject root)
+        {
+            var settings = new List<JToken> { root["Settings"] };
+            if (root["AdditionalProfiles"] is JArray profiles)
+                foreach (var profile in profiles.OfType<JObject>())
+                {
+                    if (profile["Template"]?.Type == JTokenType.String && profile["Template"].Value<string>() == "Drainage")
+                        Invalid("Профиль", "тип «Дренажный коллектор» указан в файле версии 5");
+                    settings.Add(profile["Settings"]);
+                }
+            if (root["Template"]?.Type == JTokenType.String && root["Template"].Value<string>() == "Drainage")
+                Invalid("Проект", "тип «Дренажный коллектор» указан в файле версии 5");
+            foreach (var item in settings.OfType<JObject>())
+            {
+                foreach (string name in VersionSixSettings)
+                    if (item.Property(name) != null) Invalid("Настройки", "поле версии 6 указано в старой версии файла");
+                item["Subtitle"] = "";
+                item["OutletElevation"] = JValue.CreateNull();
+            }
+            root["SchemaVersion"] = 6;
+        }
+
+        /// <summary>Writes the requested schema: version 5 omits the drainage settings it cannot contain.</summary>
+        private sealed class SchemaResolver : DefaultContractResolver
+        {
+            private readonly int version;
+            internal SchemaResolver(int version) { this.version = version; }
+
+            protected override JsonProperty CreateProperty(MemberInfo member, MemberSerialization memberSerialization)
+            {
+                var property = base.CreateProperty(member, memberSerialization);
+                if (property.DeclaringType == typeof(ProfileProject) && property.PropertyName == nameof(ProfileProject.SchemaVersion))
+                    property.ValueProvider = new ConstantValue(version);
+                if (version < 6 && property.DeclaringType == typeof(ProfileSettings) && VersionSixSettings.Contains(property.PropertyName))
+                    property.ShouldSerialize = instance => false;
+                return property;
+            }
+        }
+
+        private sealed class ConstantValue : IValueProvider
+        {
+            private readonly int value;
+            internal ConstantValue(int value) { this.value = value; }
+            public object GetValue(object target) => value;
+            public void SetValue(object target, object value) => throw new NotSupportedException();
+        }
+
+        // Contract resolvers cache reflection: one for reading, one per written schema version.
+        private static readonly DefaultContractResolver ReadingResolver = new DefaultContractResolver();
+        private static readonly SchemaResolver VersionFiveResolver = new SchemaResolver(5);
+        private static readonly SchemaResolver VersionSixResolver = new SchemaResolver(6);
+
         // A fresh serializer per call: cheap, and no shared state between concurrent callers.
         private static JsonSerializer Serializer => JsonSerializer.Create(Settings());
 
@@ -362,10 +427,11 @@ namespace Profiles.Core
             return member == null ? location : location + "." + member;
         }
 
-        private static JsonSerializerSettings Settings()
+        private static JsonSerializerSettings Settings(int? writtenVersion = null)
         {
             return new JsonSerializerSettings
             {
+                ContractResolver = writtenVersion == null ? ReadingResolver : writtenVersion == 5 ? VersionFiveResolver : (IContractResolver)VersionSixResolver,
                 Culture = CultureInfo.InvariantCulture,
                 TypeNameHandling = TypeNameHandling.None,
                 MissingMemberHandling = MissingMemberHandling.Error,

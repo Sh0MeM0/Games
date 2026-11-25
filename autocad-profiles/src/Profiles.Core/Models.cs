@@ -4,14 +4,16 @@ using System.Collections.Generic;
 namespace Profiles.Core
 {
     public enum ProfileKind { Longitudinal, CrossSection }
-    public enum ProfileTemplate { Reconstruction, NewChannel, Nvk }
+    public enum ProfileTemplate { Reconstruction, NewChannel, Nvk, Drainage }
     public enum SectionPointRole { Regular, LeftBank, Bottom, RightBank }
     public enum SectionDesignMode { Automatic, None, Trapezoid, Points }
     public enum TextAlignment { Left, Center, Right }
 
     public sealed class ProfileProject
     {
-        public int SchemaVersion { get; set; } = 5;
+        // In memory always the current schema. A file without drainage data is
+        // still written as version 5, so earlier modules can open it.
+        public int SchemaVersion { get; set; } = 6;
         public string ProjectId { get; set; } = Guid.NewGuid().ToString("N");
         public string Name { get; set; } = "Проект";
         public string ProfileId { get; set; } = Guid.NewGuid().ToString("N");
@@ -51,6 +53,10 @@ namespace Profiles.Core
         public double TextHeightMm { get; set; } = 2.5;
         public double TextWidthFactor { get; set; } = 0.85;
         public bool ShowEmptyRows { get; set; } = true;
+        /// <summary>Second title line of a drainage collector: its receiver, e.g. «к-л К-2 пк6+75».</summary>
+        public string Subtitle { get; set; } = "";
+        /// <summary>Receiver bottom at the collector outlet, shown by a mark before the first ordinate.</summary>
+        public double? OutletElevation { get; set; }
     }
 
     public sealed class LongitudinalPoint
@@ -130,6 +136,9 @@ namespace Profiles.Core
         public short ColorIndex { get; set; } = 7;
         public double LineWeightMm { get; set; } = 0.18;
         public bool Dashed { get; set; }
+        /// <summary>Dash and gap on paper, mm; zero keeps the standard profile dash.</summary>
+        public double DashMm { get; set; }
+        public double GapMm { get; set; }
     }
 
     public sealed class DrawPolyline : DrawEntity
@@ -147,6 +156,8 @@ namespace Profiles.Core
         public double RotationDegrees { get; set; }
         public TextAlignment Alignment { get; set; }
         public double MaxWidth { get; set; }
+        /// <summary>Font file of the sheet design (e.g. isocpeur.ttf); empty uses the drawing's current text style.</summary>
+        public string FontFile { get; set; } = "";
     }
 
     public sealed class DrawCircle : DrawEntity

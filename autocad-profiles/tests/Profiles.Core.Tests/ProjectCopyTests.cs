@@ -55,7 +55,7 @@ public sealed class ProjectCopyTests
     private static ProfileProject Project()
     {
         var project = Fill<ProfileProject>();
-        project.SchemaVersion = 5;
+        project.SchemaVersion = 6;
         project.Kind = ProfileKind.Longitudinal;
         project.ActiveProfileIndex = 1;
         project.AdditionalProfiles = new List<ProfileData> { Fill<ProfileData>(), Fill<ProfileData>() };

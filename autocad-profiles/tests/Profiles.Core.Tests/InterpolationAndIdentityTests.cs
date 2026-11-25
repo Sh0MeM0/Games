@@ -185,7 +185,7 @@ public sealed class InterpolationAndIdentityTests
         var resolved = ProfileInterpolation.ResolveLongitudinal(project);
         Assert.Equal(11, resolved.Longitudinal[1].ExistingBottom);
         var restored = ProjectFile.Deserialize(ProjectFile.Serialize(project));
-        Assert.Equal(5, restored.SchemaVersion);
+        Assert.Equal(6, restored.SchemaVersion);
         Assert.Equal(project.ProjectId, restored.ProjectId);
         Assert.Equal(project.Name, restored.Name);
         Assert.Equal(ProfileTemplate.Nvk, restored.Template);
@@ -224,7 +224,7 @@ public sealed class InterpolationAndIdentityTests
                 foreach (string name in new[] { "Role", "DistanceFromPrevious", "UseLongitudinalElevation" }) node!.AsObject().Remove(name);
         }
         var imported = ProjectFile.Deserialize(root.ToJsonString());
-        Assert.Equal(5, imported.SchemaVersion);
+        Assert.Equal(6, imported.SchemaVersion);
         Assert.Equal(ProfileTemplate.Reconstruction, imported.Template);
         Assert.Null(imported.Longitudinal[0].ProjectGround);
         Assert.Null(imported.Longitudinal[0].PipeInvert);

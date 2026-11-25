@@ -5,7 +5,7 @@ using System.Linq;
 
 namespace Profiles.Core
 {
-    public static class ProfileEngine
+    public static partial class ProfileEngine
     {
         public static DrawingPlan Build(ProfileProject project)
         {
@@ -34,7 +34,12 @@ namespace Profiles.Core
             {
                 foreach (LongitudinalPoint point in project.Longitudinal)
                     elevations.AddRange(Values(point, project.Template));
-                earthworks = Earthworks.CalculateVolumes(project);
+                if (project.Template == ProfileTemplate.Drainage)
+                {
+                    // A collector has no earthwork rows; its outlet mark must stay above the datum.
+                    if (project.Settings.OutletElevation.HasValue) elevations.Add(project.Settings.OutletElevation.Value);
+                }
+                else earthworks = Earthworks.CalculateVolumes(project);
             }
             else
             {
@@ -66,7 +71,9 @@ namespace Profiles.Core
             var plan = new DrawingPlan { Datum = datum };
             var activeSettings = ProfileScales.ForKind(project.Settings, project.Kind);
             var builder = new PlanBuilder(activeSettings, plan, project.Template);
-            if (project.Kind == ProfileKind.Longitudinal)
+            if (project.Kind == ProfileKind.Longitudinal && project.Template == ProfileTemplate.Drainage)
+                builder.Drainage(project.Longitudinal, enteredLongitudinal);
+            else if (project.Kind == ProfileKind.Longitudinal)
             {
                 plan.Warnings.AddRange(earthworks.Warnings);
                 builder.Longitudinal(project.Longitudinal, enteredLongitudinal, earthworks);
@@ -110,6 +117,7 @@ namespace Profiles.Core
         {
             var values = template == ProfileTemplate.Nvk ? new[] { p.Ground, p.ProjectGround, p.PipeInvert } :
                 template == ProfileTemplate.NewChannel ? new[] { p.Ground, p.ProjectBottom } :
+                template == ProfileTemplate.Drainage ? new[] { p.Ground, p.ProjectBottom, p.Ground - p.PeatDepth } :
                 new[] { p.Ground, p.ExistingBottom, p.ProjectBottom, p.LeftBank, p.RightBank, p.Water };
             return values.Where(x => x.HasValue).Select(x => x.Value);
         }
@@ -189,7 +197,7 @@ namespace Profiles.Core
             { Label = label; Height = height; Kind = kind; Value = value; Color = color; }
         }
 
-        private sealed class PlanBuilder
+        private sealed partial class PlanBuilder
         {
             private readonly ProfileSettings settings;
             private readonly DrawingPlan plan;

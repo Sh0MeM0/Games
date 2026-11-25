@@ -34,7 +34,37 @@ namespace Profiles.Core
         {
             if (template == ProfileTemplate.NewChannel) return NewChannel();
             if (template == ProfileTemplate.Nvk) return Nvk();
+            if (template == ProfileTemplate.Drainage) return Drainage();
             return Longitudinal();
+        }
+
+        /// <summary>
+        /// Collector «К-р 2'» as drawn on the reference sheet 095.26-РМС, лист 28:
+        /// survey ordinates carry the surface, rows without it carry only design
+        /// data — pipe diameter changes at 45 and 150 m and the inflow of «2-1».
+        /// </summary>
+        public static ProfileProject Drainage()
+        {
+            return new ProfileProject
+            {
+                Kind = ProfileKind.Longitudinal, Template = ProfileTemplate.Drainage,
+                Name = "Учебный дренажный коллектор", ProfileName = "К-р 2'",
+                Settings = new ProfileSettings
+                {
+                    Title = "К-р 2'", Subtitle = "к-л К-1 пк1+25", OutletElevation = 143.60,
+                    HorizontalScale = 2000, VerticalScale = 100, Datum = 140, TextWidthFactor = 1
+                },
+                Longitudinal = new List<LongitudinalPoint>
+                {
+                    new LongitudinalPoint { Station = 0, Ground = 145.40, PeatDepth = .7, ProjectBottom = 144.10, PipeDescription = "125" },
+                    new LongitudinalPoint { Station = 28, PointName = "2-1" },
+                    new LongitudinalPoint { Station = 45, PipeDescription = "110" },
+                    new LongitudinalPoint { Station = 124, Ground = 145.70, PeatDepth = .7 },
+                    new LongitudinalPoint { Station = 150, PipeDescription = "90" },
+                    new LongitudinalPoint { Station = 174, Ground = 145.45, PeatDepth = .7 },
+                    new LongitudinalPoint { Station = 200, Ground = 145.55, PeatDepth = .7, ProjectBottom = 144.50 }
+                }
+            };
         }
 
         public static ProfileProject NewChannel()

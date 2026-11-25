@@ -30,6 +30,7 @@ namespace Profiles.AutoCAD
             internal DrawingPlan Plan;
             internal double OffsetY;
             internal double DashScale;
+            internal double PaperScale;
             internal Matrix3d Transform;
             internal ObjectId Destination;
             internal StoredProfileOutput Output;
@@ -50,11 +51,13 @@ namespace Profiles.AutoCAD
                 ProfileId = group.ProfileId, ProfileName = group.ProfileName, SectionId = group.SectionId,
                 Plan = group.Plan, OffsetY = group.OffsetY,
                 DashScale = group.Settings.TextHeightMm * group.Settings.HorizontalScale /
-                    (1000 * group.Settings.MetresPerDrawingUnit)
+                    (1000 * group.Settings.MetresPerDrawingUnit),
+                // A pattern defined in paper millimetres needs drawing units per paper millimetre.
+                PaperScale = group.Settings.HorizontalScale / (1000 * group.Settings.MetresPerDrawingUnit)
             }).ToList();
             var result = new InsertResult();
             if (database.Ltscale > 0 && !double.IsNaN(database.Ltscale) && !double.IsInfinity(database.Ltscale))
-                foreach (var item in work) item.DashScale /= database.Ltscale;
+                foreach (var item in work) { item.DashScale /= database.Ltscale; item.PaperScale /= database.Ltscale; }
 
             using (var transaction = database.TransactionManager.StartTransaction())
             {
@@ -121,11 +124,16 @@ namespace Profiles.AutoCAD
 
                 var layers = (LayerTable)transaction.GetObject(database.LayerTableId, OpenMode.ForRead);
                 var layerIds = new Dictionary<string, ObjectId>(StringComparer.OrdinalIgnoreCase);
-                var dashedId = work.Any(item => item.Plan.Entities.Any(entity => entity.Dashed))
-                    ? DashedLinetype(database, transaction) : ObjectId.Null;
+                var linetypes = new Dictionary<Tuple<double, double>, ObjectId>();
+                Func<double, double, ObjectId> linetype = (dash, gap) =>
+                {
+                    var key = Tuple.Create(dash, gap);
+                    if (!linetypes.TryGetValue(key, out var id)) linetypes[key] = id = DashedLinetype(database, transaction, dash, gap);
+                    return id;
+                };
                 RegisterOutputApplication(database, transaction);
                 foreach (var item in work)
-                    AppendPlan(database, transaction, item, layers, layerIds, dashedId, item.DashScale, result);
+                    AppendPlan(database, transaction, item, layers, layerIds, linetype, result);
 
                 // One atomic transaction covers every new section, all verified
                 // old geometry, migration and per-section placement records.
@@ -153,7 +161,7 @@ namespace Profiles.AutoCAD
         }
 
         private static void AppendPlan(Database database, Transaction transaction, OutputWork work,
-            LayerTable layers, Dictionary<string, ObjectId> layerIds, ObjectId dashedId, double dashScale, InsertResult result)
+            LayerTable layers, Dictionary<string, ObjectId> layerIds, Func<double, double, ObjectId> linetype, InsertResult result)
         {
             var space = (BlockTableRecord)transaction.GetObject(work.Destination, OpenMode.ForWrite);
             if (space.IsFromExternalReference)
@@ -176,8 +184,11 @@ namespace Profiles.AutoCAD
                 entity.LinetypeScale = 1;
                 if (item.Dashed)
                 {
-                    entity.LinetypeId = dashedId;
-                    entity.LinetypeScale = dashScale;
+                    // The standard profile dash follows the text size; an explicit
+                    // pattern (the 2.5/1.0 mm peat base) is fixed on paper.
+                    bool paper = item.DashMm > 0 && item.GapMm > 0;
+                    entity.LinetypeId = paper ? linetype(item.DashMm, item.GapMm) : linetype(1.2, 0.8);
+                    entity.LinetypeScale = paper ? work.PaperScale : work.DashScale;
                     if (entity is Polyline dashedPolyline) dashedPolyline.Plinegen = true;
                 }
                 if (entity is Hatch hatch && item is DrawHatch region)
@@ -323,7 +334,7 @@ namespace Profiles.AutoCAD
                 {
                     var multiline = new MText();
                     multiline.SetDatabaseDefaults(database);
-                    multiline.TextStyleId = database.Textstyle;
+                    multiline.TextStyleId = TextStyle(database, label.FontFile);
                     multiline.TextHeight = label.Height;
                     multiline.Width = Math.Max(0, label.MaxWidth);
                     multiline.Rotation = label.RotationDegrees * Math.PI / 180;
@@ -340,7 +351,7 @@ namespace Profiles.AutoCAD
                 text.SetDatabaseDefaults(database);
                 text.Position = position;
                 text.TextString = value;
-                text.TextStyleId = database.Textstyle;
+                text.TextStyleId = TextStyle(database, label.FontFile);
                 text.Height = label.Height;
                 text.WidthFactor = label.WidthFactor;
                 text.Rotation = label.RotationDegrees * Math.PI / 180;
@@ -351,6 +362,35 @@ namespace Profiles.AutoCAD
                 return text;
             }
             throw new InvalidOperationException("Неизвестный элемент профиля.");
+        }
+
+        /// <summary>
+        /// The current text style, or for a sheet design its own style «PROF_ISOCPEUR»
+        /// (variable height). A same-named style edited by the user is never changed:
+        /// a numbered copy is used instead.
+        /// </summary>
+        private static ObjectId TextStyle(Database database, string fontFile)
+        {
+            if (string.IsNullOrWhiteSpace(fontFile)) return database.Textstyle;
+            var transaction = database.TransactionManager.TopTransaction;
+            if (transaction == null) throw new InvalidOperationException("Создание текста требует активной транзакции чертежа.");
+            var table = (TextStyleTable)transaction.GetObject(database.TextStyleTableId, OpenMode.ForRead);
+            string baseName = "PROF_" + System.IO.Path.GetFileNameWithoutExtension(fontFile).ToUpperInvariant();
+            for (int suffix = 1; ; suffix++)
+            {
+                string name = suffix == 1 ? baseName : baseName + "_" + suffix.ToString(CultureInfo.InvariantCulture);
+                if (table.Has(name))
+                {
+                    var existing = (TextStyleTableRecord)transaction.GetObject(table[name], OpenMode.ForRead);
+                    if (existing.TextSize == 0 && string.Equals(existing.FileName, fontFile, StringComparison.OrdinalIgnoreCase)) return existing.ObjectId;
+                    continue;
+                }
+                if (!table.IsWriteEnabled) table.UpgradeOpen();
+                var style = new TextStyleTableRecord { Name = name, FileName = fontFile, TextSize = 0, XScale = 1 };
+                ObjectId id = table.Add(style);
+                transaction.AddNewlyCreatedDBObject(style, true);
+                return id;
+            }
         }
 
         private static string EscapeMText(string value) => value.Replace("\\", "\\\\")
@@ -381,29 +421,34 @@ namespace Profiles.AutoCAD
             return id;
         }
 
-        private static ObjectId DashedLinetype(Database database, Transaction transaction)
+        private static ObjectId DashedLinetype(Database database, Transaction transaction, double dash, double gap)
         {
             var table = (LinetypeTable)transaction.GetObject(database.LinetypeTableId, OpenMode.ForRead);
-            var name = "PROF_DASHED";
+            bool standard = dash == 1.2 && gap == 0.8;
+            // PROF_DASHED keeps its name for drawings built by earlier versions.
+            string baseName = standard ? "PROF_DASHED" : "PROF_DASH_" + Math.Round(dash * 10).ToString(CultureInfo.InvariantCulture) +
+                "_" + Math.Round(gap * 10).ToString(CultureInfo.InvariantCulture);
+            var name = baseName;
             for (var suffix = 2; table.Has(name); suffix++)
             {
                 var existing = (LinetypeTableRecord)transaction.GetObject(table[name], OpenMode.ForRead);
-                if (existing.NumDashes == 2 && Math.Abs(existing.PatternLength - 2) < 1e-9 &&
-                    Math.Abs(existing.DashLengthAt(0) - 1.2) < 1e-9 &&
-                    Math.Abs(existing.DashLengthAt(1) + 0.8) < 1e-9)
+                if (existing.NumDashes == 2 && Math.Abs(existing.PatternLength - (dash + gap)) < 1e-9 &&
+                    Math.Abs(existing.DashLengthAt(0) - dash) < 1e-9 &&
+                    Math.Abs(existing.DashLengthAt(1) + gap) < 1e-9)
                     return existing.ObjectId;
-                name = "PROF_DASHED_" + suffix.ToString(CultureInfo.InvariantCulture);
+                name = baseName + "_" + suffix.ToString(CultureInfo.InvariantCulture);
             }
             table.UpgradeOpen();
             var pattern = new LinetypeTableRecord
             {
                 Name = name,
-                AsciiDescription = "Профиля: штриховая линия",
-                PatternLength = 2,
+                AsciiDescription = standard ? "Профиля: штриховая линия" :
+                    "Профиля: штрих " + dash.ToString("0.0", CultureInfo.InvariantCulture) + " / пробел " + gap.ToString("0.0", CultureInfo.InvariantCulture) + " мм",
+                PatternLength = dash + gap,
                 NumDashes = 2
             };
-            pattern.SetDashLengthAt(0, 1.2);
-            pattern.SetDashLengthAt(1, -0.8);
+            pattern.SetDashLengthAt(0, dash);
+            pattern.SetDashLengthAt(1, -gap);
             var id = table.Add(pattern);
             transaction.AddNewlyCreatedDBObject(pattern, true);
             return id;

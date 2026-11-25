@@ -150,7 +150,7 @@ public sealed class SectionDraftAndMigrationTests
                 foreach (string name in new[] { "Role", "DistanceFromPrevious", "UseLongitudinalElevation" }) point!.AsObject().Remove(name);
         }
         var migrated = ProjectFile.Deserialize(document.ToJsonString());
-        Assert.Equal(5, migrated.SchemaVersion);
+        Assert.Equal(6, migrated.SchemaVersion);
         Assert.Equal(project.ProjectId, migrated.ProjectId);
         Assert.Equal(project.Name, migrated.Name);
         Assert.False(migrated.Sections[0].UsePointDistances);
