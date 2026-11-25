@@ -10,14 +10,36 @@ namespace Profiles.Core.Tests;
 /// <summary>
 /// The drainage collector profile against the reference sheet 095.26-РМС, лист 28
 /// (collector «К-р 2'»). The PDF was plotted 1:1 on paper, so its millimetres are
-/// compared with the plan converted to paper millimetres: at 1:2000 one paper
-/// millimetre is two drawing units. Origin: ordinate 0 on the conditional horizon.
+/// compared with the plan converted to paper millimetres. As on those sheets the
+/// drawing unit follows the vertical scale: at 1:100 one unit is one metre of
+/// elevation, ten paper millimetres. Origin: ordinate 0 on the conditional horizon.
 /// </summary>
 public sealed class DrainageProfileTests
 {
-    private const double Paper = 2; // drawing units per paper millimetre at 1:2000, 1 unit = 1 m
+    private const double Paper = 0.1; // drawing units per paper millimetre at the vertical scale 1:100
 
-    private static DrawingPlan Plan(ProfileProject project = null) => ProfileEngine.Build(project ?? SampleProjects.Drainage());
+    /// <summary>Collector «К-р 2'» from sheet 28.</summary>
+    internal static ProfileProject K2() => new ProfileProject
+    {
+        Kind = ProfileKind.Longitudinal, Template = ProfileTemplate.Drainage, Name = "Лист 28", ProfileName = "К-р 2'",
+        Settings = new ProfileSettings
+        {
+            Title = "К-р 2'", Subtitle = "к-л К-1 пк1+25", OutletElevation = 143.60,
+            HorizontalScale = 2000, VerticalScale = 100, Datum = 140, TextWidthFactor = 1
+        },
+        Longitudinal = new List<LongitudinalPoint>
+        {
+            new LongitudinalPoint { Station = 0, Ground = 145.40, PeatDepth = .7, ProjectBottom = 144.10, PipeDescription = "125" },
+            new LongitudinalPoint { Station = 28, PointName = "2-1" },
+            new LongitudinalPoint { Station = 45, PipeDescription = "110" },
+            new LongitudinalPoint { Station = 124, Ground = 145.70, PeatDepth = .7 },
+            new LongitudinalPoint { Station = 150, PipeDescription = "90" },
+            new LongitudinalPoint { Station = 174, Ground = 145.45, PeatDepth = .7 },
+            new LongitudinalPoint { Station = 200, Ground = 145.55, PeatDepth = .7, ProjectBottom = 144.50 }
+        }
+    };
+
+    private static DrawingPlan Plan(ProfileProject project = null) => ProfileEngine.Build(project ?? K2());
 
     private static IEnumerable<DrawPolyline> Lines(DrawingPlan plan, string layer) => plan.Entities.OfType<DrawPolyline>().Where(line => line.Layer == layer);
 
@@ -42,7 +64,7 @@ public sealed class DrainageProfileTests
         var verticals = grid.Where(line => line.Points[0].X == line.Points[1].X && line.Points[0].Y == 0 && Mm(line.Points[1].Y) == -50)
             .Select(line => Math.Round(Mm(line.Points[0].X), 2)).OrderBy(x => x).ToList();
         Assert.Equal(new[] { -40.0, -5 }, verticals);
-        foreach (string heading in new[] { "УСЛ. ГОР.", "№ ОРДИНАТ", "РАССТОЯНИЯ, М", "ОТМЕТКИ ПОВЕРХНОСТИ, М", "УКЛОН", "ПРОЕКТНЫЕ ОТМЕТКИ, М", "ДИАМЕТР" })
+        foreach (string heading in new[] { "№ ОРДИНАТ", "РАССТОЯНИЯ, М", "ОТМЕТКИ ПОВЕРХНОСТИ, М", "УКЛОН", "ПРОЕКТНЫЕ ОТМЕТКИ, М", "ДИАМЕТР" })
         {
             var label = Label(plan, heading);
             Near(-38.65, Mm(label.Position.X), 0.001);
@@ -54,7 +76,57 @@ public sealed class DrainageProfileTests
         Near(-2.5, Mm(Label(plan, "№ ОРДИНАТ").Position.Y), 0.001);
         Near(-13.34, Mm(Label(plan, "ОТМЕТКИ ПОВЕРХНОСТИ, М").Position.Y), 0.001);
         Near(-35, Mm(Label(plan, "ПРОЕКТНЫЕ ОТМЕТКИ, М").Position.Y), 0.001);
-        Near(2.17, Mm(Label(plan, "УСЛ. ГОР.").Position.Y), 0.001);
+    }
+
+    [Fact]
+    public void DrawingUnitsFollowTheVerticalScaleAsOnTheSheets()
+    {
+        // Rows of 0.5 / 0.5 / 1 / 1 / 1 / 1 units, a 3.5-unit heading column, 24 m along the drain = 1.2 units at 1:2000 / 1:100.
+        var plan = Plan();
+        var rows = Lines(plan, "PROF_GRID").Where(line => line.Points[0].Y == line.Points[1].Y && line.Points[0].X < -3.9)
+            .Select(line => Math.Round(line.Points[0].Y, 6)).Distinct().OrderByDescending(y => y).ToArray();
+        Assert.Equal(new[] { 0, -0.5, -1, -2, -3, -4, -5 }, rows);
+        var ground = Assert.Single(Lines(plan, "PROF_GROUND"));
+        Assert.Equal(124 * 100.0 / 2000, ground.Points[1].X, 9);
+        Assert.Equal(145.70 - 140, ground.Points[1].Y, 9);
+        Assert.Equal(0.2, Label(plan, "124.0").Height, 9);
+        // A channel profile keeps the units of its horizontal scale.
+        var channel = ProfileEngine.Build(SampleProjects.NewChannel());
+        Assert.Contains(channel.Entities.OfType<DrawPolyline>(), line => line.Points.Any(point => Math.Abs(point.X - 100) < 1e-9));
+    }
+
+    [Fact]
+    public void CornerAboveTheHeadingColumnIsTheChannelCorner()
+    {
+        var plan = Plan();
+        var datum = Label(plan, "УСЛ. ОТМ. 140.00");
+        Near(-38.65, Mm(datum.Position.X), 0.001);
+        Near(1.17 + 1.0, Mm(datum.Position.Y), 0.001);
+        double Height(string text) => Mm(Label(plan, text).Position.Y);
+        // From the table up: datum, legend under its heading, scales, then the receiver and the collector name.
+        Assert.True(Height("Граница торфа") < Height("Поверхность земли"));
+        Assert.True(Height("Поверхность земли") < Height("Проектная отм. дрены"));
+        Assert.True(Height("Проектная отм. дрены") < Height("Условные обозначения"));
+        Assert.True(Height("Условные обозначения") < Height("ВЕРТ. 1:100"));
+        Assert.True(Height("ВЕРТ. 1:100") < Height("ГОР. 1:2000"));
+        Assert.True(Height("ГОР. 1:2000") < Height("к-л К-1 пк1+25"));
+        Assert.True(Height("к-л К-1 пк1+25") < Height("К-р 2'"));
+        Near(5.0, Height("К-р 2'") - Height("к-л К-1 пк1+25"), 0.001);
+        Near(3.0, Mm(Label(plan, "К-р 2'").Height), 0.001);
+        // Everything of the corner stays left of ordinate 0, inside the heading column width.
+        foreach (string text in new[] { "УСЛ. ОТМ. 140.00", "Условные обозначения", "ВЕРТ. 1:100", "ГОР. 1:2000", "К-р 2'", "к-л К-1 пк1+25" })
+            Assert.InRange(Mm(Label(plan, text).Position.X), -38.66, -38.64);
+        var legend = Lines(plan, "PROF_LEGEND").ToList();
+        Assert.Equal(3, legend.Count);
+        Assert.Contains(legend, line => line.ColorIndex == 1 && line.LineWeightMm == 0.40);
+        Assert.Contains(legend, line => line.ColorIndex == 4 && line.Dashed && line.DashMm == 2.5);
+        // The old sheet-only labels are gone: no «УСЛ. ГОР.», no level mark on the horizon.
+        Assert.DoesNotContain(plan.Entities.OfType<DrawText>(), label => label.Text == "УСЛ. ГОР." || label.Text == "140.00");
+        // The corner never meets the outlet mark: its texts are below or above the mark's band.
+        double outletShelf = Mm(Lines(plan, "PROF_MARKS").Single(line => Math.Abs(Mm(line.Points[1].X) + 17.51) < .01).Points[1].Y);
+        foreach (var label in plan.Entities.OfType<DrawText>().Where(label => Mm(label.Position.X) < -30 && Mm(label.Position.Y) > 0))
+            Assert.False(Mm(label.Position.Y) > outletShelf - 3.7 - 2.2 && Mm(label.Position.Y) < outletShelf + 4.3,
+                "«" + label.Text + "» пересекает знак отметки устья.");
     }
 
     [Fact]
@@ -62,7 +134,9 @@ public sealed class DrainageProfileTests
     {
         var plan = Plan();
         var lines = plan.Entities.OfType<DrawPolyline>().ToList();
-        Assert.All(lines.Where(line => line.Layer != "PROF_DRAIN"), line => Assert.Equal(0.25, line.LineWeightMm));
+        // The legend shows the drain line with its own weight.
+        Assert.All(lines.Where(line => line.Layer != "PROF_DRAIN" && !(line.Layer == "PROF_LEGEND" && line.ColorIndex == 1)),
+            line => Assert.Equal(0.25, line.LineWeightMm));
         var drain = Assert.Single(Lines(plan, "PROF_DRAIN"));
         Assert.Equal(0.40, drain.LineWeightMm);
         Assert.Equal(1, drain.ColorIndex);
@@ -103,7 +177,7 @@ public sealed class DrainageProfileTests
         var plan = Plan();
         var texts = plan.Entities.OfType<DrawText>().Select(label => label.Text).ToList();
         foreach (string value in new[] { "0", "1", "2", "3", "124.0", "50.0", "26.0", "145.40", "145.70", "145.45", "145.55",
-            "0.002", "200.0", "144.10", "144.50", "125", "45.0", "110", "105.0", "90", "К-р 2'", "к-л К-1 пк1+25", "140.00", "143.60", "2-1" })
+            "0.002", "200.0", "144.10", "144.50", "125", "45.0", "110", "105.0", "90", "К-р 2'", "к-л К-1 пк1+25", "УСЛ. ОТМ. 140.00", "143.60", "2-1" })
             Assert.Contains(value, texts);
         // Ordinate numbers only for survey rows: the inflow and pipe rows are not ordinates.
         Assert.DoesNotContain("4", texts);
@@ -143,13 +217,6 @@ public sealed class DrainageProfileTests
         Assert.Equal(90, inflowLabel.RotationDegrees);
         Assert.Equal(TextAlignment.Right, inflowLabel.Alignment);
         Near(14 - 1.66, Mm(inflowLabel.Position.X));
-        // Two 3 mm title lines 5 mm apart; on the sheet their baselines are 73.57 and 78.57 mm above the horizon.
-        var title = Label(plan, "К-р 2'");
-        var receiver = Label(plan, "к-л К-1 пк1+25");
-        Near(3.0, Mm(title.Height), 0.001);
-        Near(73.57, Mm(receiver.Position.Y) - 1.5, 0.15);
-        Near(5.0, Mm(title.Position.Y - receiver.Position.Y), 0.001);
-        Near(2.04, Mm(title.Position.X), 0.001);
         // Outlet mark: tip 5.04 mm before ordinate 0 at 143.60, stem 3.7 mm, shelf 12.47 mm to the left.
         Assert.Contains(marks, line => Math.Abs(Mm(line.Points[0].X) + 5.04) < .01 && Math.Abs(Mm(line.Points[0].Y) - 36) < .01 &&
             Math.Abs(Mm(line.Points[1].X) + 5.04) < .01 && Math.Abs(Mm(line.Points[1].Y) - 39.7) < .01);
@@ -158,15 +225,12 @@ public sealed class DrainageProfileTests
         Near(2.5, Mm(outlet.Height), 0.001);
         Assert.Equal(TextAlignment.Right, outlet.Alignment);
         Near(-7.08, Mm(outlet.Position.X));
-        var datum = Label(plan, "140.00");
-        Assert.Equal(TextAlignment.Left, datum.Alignment);
-        Near(3.7 + 0.94 + 1.25, Mm(datum.Position.Y), 0.001);
     }
 
     [Fact]
     public void SlopeAndPipeCellsFollowGradeBreaksNotOrdinates()
     {
-        var project = SampleProjects.Drainage();
+        var project = K2();
         project.Longitudinal[1].ProjectBottom = 144.20; // the inflow of «2-1» becomes a grade break
         var plan = Plan(project);
         var texts = plan.Entities.OfType<DrawText>().Select(label => label.Text).ToList();
@@ -176,7 +240,7 @@ public sealed class DrainageProfileTests
         Assert.Contains("172.0", texts);
         Assert.Contains("144.20", texts);
         // Repeating a diameter continues the same pipe.
-        project = SampleProjects.Drainage();
+        project = K2();
         project.Longitudinal[2].PipeDescription = "125";
         texts = Plan(project).Entities.OfType<DrawText>().Select(label => label.Text).ToList();
         Assert.Contains("150.0", texts);
@@ -186,7 +250,7 @@ public sealed class DrainageProfileTests
     [Fact]
     public void ExtrapolatedEndOfTheDrainIsLabelledAndJoinsTheSlopeRow()
     {
-        var project = SampleProjects.Drainage();
+        var project = K2();
         project.Longitudinal[6].ProjectBottom = null;
         project.Longitudinal[3].ProjectBottom = 144.348; // 124 m
         var plan = Plan(project);
@@ -262,8 +326,8 @@ public sealed class DrainageProfileTests
         Assert.Equal(6, document["SchemaVersion"]!.GetValue<int>());
         Assert.Equal("Drainage", document["Template"]!.GetValue<string>());
         var restored = ProjectFile.Deserialize(json);
-        Assert.Equal("к-л К-1 пк1+25", restored.Settings.Subtitle);
-        Assert.Equal(143.60, restored.Settings.OutletElevation);
+        Assert.Equal("к-л К-2 пк3+40", restored.Settings.Subtitle);
+        Assert.Equal(144.58, restored.Settings.OutletElevation);
         Assert.Equal(json, ProjectFile.Serialize(restored));
         // A drainage tab in an inactive profile also needs version 6.
         var mixed = ProfileCollection.Add(SampleProjects.NewChannel(), "К-р 3'");

@@ -25,6 +25,8 @@ internal static class FormWorkflowTests
         Check("station picker assigns existing station without rounding its precision", StationPicker);
         Check("drainage collector shows its columns and title fields and keeps the outlet mark", DrainageCollector);
         Check("an empty profile switched to drainage takes the collector sheet scales", DrainageScales);
+        Check("the inflow cell lists the drainage tabs, moves a junction and rebuilds the tributary", DrainageInflowList);
+        Check("a new tributary created at a picket starts at the collector and locks its outlet", DrainageNewTributary);
     }
 
     private static void DrainageCollector()
@@ -39,17 +41,18 @@ internal static class FormWorkflowTests
                 "drainage columns: " + string.Join(", ", visible));
             Require(grid.Columns["ProjectBottom"].HeaderText == "Дрена (проект), м", "drainage heading is missing");
             Require(grid.Columns["PipeDescription"].HeaderText == "Диаметр, мм", "diameter heading is missing");
+            Require(grid.Columns["Station"].HeaderText == "ПК / станция, м", "station column is not the picket: " + grid.Columns["Station"].HeaderText);
             Require(Field<Label>(form, "titleCaption").Text == "Коллектор", "title caption is not the collector");
-            Require(Field<TextBox>(form, "subtitle").Text == "к-л К-1 пк1+25", "receiver was not loaded");
-            Require(Field<TextBox>(form, "outlet").Text == "143.60", "outlet mark was not loaded");
-            Field<TextBox>(form, "outlet").Text = "143,55";
+            Require(Field<TextBox>(form, "subtitle").Text == "к-л К-2 пк3+40", "receiver was not loaded");
+            Require(Field<TextBox>(form, "outlet").Text == "144.58", "outlet mark was not loaded");
+            Field<TextBox>(form, "outlet").Text = "144,55";
             Field<TextBox>(form, "subtitle").Text = "р. Каменка пк76+90";
             var result = (ProfileProject)Call(form, "ReadProject");
             Require(result.Template == ProfileTemplate.Drainage, "drainage type was lost");
-            Require(result.Settings.OutletElevation == 143.55, "outlet mark was not read");
+            Require(result.Settings.OutletElevation == 144.55, "outlet mark was not read");
             Require(result.Settings.Subtitle == "р. Каменка пк76+90", "receiver was not read");
             var texts = ProfileEngine.Build(result).Entities.OfType<DrawText>().Select(text => text.Text).ToList();
-            Require(texts.Contains("143.55") && texts.Contains("р. Каменка пк76+90"), "edited marks are not drawn");
+            Require(texts.Contains("144.55") && texts.Contains("р. Каменка пк76+90"), "edited marks are not drawn");
             // Returning to a channel restores its own headings.
             Field<ComboBox>(form, "templatePicker").SelectedIndex = 1;
             Call(form, "ApplyTemplateColumns");
@@ -75,6 +78,95 @@ internal static class FormWorkflowTests
             Require(result.Template == ProfileTemplate.Drainage, "type did not change to drainage");
             Require(result.Settings.HorizontalScale == 2000 && result.Settings.VerticalScale == 100,
                 "scales " + result.Settings.HorizontalScale + " / " + result.Settings.VerticalScale);
+        }
+    }
+
+    private static DataGridViewRow Row(DataGridView grid, double station) =>
+        grid.Rows.Cast<DataGridViewRow>().Single(row => !row.IsNewRow && Convert.ToDouble(row.Cells["Station"].Value) == station);
+
+    private static List<ToolStripMenuItem> InflowItems(ProfilesForm form, DataGridViewRow row)
+    {
+        Call(form, "BuildInflowMenu", row);
+        return Field<ContextMenuStrip>(form, "inflowMenu").Items.OfType<ToolStripMenuItem>().ToList();
+    }
+
+    private static void DrainageInflowList()
+    {
+        using (var form = new ProfilesForm(ProfileKind.Longitudinal, SampleProjects.Drainage()))
+        {
+            Prepare(form);
+            var grid = Field<DataGridView>(form, "longGrid");
+            var items = InflowItems(form, Row(grid, 38));
+            Require(items[0].Text == "Впадает в «К-р 3'» на ПК 0+38:" && !items[0].Enabled, "list heading: " + items[0].Text);
+            var tributary = items.Single(item => item.Text.StartsWith("К-р 3-2'"));
+            Require(tributary.Checked && tributary.Text == "К-р 3-2'", "linked tributary is not checked: " + tributary.Text);
+            Require(items.Any(item => item.Text == "Новый коллектор, впадающий здесь…" && item.Enabled), "new tributary command is missing");
+            Require(items.Single(item => item.Text == "Очистить").Enabled, "a filled cell cannot be cleared");
+            // The same tributary chosen at 150 m: the junction moves after confirmation.
+            items = InflowItems(form, Row(grid, 150));
+            tributary = items.Single(item => item.Text.StartsWith("К-р 3-2'"));
+            Require(!tributary.Checked && tributary.Text == "К-р 3-2'  — сейчас впадает в «К-р 3'» на ПК 0+38", "move note: " + tributary.Text);
+            string asked = null;
+            form.ConfirmInflowMove = question => { asked = question; return true; };
+            tributary.PerformClick();
+            Require(asked != null && asked.Contains("Перенести впадение сюда — на ПК 1+50"), "move was not confirmed: " + asked);
+            Require(Convert.ToString(Row(grid, 150).Cells["PointName"].Value) == "3-2", "label was not written at 150 m");
+            Require(Convert.ToString(Row(grid, 38).Cells["PointName"].Value) == "", "old junction kept its label");
+            var saved = (ProfileProject)typeof(ProfilesForm).GetProperty("Project").GetValue(form);
+            var rebuilt = saved.AdditionalProfiles.Single(profile => profile.Name == "К-р 3-2'");
+            Require(rebuilt.Longitudinal[0].ProjectBottom == 146.27 && rebuilt.Longitudinal[0].Ground == 147.90,
+                "outlet was not rebuilt: " + rebuilt.Longitudinal[0].ProjectBottom + " / " + rebuilt.Longitudinal[0].Ground);
+            Require(Math.Abs(rebuilt.Longitudinal[1].ProjectBottom.Value - 146.62) < 1e-9, "the slope was not kept: " + rebuilt.Longitudinal[1].ProjectBottom);
+            Require(rebuilt.Settings.Subtitle == "к-р 3 пк1+50 к-л К-2", "receiver line: " + rebuilt.Settings.Subtitle);
+            string status = Field<Label>(form, "status").Text;
+            Require(status.Contains("«К-р 3-2'» перестроен по «К-р 3'» на ПК 1+50"), "status: " + status);
+            // Unchecking removes the junction only.
+            InflowItems(form, Row(grid, 150)).Single(item => item.Text.StartsWith("К-р 3-2'")).PerformClick();
+            Require(Convert.ToString(Row(grid, 150).Cells["PointName"].Value) == "", "label was not removed");
+            saved = (ProfileProject)typeof(ProfilesForm).GetProperty("Project").GetValue(form);
+            Require(DrainageNetwork.Links(saved).Count == 0, "the link remained");
+            Require(saved.AdditionalProfiles.Single(profile => profile.Name == "К-р 3-2'").Longitudinal[0].ProjectBottom == 146.27, "unlinking changed elevations");
+        }
+    }
+
+    private static void DrainageNewTributary()
+    {
+        using (var form = new ProfilesForm(ProfileKind.Longitudinal, SampleProjects.Drainage()))
+        {
+            Prepare(form);
+            var grid = Field<DataGridView>(form, "longGrid");
+            string suggested = null;
+            form.AskTributaryName = name => { suggested = name; return name; };
+            InflowItems(form, Row(grid, 72)).Single(item => item.Text == "Новый коллектор, впадающий здесь…").PerformClick();
+            Require(suggested == "К-р 3-1'", "suggested name: " + suggested);
+            Require(Field<TextBox>(form, "title").Text == "К-р 3-1'", "the new tab is not open: " + Field<TextBox>(form, "title").Text);
+            Require(Field<TextBox>(form, "subtitle").Text == "к-р 3 пк0+72 к-л К-2", "receiver line: " + Field<TextBox>(form, "subtitle").Text);
+            var outlet = Row(grid, 0);
+            // 145.60 + (146.27 − 145.60) · 34 / 112 = 145.8034 at 72 m, written to the millimetre.
+            Require(Equals(outlet.Cells["ProjectBottom"].Value, 145.803) && Equals(outlet.Cells["Ground"].Value, 147.25),
+                "outlet: " + outlet.Cells["ProjectBottom"].Value + " / " + outlet.Cells["Ground"].Value);
+            Require(Call(form, "OutletLock", outlet.Index, grid.Columns["ProjectBottom"].Index) is string, "outlet drain elevation is editable");
+            Require(Call(form, "OutletLock", outlet.Index, grid.Columns["PeatDepth"].Index) == null, "peat of the outlet is locked");
+            var saved = (ProfileProject)typeof(ProfilesForm).GetProperty("Project").GetValue(form);
+            Require(saved.Template == ProfileTemplate.Drainage && saved.Settings.HorizontalScale == 2000 && saved.Settings.VerticalScale == 100,
+                "the tab did not take the collector type and scales");
+            Require(saved.AdditionalProfiles.Single(profile => profile.Name == "К-р 3'").Longitudinal.Single(point => point.Station == 72).PointName == "3-1",
+                "the collector row did not get the label");
+            string status = Field<Label>(form, "status").Text;
+            Require(status == "Создан «К-р 3-1'»: впадает в «К-р 3'» на ПК 0+72. Устье взято с «К-р 3'»: поверхность 147.25, дрена 145.80. Введите ординаты коллектора.",
+                "status: " + status);
+            // A row added later is free; only the outlet follows the collector.
+            grid.Rows.Add();
+            var added = grid.Rows[grid.Rows.Count - 2];
+            added.Cells["Station"].Value = 40.0;
+            added.Cells["Ground"].Value = 147.6;
+            added.Cells["ProjectBottom"].Value = 146.05;
+            Require(Call(form, "OutletLock", added.Index, grid.Columns["ProjectBottom"].Index) == null, "an ordinate after the outlet is locked");
+            Require((bool)Call(form, "TrySaveCurrent", false, false), "the tributary was not saved");
+            saved = (ProfileProject)typeof(ProfilesForm).GetProperty("Project").GetValue(form);
+            var texts = ProfileEngine.Build(saved).Entities.OfType<DrawText>().ToList();
+            Require(texts.Any(text => text.Text == "3" && text.RotationDegrees == 90), "the receiving collector is not shown at ordinate 0");
+            Require(texts.Any(text => text.Text == "к-р 3 пк0+72") && texts.Any(text => text.Text == "к-л К-2"), "the receiver line is not drawn");
         }
     }
 

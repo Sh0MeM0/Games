@@ -39,32 +39,50 @@ namespace Profiles.Core
         }
 
         /// <summary>
-        /// Collector «К-р 2'» as drawn on the reference sheet 095.26-РМС, лист 28:
-        /// survey ordinates carry the surface, rows without it carry only design
-        /// data — pipe diameter changes at 45 and 150 m and the inflow of «2-1».
+        /// Collector «К-р 3'» with its tributary «К-р 3-2'» as on the reference sheet
+        /// 095.26-РМС, лист 28. Survey ordinates carry the surface; «3-2» in
+        /// «Впадает коллектор» at 38 m links the tributary, whose outlet takes the
+        /// collector's surface and drain elevation there (146.90 and 145.60).
         /// </summary>
         public static ProfileProject Drainage()
         {
-            return new ProfileProject
+            var main = new ProfileProject
             {
                 Kind = ProfileKind.Longitudinal, Template = ProfileTemplate.Drainage,
-                Name = "Учебный дренажный коллектор", ProfileName = "К-р 2'",
+                Name = "Учебная дренажная сеть", ProfileName = "К-р 3'",
                 Settings = new ProfileSettings
                 {
-                    Title = "К-р 2'", Subtitle = "к-л К-1 пк1+25", OutletElevation = 143.60,
-                    HorizontalScale = 2000, VerticalScale = 100, Datum = 140, TextWidthFactor = 1
+                    Title = "К-р 3'", Subtitle = "к-л К-2 пк3+40", OutletElevation = 144.58,
+                    HorizontalScale = 2000, VerticalScale = 100, Datum = 144, TextWidthFactor = 1
                 },
                 Longitudinal = new List<LongitudinalPoint>
                 {
-                    new LongitudinalPoint { Station = 0, Ground = 145.40, PeatDepth = .7, ProjectBottom = 144.10, PipeDescription = "125" },
-                    new LongitudinalPoint { Station = 28, PointName = "2-1" },
-                    new LongitudinalPoint { Station = 45, PipeDescription = "110" },
-                    new LongitudinalPoint { Station = 124, Ground = 145.70, PeatDepth = .7 },
-                    new LongitudinalPoint { Station = 150, PipeDescription = "90" },
-                    new LongitudinalPoint { Station = 174, Ground = 145.45, PeatDepth = .7 },
-                    new LongitudinalPoint { Station = 200, Ground = 145.55, PeatDepth = .7, ProjectBottom = 144.50 }
+                    new LongitudinalPoint { Station = 0, Ground = 146.73, ProjectBottom = 145.52, PipeDescription = "160" },
+                    new LongitudinalPoint { Station = 38, Ground = 146.90, ProjectBottom = 145.60, PointName = "3-2" },
+                    new LongitudinalPoint { Station = 72, Ground = 147.25 },
+                    new LongitudinalPoint { Station = 150, Ground = 147.90, ProjectBottom = 146.27 },
+                    new LongitudinalPoint { Station = 194, Ground = 147.75 },
+                    new LongitudinalPoint { Station = 244, Ground = 147.76, ProjectBottom = 146.46 }
+                },
+                AdditionalProfiles = new List<ProfileData>
+                {
+                    new ProfileData
+                    {
+                        Name = "К-р 3-2'", Template = ProfileTemplate.Drainage,
+                        Settings = new ProfileSettings
+                        {
+                            Title = "К-р 3-2'", HorizontalScale = 2000, VerticalScale = 100, Datum = 145, TextWidthFactor = 1
+                        },
+                        Longitudinal = new List<LongitudinalPoint>
+                        {
+                            new LongitudinalPoint { Station = 0, PipeDescription = "90" },
+                            new LongitudinalPoint { Station = 60, Ground = 147.25, ProjectBottom = 145.95 }
+                        }
+                    }
                 }
             };
+            // The tributary's outlet (surface, drain elevation, receiver line) comes from «К-р 3'».
+            return DrainageNetwork.Synchronize(main);
         }
 
         public static ProfileProject NewChannel()

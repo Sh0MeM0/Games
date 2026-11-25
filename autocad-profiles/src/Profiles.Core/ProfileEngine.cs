@@ -70,9 +70,10 @@ namespace Profiles.Core
             if (datum >= minimum) ProfileValidation.Fail("Условная отметка должна быть ниже всех введённых отметок; минимальная отметка " + F(minimum) + " м.");
             var plan = new DrawingPlan { Datum = datum };
             var activeSettings = ProfileScales.ForKind(project.Settings, project.Kind);
-            var builder = new PlanBuilder(activeSettings, plan, project.Template);
-            if (project.Kind == ProfileKind.Longitudinal && project.Template == ProfileTemplate.Drainage)
-                builder.Drainage(project.Longitudinal, enteredLongitudinal);
+            bool drainage = project.Kind == ProfileKind.Longitudinal && project.Template == ProfileTemplate.Drainage;
+            var builder = new PlanBuilder(activeSettings, plan, project.Template, drainage);
+            if (drainage)
+                builder.Drainage(project.Longitudinal, enteredLongitudinal, DrainageNetwork.Receiver(project)?.MainNumber);
             else if (project.Kind == ProfileKind.Longitudinal)
             {
                 plan.Warnings.AddRange(earthworks.Warnings);
@@ -225,10 +226,18 @@ namespace Profiles.Core
             internal double Paper { get; }
             internal double Layout { get { return Paper * Math.Max(1, settings.TextHeightMm / 2.5); } }
             private double TextHeight { get { return settings.TextHeightMm * Paper; } }
-            private double X(double metres) { return metres / settings.MetresPerDrawingUnit; }
-            private double Y(double elevation) { return (elevation - plan.Datum) * settings.HorizontalScale / (settings.MetresPerDrawingUnit * settings.VerticalScale); }
-            internal PlanBuilder(ProfileSettings settings, DrawingPlan plan, ProfileTemplate template)
-            { this.settings = settings; this.plan = plan; this.template = template; Paper = settings.HorizontalScale / (1000 * settings.MetresPerDrawingUnit); }
+            // 1 for profiles drawn in units of the horizontal scale; V/H for drainage,
+            // whose sheets are drawn in units of the vertical scale (one unit = one
+            // metre of elevation at 1:100). The whole drawing scales uniformly.
+            private readonly double unit;
+            private double X(double metres) { return metres / settings.MetresPerDrawingUnit * unit; }
+            private double Y(double elevation) { return (elevation - plan.Datum) * settings.HorizontalScale / (settings.MetresPerDrawingUnit * settings.VerticalScale) * unit; }
+            internal PlanBuilder(ProfileSettings settings, DrawingPlan plan, ProfileTemplate template, bool verticalUnits = false)
+            {
+                this.settings = settings; this.plan = plan; this.template = template;
+                unit = verticalUnits ? settings.VerticalScale / settings.HorizontalScale : 1;
+                Paper = settings.HorizontalScale / (1000 * settings.MetresPerDrawingUnit) * unit;
+            }
 
             private void Line(Point2 a, Point2 b, string layer = "PROF_GRID", short color = 7, double weight = 0.18)
             { plan.Entities.Add(new DrawPolyline { Layer = layer, ColorIndex = color, LineWeightMm = weight, Points = new List<Point2> { a, b } }); }

@@ -50,10 +50,9 @@ namespace Profiles.AutoCAD
             {
                 ProfileId = group.ProfileId, ProfileName = group.ProfileName, SectionId = group.SectionId,
                 Plan = group.Plan, OffsetY = group.OffsetY,
-                DashScale = group.Settings.TextHeightMm * group.Settings.HorizontalScale /
-                    (1000 * group.Settings.MetresPerDrawingUnit),
+                DashScale = group.Settings.TextHeightMm * group.PaperUnits,
                 // A pattern defined in paper millimetres needs drawing units per paper millimetre.
-                PaperScale = group.Settings.HorizontalScale / (1000 * group.Settings.MetresPerDrawingUnit)
+                PaperScale = group.PaperUnits
             }).ToList();
             var result = new InsertResult();
             if (database.Ltscale > 0 && !double.IsNaN(database.Ltscale) && !double.IsInfinity(database.Ltscale))

@@ -39,7 +39,7 @@ namespace Profiles.AutoCAD
             {
                 // Numeric drafts need not be geometrically complete, but invalid
                 // cells must stay visible instead of disappearing on modal exit.
-                var draft = ProjectFile.Clone(ReadProject());
+                var draft = SynchronizeNetwork(ProjectFile.Clone(ReadProject()), out _, out _);
                 var options = UI.DrawingCaptureOptionsDialog.ShowOptions(this, kind, CaptureOptions);
                 if (options == null) return;
                 PersistProject(draft, true, forceDrawing: true);

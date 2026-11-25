@@ -171,12 +171,12 @@ namespace Profiles.AutoCAD
         // The drainage table reuses stored fields under the names of the collector profile sheet.
         private static readonly string[][] DrainageHeadings =
         {
-            new[] { "Station", "Расстояние от устья, м", "Расстояние от устья коллектора (ордината 0), м. Строки упорядочиваются по нему." },
             new[] { "Ground", "Поверхность, м", "Отметка поверхности земли. Строка с ней — ордината съёмки: номер, расстояние и отметка в таблице профиля. Строку без неё можно добавить для перелома дна, смены диаметра или впадения." },
             new[] { "PeatDepth", "Торф, м", "Толщина торфа от поверхности в ординате; на профиле — голубая штриховка «галочками» с пунктирной границей." },
             new[] { "ProjectBottom", "Дрена (проект), м", "Проектная отметка дрены в устье, в точках перелома уклона и в конце. Уклон и длина считаются между этими точками; между ними отметка интерполируется." },
             new[] { "PipeDescription", "Диаметр, мм", "Диаметр трубы с этой точки до следующей смены диаметра, например 125. Длины участков считаются автоматически." },
-            new[] { "PointName", "Впадает коллектор", "Обозначение коллектора, впадающего в этой точке, например 2-1: вертикальная линия с подписью над профилем." }
+            new[] { "PointName", "Впадает коллектор", "Коллектор или дрена, впадающие на этом пикете: щелчок или F4 — список вкладок проекта и «Новый коллектор, впадающий здесь…». " +
+                "На профиле — вертикальная линия с номером (3-2). Впадающий коллектор начинается с отметок этого коллектора и перестраивается вместе с ним." }
         };
         private readonly Dictionary<string, Tuple<string, string>> standardHeadings = new Dictionary<string, Tuple<string, string>>();
 
@@ -406,6 +406,8 @@ namespace Profiles.AutoCAD
 
         private void PersistProject(ProfileProject project, bool explicitSave, bool forceDrawing = false)
         {
+            // Tributaries are stored as rebuilt from their collectors.
+            project = SynchronizeNetwork(project, out string networkMessage, out bool networkWarning);
             // The copy validates the project (numbers, schema) without requiring
             // complete geometry; one serialization encodes it for every store.
             var snapshot = ProjectFile.Clone(project);
@@ -500,6 +502,7 @@ namespace Profiles.AutoCAD
                 SetStatus("Автосохранено в JSON: " + Path.GetFileName(currentFile));
             else if (explicitSave)
                 SetStatus("Данные сохранены в текущем окне. Для хранения между сеансами экспортируйте JSON.");
+            if (networkMessage != null) SetStatus(networkMessage, networkWarning);
         }
 
         private bool TrySaveCurrent(bool showError, bool forceDrawing = false)
@@ -596,7 +599,7 @@ namespace Profiles.AutoCAD
             bool exported = false;
             try
             {
-                var project = ReadProject();
+                var project = SynchronizeNetwork(ReadProject(), out _, out _);
                 ProjectFile.Save(path, project);
                 exported = true;
                 lastWrittenJson[project.ProjectId] = ProjectFile.Serialize(project);

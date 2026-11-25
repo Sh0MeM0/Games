@@ -33,7 +33,8 @@ namespace Profiles.AutoCAD
         private readonly TextBox outlet = Input();
         private Control drainageFields;
         private const string ChannelNote = "ПК 6+50 = 650 м; 6 = 6 м. Курсив — интерполяция. Пикеты упорядочиваются после ввода; берега — по течению.";
-        private const string DrainageNote = "Строка с отметкой поверхности — ордината съёмки; строка без неё — перелом дна, смена диаметра или впадение коллектора. Курсив — интерполяция.";
+        private const string DrainageNote = "ПК 0+38 = 38 м от устья. Строка с отметкой поверхности — ордината съёмки; без неё — перелом дна, смена диаметра или впадение. " +
+            "«Впадает коллектор»: щелчок или F4 — список коллекторов. Курсив — интерполяция.";
         private readonly Label longNote = Note(ChannelNote);
         private readonly ComboBox sectionStation = new ComboBox { Width = Px(135), DropDownStyle = ComboBoxStyle.DropDown, Margin = new Padding(2, 3, 5, 3) };
         private readonly TextBox sectionWater = Input();
@@ -89,6 +90,7 @@ namespace Profiles.AutoCAD
             InitializeStationAssignment();
             InitializeRowOrdering();
             InitializeSharedEditing();
+            InitializeDrainageNetwork();
             InitializeProjectSupport(availableProjects);
             sectionList.SelectedIndexChanged += SectionSelectionChanged;
             tabs.Selected += TabSelected;
@@ -877,15 +879,17 @@ namespace Profiles.AutoCAD
         {
             try
             {
-                var project = ReadProject();
+                var project = SynchronizeNetwork(ReadProject(), out string networkMessage, out bool networkWarning);
                 var plan = BuildScopedPlan(project);
                 Project = project;
                 Plan = plan;
                 preview.SetPlan(plan);
-                previewNotes.Text = plan.Warnings.Count == 0 ? "Проверка завершена без замечаний." : string.Join(Environment.NewLine, plan.Warnings);
+                previewNotes.Text = (networkMessage != null ? networkMessage + Environment.NewLine : "") +
+                    (plan.Warnings.Count == 0 ? "Проверка завершена без замечаний." : string.Join(Environment.NewLine, plan.Warnings));
                 if (switchTab) tabs.SelectedTab = previewPage;
-                SetStatus("Данные проверены. Ноль: " + Format(plan.Datum) + " м. " +
-                    (plan.Warnings.Count == 0 ? "Можно построить в AutoCAD." : "Замечаний: " + plan.Warnings.Count + ". Подробности в предпросмотре."), plan.Warnings.Count > 0);
+                SetStatus((networkMessage != null ? networkMessage + " " : "") + "Данные проверены. Ноль: " + Format(plan.Datum) + " м. " +
+                    (plan.Warnings.Count == 0 ? "Можно построить в AutoCAD." : "Замечаний: " + plan.Warnings.Count + ". Подробности в предпросмотре."),
+                    plan.Warnings.Count > 0 || networkWarning);
             }
             catch (Exception ex) { ShowError(ex.Message); }
         }
@@ -894,7 +898,7 @@ namespace Profiles.AutoCAD
         {
             try
             {
-                var project = ReadProject();
+                var project = SynchronizeNetwork(ReadProject(), out _, out _);
                 var plan = BuildScopedPlan(project);
                 preview.SetPlan(plan);
                 previewNotes.Text = plan.Warnings.Count == 0 ? "Проверка завершена без замечаний." : string.Join(Environment.NewLine, plan.Warnings);
@@ -1014,6 +1018,7 @@ namespace Profiles.AutoCAD
                 autoSaveTimer.Dispose();
                 interpolationTimer.Dispose();
                 interpolationFont?.Dispose();
+                inflowHeaderFont?.Dispose();
             }
             base.Dispose(disposing);
             // Labels and buttons share this font; release it after the controls.

@@ -23,6 +23,8 @@ namespace Profiles.Core
         public DrawingPlan Plan { get; internal set; }
         public ProfileSettings Settings { get; internal set; }
         public double OffsetY { get; internal set; }
+        /// <summary>Drawing units per paper millimetre of this plan, for line patterns fixed on paper.</summary>
+        public double PaperUnits { get; internal set; }
     }
 
     /// <summary>Drawing scope never removes unrelated data from the saved project.</summary>
@@ -55,15 +57,18 @@ namespace Profiles.Core
                     result.Add(new ProfileDrawingPlan
                     {
                         ProfileId = project.ProfileId, ProfileName = project.ProfileName, SectionId = section.SectionId,
-                        Plan = section.Plan, OffsetY = section.OffsetY, Settings = ProfileScales.ForKind(project.Settings, project.Kind)
+                        Plan = section.Plan, OffsetY = section.OffsetY, Settings = ProfileScales.ForKind(project.Settings, project.Kind),
+                        PaperUnits = ProfileScales.PaperUnits(project.Settings, project.Template, project.Kind)
                     });
                 return result;
             }
-            var profiles = allProfiles ? ProfileCollection.Enumerate(project).Select(profile => new ProfileProject
+            // Each profile is built within the whole project: a drainage tributary
+            // finds the collector it flows into among the other profiles.
+            var profiles = allProfiles ? ProfileCollection.Describe(project).Select(profile =>
             {
-                ProjectId = project.ProjectId, Name = project.Name, Kind = ProfileKind.Longitudinal,
-                ProfileId = profile.ProfileId, ProfileName = profile.Name, Template = profile.Template,
-                Settings = profile.Settings, Longitudinal = profile.Longitudinal, Sections = profile.Sections
+                var selected = ProfileCollection.Select(project, profile.ProfileId);
+                selected.Kind = ProfileKind.Longitudinal;
+                return selected;
             }).ToList() : new List<ProfileProject> { project };
             double? previousBottom = null;
             int entityCount = 0;
@@ -71,7 +76,8 @@ namespace Profiles.Core
             {
                 var plan = ProfileEngine.Build(profile);
                 var settings = ProfileScales.ForKind(profile.Settings, ProfileKind.Longitudinal);
-                double layout = settings.HorizontalScale / (1000 * settings.MetresPerDrawingUnit) * Math.Max(1, settings.TextHeightMm / 2.5);
+                double paper = ProfileScales.PaperUnits(profile.Settings, profile.Template, ProfileKind.Longitudinal);
+                double layout = paper * Math.Max(1, settings.TextHeightMm / 2.5);
                 double minimum = ProfileEngine.Bounds(plan.Entities, false), maximum = ProfileEngine.Bounds(plan.Entities, true);
                 double offset = previousBottom.HasValue ? previousBottom.Value - 20 * layout - maximum : 0;
                 if (!NumberParser.Finite(minimum + offset) || Math.Abs(minimum + offset) > 1e12 ||
@@ -82,7 +88,7 @@ namespace Profiles.Core
                 result.Add(new ProfileDrawingPlan
                 {
                     ProfileId = profile.ProfileId, ProfileName = profile.ProfileName, Plan = plan,
-                    Settings = settings, OffsetY = offset
+                    Settings = settings, OffsetY = offset, PaperUnits = paper
                 });
                 previousBottom = minimum + offset;
             }

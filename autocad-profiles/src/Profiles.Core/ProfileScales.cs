@@ -44,6 +44,17 @@ namespace Profiles.Core
             }
         }
 
+        /// <summary>
+        /// Drawing units per paper millimetre. Profiles are drawn in units of the
+        /// horizontal scale; a drainage collector, like its reference sheets, in
+        /// units of the vertical scale (one unit = one metre of elevation at 1:100).
+        /// </summary>
+        public static double PaperUnits(ProfileSettings settings, ProfileTemplate template, ProfileKind kind)
+        {
+            double scale = template == ProfileTemplate.Drainage && kind == ProfileKind.Longitudinal ? GetVertical(settings, kind) : GetHorizontal(settings, kind);
+            return scale / (1000 * settings.MetresPerDrawingUnit);
+        }
+
         /// <summary>Effective settings copy for drawing; never use it to replace saved project settings.</summary>
         public static ProfileSettings ForKind(ProfileSettings settings, ProfileKind kind)
         {
