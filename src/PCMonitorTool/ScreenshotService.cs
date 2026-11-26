@@ -28,6 +28,9 @@ public sealed class ScreenshotService
     private Task? _shutdown;
     private DispatcherTimer? _timer;
     private CaptureIndicator? _indicator;
+    private int? _captureMinutes;
+    private bool _dashboardMinimized;
+    private Action? _showDashboard;
     private bool _stopping;
 
     public ScreenshotService(DataStore store, Action<string> reportError, Action stopSession)
@@ -44,7 +47,7 @@ public sealed class ScreenshotService
         if (_stopping)
             throw new InvalidOperationException("Сеанс завершён.");
 
-        return BeginCapture(_indicator?.Handle);
+        return BeginCapture(_captureMinutes.HasValue ? _indicator?.Handle ?? IntPtr.Zero : null);
     }
 
     // Вызывается только после подтверждения на текущий сеанс. Панель открывается до таймера.
@@ -56,14 +59,44 @@ public sealed class ScreenshotService
         if (intervalMinutes is < 1 or > 1440)
             throw new ArgumentOutOfRangeException(nameof(intervalMinutes));
 
-        _indicator = new CaptureIndicator(intervalMinutes, RequestStop);
-        _indicator.Show();
+        _captureMinutes = intervalMinutes;
+        UpdateIndicator();
         _timer = new DispatcherTimer(DispatcherPriority.Background, _ui)
         {
             Interval = TimeSpan.FromMinutes(intervalMinutes)
         };
         _timer.Tick += OnTick;
         _timer.Start();
+    }
+
+    public void SetDashboardMinimized(bool minimized, Action showDashboard)
+    {
+        _ui.VerifyAccess();
+        if (_stopping) return;
+        _dashboardMinimized = minimized;
+        _showDashboard = showDashboard;
+        UpdateIndicator();
+    }
+
+    private void UpdateIndicator()
+    {
+        // Единственное окно служит панелью сеанса и индикатором автоматических снимков.
+        if (!_captureMinutes.HasValue && !_dashboardMinimized)
+        {
+            CloseIndicator();
+            return;
+        }
+        bool newlyCreated = _indicator is null;
+        _indicator ??= new CaptureIndicator(RequestStop);
+        _indicator.SetMode(_captureMinutes, _dashboardMinimized ? _showDashboard : null);
+        if (newlyCreated) _indicator.Show();
+    }
+
+    private void CloseIndicator()
+    {
+        var indicator = _indicator;
+        _indicator = null;
+        indicator?.CloseProgrammatically();
     }
 
     private void RequestStop()
@@ -145,8 +178,7 @@ public sealed class ScreenshotService
         catch (Exception) { }
         finally
         {
-            _indicator?.CloseAfterStop();
-            _indicator = null;
+            CloseIndicator();
             _cancel.Dispose();
         }
     }
@@ -271,14 +303,16 @@ public sealed class ScreenshotService
 internal sealed class CaptureIndicator : Window
 {
     private readonly Action _stop;
-    private bool _closingAfterStop;
+    private readonly Controls.TextBlock _status = new() { FontWeight = FontWeights.SemiBold };
+    private readonly Controls.Button _openDashboard = new();
+    private Action? _showDashboard;
+    private bool _closingProgrammatically;
     private bool _closed;
     public IntPtr Handle => new WindowInteropHelper(this).Handle;
 
-    public CaptureIndicator(int minutes, Action stop)
+    public CaptureIndicator(Action stop)
     {
         _stop = stop;
-        Title = "PC Monitor Tool — снимки экрана";
         Topmost = true;
         ShowActivated = false;
         ShowInTaskbar = true;
@@ -287,12 +321,12 @@ internal sealed class CaptureIndicator : Window
         SizeToContent = SizeToContent.WidthAndHeight;
         WindowStartupLocation = WindowStartupLocation.Manual;
         var content = new Controls.StackPanel { Margin = new Thickness(12, 8, 12, 10) };
-        content.Children.Add(new Controls.TextBlock
-        {
-            Text = $"●  Снимки экрана каждые {minutes} мин.",
-            FontWeight = FontWeights.SemiBold,
-            Foreground = Media.Brushes.DarkRed
-        });
+        content.Children.Add(_status);
+        _openDashboard.Content = "Открыть окно управления";
+        _openDashboard.Padding = new Thickness(8, 4, 8, 4);
+        _openDashboard.Margin = new Thickness(0, 6, 0, 0);
+        _openDashboard.Click += (_, _) => _showDashboard?.Invoke();
+        content.Children.Add(_openDashboard);
         var stopButton = new Controls.Button
         {
             Content = "Остановить сеанс",
@@ -311,7 +345,7 @@ internal sealed class CaptureIndicator : Window
         Closed += (_, _) => _closed = true;
         Closing += (_, e) =>
         {
-            if (_closingAfterStop) return;
+            if (_closingProgrammatically) return;
             e.Cancel = true;
             // Закрытие самой панели всегда останавливает сбор. Повторный Close
             // переносим за пределы текущего события Closing.
@@ -319,9 +353,18 @@ internal sealed class CaptureIndicator : Window
         };
     }
 
-    public void CloseAfterStop()
+    public void SetMode(int? minutes, Action? showDashboard)
     {
-        _closingAfterStop = true;
+        Title = minutes.HasValue ? "PC Monitor Tool — снимки экрана" : "PC Monitor Tool — учёт времени";
+        _status.Text = minutes.HasValue ? $"●  Снимки экрана каждые {minutes} мин." : "●  Идёт учёт времени";
+        _status.Foreground = minutes.HasValue ? Media.Brushes.DarkRed : Media.Brushes.DarkGreen;
+        _showDashboard = showDashboard;
+        _openDashboard.Visibility = showDashboard is null ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    public void CloseProgrammatically()
+    {
+        _closingProgrammatically = true;
         if (!_closed) Close();
     }
 }

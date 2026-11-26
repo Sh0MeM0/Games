@@ -23,7 +23,7 @@ internal static class Program
             if (!commands.IsPrimary)
             {
                 if (commands.RequestShowAsync().GetAwaiter().GetResult()) return 0;
-                MessageBox.Show("Панель уже запущена, но пока не отвечает. Откройте её из области уведомлений.", "PC Monitor Tool");
+                MessageBox.Show("Панель уже запущена, но пока не отвечает. Выберите PC Monitor Tool на панели задач.", "PC Monitor Tool");
                 return 1;
             }
             var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
@@ -46,11 +46,8 @@ internal sealed class Controller : IDisposable
     private readonly Application _app;
     private readonly SessionCommands _commands;
     private readonly MainWindow _window = new();
-    private readonly Forms.NotifyIcon _icon = new();
-    private readonly Forms.ContextMenuStrip _menu = new();
     private readonly CancellationTokenSource _exportCancel = new();
     private HotkeyManager? _hotkey;
-    private Forms.ToolStripItem? _stopItem;
     private MonitorSettings _settings;
     private DataStore _data;
     private MonitorService? _monitor;
@@ -82,14 +79,9 @@ internal sealed class Controller : IDisposable
             Process.Start(new ProcessStartInfo(_data.Root) { UseShellExecute = true });
             return Task.CompletedTask;
         });
-        _menu.Items.Add("Открыть панель", null, (_, _) => Show());
-        _stopItem = _menu.Items.Add("Остановить учёт", null, (_, _) => Run(() => StopAsync("Сеанс остановлен пользователем.")));
-        _menu.Items.Add("Выход", null, (_, _) => Run(ExitAsync));
-        _icon.ContextMenuStrip = _menu;
-        _icon.DoubleClick += (_, _) => Show();
         Update();
-        _icon.Visible = true;
         _window.Closing += OnClosing;
+        _window.StateChanged += OnWindowStateChanged;
         _window.Show();
         _hotkey = new HotkeyManager(_window, Show);
         if (!_hotkey.Register(_settings.HotkeyFunctionKey))
@@ -104,7 +96,7 @@ internal sealed class Controller : IDisposable
         if (Registry.GetValue(key, "NoticeVersion", 0) as int? != 1)
         {
             MessageBox.Show(_window,
-                "На этом ПК установлена программа учёта времени. Перед началом каждого сеанса вы увидите перечень собираемых данных. Вы можете отказаться, изменить настройки или остановить учёт через значок рядом с часами.\n\nЖурналы и снимки сохраняются в выбранной папке на этом компьютере.",
+                "На этом ПК установлена программа учёта времени. Перед началом каждого сеанса вы увидите перечень собираемых данных. Остановить учёт можно в главном окне или на компактной панели, которая появляется при сворачивании окна.\n\nЖурналы и снимки сохраняются в выбранной папке на этом компьютере.",
                 "PC Monitor Tool · Уведомление", MessageBoxButton.OK, MessageBoxImage.Information);
             Registry.SetValue(key, "NoticeVersion", 1, RegistryValueKind.DWord);
         }
@@ -120,9 +112,19 @@ internal sealed class Controller : IDisposable
     {
         bool active = _monitor is not null;
         _window.SetStatus(active, _automatic, _detail);
-        _icon.Icon = active ? System.Drawing.SystemIcons.Information : System.Drawing.SystemIcons.Application;
-        _icon.Text = active ? "PC Monitor Tool · Идёт учёт" : "PC Monitor Tool · Учёт остановлен";
-        if (_stopItem != null) _stopItem.Enabled = active;
+        _window.Title = active ? "PC Monitor Tool · Идёт учёт" : "PC Monitor Tool";
+    }
+
+    private void OnWindowStateChanged(object? sender, EventArgs e)
+    {
+        if (_exiting || _screen is null) return;
+        try { _screen.SetDashboardMinimized(_window.WindowState == WindowState.Minimized, Show); }
+        catch (Exception ex)
+        {
+            // Без доступной панели остановки свёрнутый сеанс завершаем.
+            Run(() => StopAsync("Сеанс остановлен. Не удалось открыть панель управления: " + ex.Message));
+            Show();
+        }
     }
 
     private void SetDetail(string detail)
@@ -164,13 +166,14 @@ internal sealed class Controller : IDisposable
             if (_generation == current && !_exiting) Run(() => StopAsync(_detail));
         }));
         _monitor = new MonitorService(_data, _settings, Report, UnexpectedStop);
-        _screen = new ScreenshotService(_data, Report, () => Run(() => StopAsync("Сеанс остановлен с панели снимков.")));
+        _screen = new ScreenshotService(_data, Report, () => Run(() => StopAsync("Сеанс остановлен с компактной панели.")));
         try
         {
             _automatic = consent.CaptureEnabled;
             if (_automatic) _screen.StartAutomatic(_settings.ScreenshotMinutes);
+            _screen.SetDashboardMinimized(_window.WindowState == WindowState.Minimized, Show);
             _monitor.Start();
-            SetDetail("Учёт начат " + DateTime.Now.ToString("HH:mm") + ". Закрытие панели сворачивает её в область уведомлений.");
+            SetDetail("Учёт начат " + DateTime.Now.ToString("HH:mm") + ". Можно свернуть окно на панель задач.");
         }
         catch
         {
@@ -307,10 +310,9 @@ internal sealed class Controller : IDisposable
     }
     private void OnClosing(object? sender, CancelEventArgs e)
     {
-        if (_exiting) return;
         e.Cancel = true;
-        _window.Hide();
-        _icon.ShowBalloonTip(2500, "PC Monitor Tool", "Панель доступна через значок рядом с часами.", Forms.ToolTipIcon.Info);
+        // Сначала выходим из Closing, затем завершаем запись и закрываем приложение.
+        if (!_exiting) _app.Dispatcher.BeginInvoke(new Action(() => Run(ExitAsync)));
     }
     private async Task ExitAsync()
     {
@@ -322,12 +324,17 @@ internal sealed class Controller : IDisposable
         {
             try { if (_exporting != null) await _exporting; }
             catch (OperationCanceledException) { }
-            finally { _app.Shutdown(); }
+            finally
+            {
+                _window.Closing -= OnClosing;
+                _app.Shutdown();
+            }
         }
     }
     private void OnSessionEnding(object sender, SessionEndingCancelEventArgs e)
     {
         _exiting = true;
+        _window.Closing -= OnClosing;
         _exportCancel.Cancel();
         // Windows ограничивает время выхода. Не задерживаем завершение сеанса модальным окном.
         _ = StopAsync("Выход из Windows.");
@@ -338,9 +345,7 @@ internal sealed class Controller : IDisposable
         SystemEvents.SessionSwitch -= SessionChanged;
         SystemEvents.PowerModeChanged -= PowerChanged;
         _app.SessionEnding -= OnSessionEnding;
-        _icon.Visible = false;
-        _icon.Dispose();
-        _menu.Dispose();
+        _window.StateChanged -= OnWindowStateChanged;
         _hotkey?.Dispose();
         _data.Dispose();
         _exportCancel.Dispose();
