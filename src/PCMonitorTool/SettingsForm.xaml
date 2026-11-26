@@ -1,0 +1,35 @@
+<Window x:Class="PCMonitorTool.SettingsForm" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Настройки · PC Monitor Tool" Width="560" Height="575" MinWidth="460" MinHeight="420" WindowStartupLocation="CenterOwner" FontFamily="Segoe UI" FontSize="14" Background="#F6F8FB">
+    <Window.Resources>
+        <Style TargetType="CheckBox"><Setter Property="Margin" Value="0,6"/><Setter Property="VerticalContentAlignment" Value="Center"/></Style>
+        <Style TargetType="TextBox"><Setter Property="Padding" Value="6,4"/></Style>
+        <Style TargetType="Button"><Setter Property="Padding" Value="14,6"/></Style>
+    </Window.Resources>
+    <DockPanel Margin="22">
+        <StackPanel DockPanel.Dock="Bottom" Margin="0,16,0,0">
+            <TextBlock Name="ErrorLabel" Foreground="#A12520" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Отмена" IsCancel="True" Margin="0,0,8,0"/>
+                <Button Content="Сохранить" IsDefault="True" Click="Save_Click"/>
+            </StackPanel>
+        </StackPanel>
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <TextBlock Text="Настройки учёта" FontSize="24" FontWeight="SemiBold" Margin="0,0,0,14"/>
+                <Label Target="{Binding ElementName=Folder}" Content="Папка данных" Padding="0,2"/>
+                <DockPanel><Button DockPanel.Dock="Right" Content="Выбрать…" Click="Browse_Click" Margin="6,0,0,0"/><TextBox Name="Folder" VerticalContentAlignment="Center"/></DockPanel>
+                <TextBlock Text="Для нового хранилища выберите пустую папку. Ранее сохранённые данные останутся в прежней папке." TextWrapping="Wrap" Foreground="#4A5868" Margin="0,4,0,10"/>
+                <Label Target="{Binding ElementName=Sample}" Content="Интервал учёта активного приложения, секунд (5–300)" Padding="0,4"/>
+                <TextBox Name="Sample" HorizontalAlignment="Left" Width="90"/>
+                <CheckBox Name="Shots" Content="Предлагать периодические снимки в начале сеанса"/>
+                <Label Target="{Binding ElementName=Minutes}" Content="Интервал снимков, минут (1–240)" Padding="0,4"/>
+                <TextBox Name="Minutes" HorizontalAlignment="Left" Width="90" IsEnabled="{Binding IsChecked,ElementName=Shots}"/>
+                <CheckBox Name="Usb" Content="Записывать имена и размеры изменённых файлов на USB"/>
+                <Label Target="{Binding ElementName=KeyBox}" Content="Открыть панель · Ctrl + Alt + Shift +" Padding="0,4"/>
+                <ComboBox Name="KeyBox" Width="90" HorizontalAlignment="Left" Padding="5,3"/>
+                <CheckBox Name="Auto" Content="Открывать панель при входе в Windows"/>
+                <CheckBox Name="RunCommand" Content="Открывать панель командой pcmtool в Win+R"/>
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>
