@@ -5,6 +5,16 @@
         WindowStartupLocation="CenterScreen" FontFamily="Segoe UI" FontSize="14"
         Background="#F5F7FA" Foreground="#19283B" Language="ru-RU" UseLayoutRounding="True">
     <Window.Resources>
+        <DrawingImage x:Key="RecordingBadge">
+            <DrawingImage.Drawing><DrawingGroup>
+                <GeometryDrawing Brush="White"><GeometryDrawing.Geometry><EllipseGeometry Center="8,8" RadiusX="8" RadiusY="8"/></GeometryDrawing.Geometry></GeometryDrawing>
+                <GeometryDrawing Brush="#AF2025"><GeometryDrawing.Geometry><EllipseGeometry Center="8,8" RadiusX="6" RadiusY="6"/></GeometryDrawing.Geometry></GeometryDrawing>
+            </DrawingGroup></DrawingImage.Drawing>
+        </DrawingImage>
+        <DrawingImage x:Key="StopIcon"><DrawingImage.Drawing><DrawingGroup>
+            <GeometryDrawing Brush="White" Geometry="M 0,0 H 16 V 16 H 0 Z"/>
+            <GeometryDrawing Brush="#253B46" Geometry="M 2,2 H 14 V 14 H 2 Z"/>
+        </DrawingGroup></DrawingImage.Drawing></DrawingImage>
         <Style TargetType="Button">
             <Setter Property="Background" Value="White"/><Setter Property="Foreground" Value="#1D3446"/>
             <Setter Property="BorderBrush" Value="#BAC7D0"/><Setter Property="BorderThickness" Value="1"/>
@@ -46,16 +56,24 @@
         <Style x:Key="Heading" TargetType="TextBlock"><Setter Property="FontSize" Value="22"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Margin" Value="0,0,0,5"/></Style>
         <Style x:Key="Hint" TargetType="TextBlock"><Setter Property="Foreground" Value="#4C6272"/><Setter Property="TextWrapping" Value="Wrap"/></Style>
     </Window.Resources>
+    <Window.TaskbarItemInfo>
+        <TaskbarItemInfo Description="PC Monitor Tool · Сеанс остановлен">
+            <TaskbarItemInfo.ThumbButtonInfos>
+                <ThumbButtonInfo x:Name="TaskbarStop" ImageSource="{StaticResource StopIcon}" Description="Остановить сеанс"
+                                 Visibility="Collapsed" IsEnabled="False" DismissWhenClicked="True" Click="TaskbarStop_Click"/>
+            </TaskbarItemInfo.ThumbButtonInfos>
+        </TaskbarItemInfo>
+    </Window.TaskbarItemInfo>
     <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <Border Background="#203844" Padding="22,15">
             <DockPanel LastChildFill="True">
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button x:Name="SessionButton" Click="SessionButton_Click" Content="Начать сеанс" Background="#0F7466" Foreground="White" BorderBrush="#6CB8AD" FontWeight="SemiBold"/>
+                    <Button x:Name="SessionButton" HorizontalAlignment="Left" Click="SessionButton_Click" Content="Начать сеанс" Background="#0F7466" Foreground="White" BorderBrush="#6CB8AD" FontWeight="SemiBold"/>
                 </StackPanel>
                 <StackPanel Margin="0,0,18,0"><TextBlock Text="PC Monitor Tool" FontSize="25" FontWeight="SemiBold" Foreground="White"/>
                     <StackPanel Orientation="Horizontal" Margin="0,4,0,0"><Ellipse x:Name="StatusDot" Width="9" Height="9" Fill="#A3B3BC" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                        <TextBlock x:Name="StatusText" Text="Сеанс остановлен" Foreground="#E0EDF1"/></StackPanel>
+                        <TextBlock x:Name="StatusText" HorizontalAlignment="Left" Background="Transparent" Text="Сеанс остановлен" Foreground="#E0EDF1"/></StackPanel>
                 </StackPanel>
             </DockPanel>
         </Border>

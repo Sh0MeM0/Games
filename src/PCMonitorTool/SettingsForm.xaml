@@ -28,7 +28,8 @@
                 <Label Target="{Binding ElementName=KeyBox}" Content="Открыть панель · Ctrl + Alt + Shift +" Padding="0,4"/>
                 <ComboBox Name="KeyBox" Width="90" HorizontalAlignment="Left" Padding="5,3"/>
                 <CheckBox Name="Auto" Content="Открывать панель при входе в Windows"/>
-                <CheckBox Name="RunCommand" Content="Открывать панель командой pcmtool в Win+R"/>
+                <CheckBox Name="RunCommand" Content="Открывать панель командой pcmtools в Win+R"/>
+                <TextBlock Text="Прежняя команда pcmtool также будет открывать панель, если она доступна." TextWrapping="Wrap" Foreground="#4A5868" Margin="0,2,0,6"/>
             </StackPanel>
         </ScrollViewer>
     </DockPanel>

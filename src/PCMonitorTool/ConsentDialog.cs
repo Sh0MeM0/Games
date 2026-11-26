@@ -29,9 +29,9 @@ internal sealed class ConsentDialog : Window
         Add($"Текущее приложение каждые {settings.SampleSeconds} с, запуск и завершение программ, подключение и отключение съёмных USB-дисков.");
         if (settings.UsbFileEvents)
             Add("Включён журнал изменений на USB. Он сохраняет имена файлов и доступный размер.");
-        Add("Сеанс можно остановить в главном окне. Если его свернуть, кнопка остановки останется на компактной панели. При блокировке Windows учёт остановится.");
+        Add("Во время сеанса крестик сворачивает программу на панель задач. Учёт продолжается до нажатия «Остановить сеанс» или «Выход». Блокировка Windows завершает сеанс.");
         _capture = new CheckBox {
-            Content = new TextBlock { Text = $"Сохранять изображения всех экранов раз в {settings.ScreenshotMinutes} мин. В кадр могут попасть личные данные.", TextWrapping = TextWrapping.Wrap },
+            Content = new TextBlock { Text = $"Сохранять снимки раз в {settings.ScreenshotMinutes} мин, в том числе при свёрнутой программе. Экран или окно нужно выбрать в диалоге Windows. Выбранная область отмечается системной рамкой. В снимок могут попасть личные данные.", TextWrapping = TextWrapping.Wrap },
             // Согласие на периодические снимки даётся заново для каждого сеанса.
             IsChecked = false, Visibility = settings.ScreenshotsEnabled ? Visibility.Visible : Visibility.Collapsed,
             Margin = new Thickness(0,0,0,12)

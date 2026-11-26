@@ -9,10 +9,8 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Interop;
 using System.Windows.Threading;
 using Controls = System.Windows.Controls;
-using Media = System.Windows.Media;
 
 namespace PCMonitorTool;
 
@@ -21,166 +19,220 @@ public sealed class ScreenshotService
 {
     private readonly DataStore _store;
     private readonly Action<string> _reportError;
-    private readonly Action _stopSession;
+    private readonly Action _onSourceClosed;
     private readonly Dispatcher _ui = Dispatcher.CurrentDispatcher;
     private readonly CancellationTokenSource _cancel = new();
-    private Task _pending = Task.CompletedTask;
+    private readonly List<SharedScreenCapture> _sources = new();
+    private Task<bool>? _setup;
+    private Task _manual = Task.CompletedTask;
+    private Task _periodic = Task.CompletedTask;
     private Task? _shutdown;
     private DispatcherTimer? _timer;
-    private CaptureIndicator? _indicator;
-    private int? _captureMinutes;
-    private bool _dashboardMinimized;
-    private Action? _showDashboard;
     private bool _stopping;
+    private bool _discardingSources;
 
-    public ScreenshotService(DataStore store, Action<string> reportError, Action stopSession)
+    public ScreenshotService(DataStore store, Action<string> reportError, Action onSourceClosed)
     {
         _store = store;
         _reportError = reportError;
-        _stopSession = stopSession;
+        _onSourceClosed = onSourceClosed;
     }
 
-    // Вызывается кнопкой в окне управления. Параллельные запросы объединяются.
+    // Ручной снимок всех экранов вызывает только кнопка после явного подтверждения.
     public Task CaptureNowAsync()
     {
         _ui.VerifyAccess();
-        if (_stopping)
-            throw new InvalidOperationException("Сеанс завершён.");
-
-        return BeginCapture(_captureMinutes.HasValue ? _indicator?.Handle ?? IntPtr.Zero : null);
-    }
-
-    // Вызывается только после подтверждения на текущий сеанс. Панель открывается до таймера.
-    public void StartAutomatic(int intervalMinutes)
-    {
-        _ui.VerifyAccess();
-        if (_stopping || _timer is not null)
-            throw new InvalidOperationException("Сеанс уже завершён или таймер включён.");
-        if (intervalMinutes is < 1 or > 1440)
-            throw new ArgumentOutOfRangeException(nameof(intervalMinutes));
-
-        _captureMinutes = intervalMinutes;
-        UpdateIndicator();
-        _timer = new DispatcherTimer(DispatcherPriority.Background, _ui)
+        if (_stopping) throw new InvalidOperationException("Сеанс завершён.");
+        if (_setup is { IsCompleted: false })
+            throw new InvalidOperationException("Сначала завершите выбор источников.");
+        if (_manual.IsCompleted)
         {
-            Interval = TimeSpan.FromMinutes(intervalMinutes)
-        };
-        _timer.Tick += OnTick;
-        _timer.Start();
-    }
-
-    public void SetDashboardMinimized(bool minimized, Action showDashboard)
-    {
-        _ui.VerifyAccess();
-        if (_stopping) return;
-        _dashboardMinimized = minimized;
-        _showDashboard = showDashboard;
-        UpdateIndicator();
-    }
-
-    private void UpdateIndicator()
-    {
-        // Единственное окно служит панелью сеанса и индикатором автоматических снимков.
-        if (!_captureMinutes.HasValue && !_dashboardMinimized)
-        {
-            CloseIndicator();
-            return;
+            var token = _cancel.Token;
+            _manual = Task.Run(() => CaptureManualAsync(token), token);
         }
-        bool newlyCreated = _indicator is null;
-        _indicator ??= new CaptureIndicator(RequestStop);
-        _indicator.SetMode(_captureMinutes, _dashboardMinimized ? _showDashboard : null);
-        if (newlyCreated) _indicator.Show();
+        return _manual;
     }
 
-    private void CloseIndicator()
+    // Источники периодических снимков предоставляет только системный диалог Windows.
+    public Task<bool> StartAutomaticAsync(Window owner, int minutes)
     {
-        var indicator = _indicator;
-        _indicator = null;
-        indicator?.CloseProgrammatically();
+        _ui.VerifyAccess();
+        if (_stopping || _setup != null)
+            throw new InvalidOperationException("Сеанс завершён или выбор уже начат.");
+        if (minutes is < 1 or > 1440) throw new ArgumentOutOfRangeException(nameof(minutes));
+        _setup = SelectSourcesAsync(owner, minutes, _cancel.Token);
+        return _setup;
     }
 
-    private void RequestStop()
+    private async Task<bool> SelectSourcesAsync(Window owner, int minutes, CancellationToken token)
     {
-        if (_stopping) return;
-        _stopping = true;
-        _timer?.Stop();
-        _cancel.Cancel();
-        _stopSession();
+        // Публикуем задачу до входа в диалоги: StopAsync может быть вызван из вложенного цикла UI.
+        await Task.Yield();
+        try
+        {
+            while (true)
+            {
+                ValidateDesktop(token);
+                var source = await SharedScreenCapture.PickAsync(owner, SourceClosed, token);
+                if (source != null) _sources.Add(source);
+                ValidateDesktop(token);
+                if (source == null)
+                {
+                    if (_sources.Count == 0) return false;
+                    break;
+                }
+
+                var choice = ChooseNext(owner, _sources.Count, token);
+                token.ThrowIfCancellationRequested();
+                if (choice == SourceChoice.Cancel) return false;
+                if (choice == SourceChoice.Finish) break;
+            }
+            ValidateDesktop(token);
+            _timer = new DispatcherTimer(DispatcherPriority.Background, _ui)
+            {
+                Interval = TimeSpan.FromMinutes(minutes)
+            };
+            _timer.Tick += OnTick;
+            _timer.Start();
+            return true;
+        }
+        finally
+        {
+            if (_timer == null) DisposeSources();
+        }
+    }
+
+    private enum SourceChoice { Cancel, Finish, Add }
+
+    private static SourceChoice ChooseNext(Window owner, int count, CancellationToken token)
+    {
+        var dialog = new Window
+        {
+            Owner = owner, Title = "Источники автоснимков",
+            ResizeMode = ResizeMode.NoResize, ShowInTaskbar = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            SizeToContent = SizeToContent.WidthAndHeight
+        };
+        var panel = new Controls.StackPanel { Margin = new Thickness(20) };
+        panel.Children.Add(new Controls.TextBlock { Text = $"Выбрано источников: {count}. Включить автоснимки?" });
+        var buttons = new Controls.StackPanel { Orientation = Controls.Orientation.Horizontal, Margin = new Thickness(0, 14, 0, 0) };
+        panel.Children.Add(buttons);
+        dialog.Content = panel;
+        SourceChoice result = SourceChoice.Cancel;
+        void Add(string text, SourceChoice choice)
+        {
+            var button = new Controls.Button
+            {
+                Content = text, IsDefault = choice == SourceChoice.Finish, IsCancel = choice == SourceChoice.Cancel,
+                Padding = new Thickness(10, 4, 10, 4), Margin = new Thickness(0, 0, 6, 0)
+            };
+            button.Click += (_, _) => { result = choice; dialog.DialogResult = choice != SourceChoice.Cancel; };
+            buttons.Children.Add(button);
+        }
+        Add("Готово", SourceChoice.Finish);
+        Add("Выбрать ещё", SourceChoice.Add);
+        Add("Отмена", SourceChoice.Cancel);
+        using var close = token.Register(() => dialog.Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (dialog.IsVisible) dialog.Close();
+        })));
+        token.ThrowIfCancellationRequested();
+        dialog.ShowDialog();
+        return result;
+    }
+
+    private void SourceClosed()
+    {
+        // SharedScreenCapture доставляет уведомление на диспетчер окна владельца.
+        _ui.VerifyAccess();
+        if (_stopping || _discardingSources) return;
+        _ = StopAsync();
+        _onSourceClosed();
     }
 
     private async void OnTick(object? sender, EventArgs e)
     {
-        if (_stopping || !_pending.IsCompleted || _indicator is null) return;
+        if (_stopping || !_periodic.IsCompleted || !_manual.IsCompleted) return;
         try
         {
-            await BeginCapture(_indicator.Handle);
-        }
-        catch (CaptureUnavailableException)
-        {
-            // Блокировка, смена рабочего стола или перекрытая панель: пропускаем этот интервал.
-        }
-        catch (OperationCanceledException) when (_stopping) { }
-        catch (Exception ex)
-        {
-            _reportError("Не удалось сохранить снимок: " + ex.Message);
-        }
-    }
-
-    private Task BeginCapture(IntPtr? indicator)
-    {
-        if (_pending.IsCompleted)
-        {
             var token = _cancel.Token;
-            _pending = Task.Run(() => CaptureScreensAsync(indicator, token), token);
+            var sources = _sources.ToArray();
+            _periodic = Task.Run(() => CaptureSelectedAsync(sources, token), token);
+            await _periodic;
         }
-        return _pending;
+        catch (CaptureUnavailableException) { /* Защищённый или отключённый рабочий стол. */ }
+        catch (OperationCanceledException) when (_stopping) { }
+        catch (Exception ex) { if (!_stopping) _reportError("Не удалось сохранить автоснимок: " + ex.Message); }
     }
 
-    private async Task CaptureScreensAsync(IntPtr? indicator, CancellationToken token)
+    private async Task CaptureSelectedAsync(SharedScreenCapture[] sources, CancellationToken token)
     {
-        ValidateDesktop(indicator, token);
+        string stamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss", CultureInfo.InvariantCulture);
+        for (int i = 0; i < sources.Length; i++)
+        {
+            ValidateDesktop(token);
+            var png = await sources[i].GetPngAsync(token).ConfigureAwait(false);
+            ValidateDesktop(token);
+            if (png != null)
+                await _store.SavePngAsync($"{stamp}_mon{i + 1}.png", png, token).ConfigureAwait(false);
+        }
+    }
+
+    private async Task CaptureManualAsync(CancellationToken token)
+    {
+        ValidateDesktop(token);
         var monitors = EnumerateMonitors();
         string stamp = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss", CultureInfo.InvariantCulture);
-        for (int index = 0; index < monitors.Count; index++)
+        for (int i = 0; i < monitors.Count; i++)
         {
-            var bounds = monitors[index].Bounds;
-            ValidateDesktop(indicator, token);
+            var bounds = monitors[i].Bounds;
+            ValidateDesktop(token);
             using var bitmap = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format24bppRgb);
             using (var graphics = Graphics.FromImage(bitmap))
                 graphics.CopyFromScreen(bounds.Location, System.Drawing.Point.Empty, bounds.Size, CopyPixelOperation.SourceCopy);
-            // Сеанс мог измениться между проверкой и копированием. До записи проверяем ещё раз.
-            ValidateDesktop(indicator, token);
+            ValidateDesktop(token);
             using var png = new System.IO.MemoryStream();
             bitmap.Save(png, ImageFormat.Png);
-            await _store.SavePngAsync($"{stamp}_mon{index + 1}.png", png.ToArray(), token).ConfigureAwait(false);
+            ValidateDesktop(token);
+            await _store.SavePngAsync($"{stamp}_mon{i + 1}.png", png.ToArray(), token).ConfigureAwait(false);
         }
     }
 
     public Task StopAsync()
     {
         _ui.VerifyAccess();
-        if (_shutdown is not null) return _shutdown;
+        if (_shutdown != null) return _shutdown;
         _stopping = true;
-        if (_timer is not null)
-        {
-            _timer.Stop();
-            _timer.Tick -= OnTick;
-        }
+        _timer?.Stop();
+        if (_timer != null) _timer.Tick -= OnTick;
         _cancel.Cancel();
+        // Сразу прекращаем системную трансляцию, даже если на диске завершается запись.
+        DisposeSources();
         _shutdown = FinishStoppingAsync();
         return _shutdown;
     }
 
+    private void DisposeSources()
+    {
+        _discardingSources = true;
+        try
+        {
+            foreach (var source in _sources)
+            {
+                try { source.Dispose(); }
+                catch (Exception ex) { _reportError("Не удалось закрыть системный источник: " + ex.Message); }
+            }
+            _sources.Clear();
+        }
+        finally { _discardingSources = false; }
+    }
+
     private async Task FinishStoppingAsync()
     {
-        try { await _pending; }
-        // Вызывающая кнопка или обработчик таймера уже получают исключение снимка.
-        catch (Exception) { }
-        finally
-        {
-            CloseIndicator();
-            _cancel.Dispose();
-        }
+        // После отмены ждём также поздний результат системного выбора и его освобождение.
+        try { await Task.WhenAll(_setup ?? Task.CompletedTask, _manual, _periodic); }
+        catch (Exception) { /* Ошибку операции обрабатывает её непосредственный инициатор. */ }
+        finally { DisposeSources(); _cancel.Dispose(); }
     }
 
     private static List<(Rectangle Bounds, bool Primary)> EnumerateMonitors()
@@ -215,13 +267,11 @@ public sealed class ScreenshotService
         return screens;
     }
 
-    private static void ValidateDesktop(IntPtr? indicator, CancellationToken token)
+    private static void ValidateDesktop(CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         if (!IsInteractiveDesktop())
             throw new CaptureUnavailableException("Снимок доступен только в активном разблокированном сеансе.");
-        if (indicator is IntPtr handle && (handle == IntPtr.Zero || !IsIndicatorExposed(handle)))
-            throw new CaptureUnavailableException("Панель управления снимками должна быть видна на рабочем столе.");
     }
 
     private static bool IsInteractiveDesktop()
@@ -246,28 +296,10 @@ public sealed class ScreenshotService
         finally { CloseDesktop(desktop); }
     }
 
-    private static bool IsIndicatorExposed(IntPtr handle)
-    {
-        // В том числе пропускаем виртуальные рабочие столы, на которых панели нет.
-        if (!IsWindowVisible(handle) || IsIconic(handle) ||
-            DwmGetWindowAttribute(handle, 14, out int cloaked, sizeof(int)) != 0 || cloaked != 0 ||
-            !GetWindowRect(handle, out var rect))
-            return false;
-
-        var middle = new NativePoint
-        {
-            X = rect.Left + (rect.Right - rect.Left) / 2,
-            Y = rect.Top + (rect.Bottom - rect.Top) / 2
-        };
-        return GetAncestor(WindowFromPoint(middle), 2) == handle; // GA_ROOT
-    }
-
     private sealed class CaptureUnavailableException(string message) : InvalidOperationException(message) { }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NativeRect { public int Left, Top, Right, Bottom; }
-    [StructLayout(LayoutKind.Sequential)]
-    private struct NativePoint { public int X, Y; }
     [StructLayout(LayoutKind.Sequential)]
     private struct MonitorInfo { public int Size; public NativeRect Bounds, Work; public uint Flags; }
     private delegate bool MonitorCallback(IntPtr monitor, IntPtr dc, IntPtr rect, IntPtr state);
@@ -286,85 +318,4 @@ public sealed class ScreenshotService
     private static extern bool WTSQuerySessionInformationW(IntPtr server, int sessionId, int type, out IntPtr buffer, out int bytes);
     [DllImport("wtsapi32.dll")]
     private static extern void WTSFreeMemory(IntPtr buffer);
-    [DllImport("user32.dll")]
-    private static extern bool IsWindowVisible(IntPtr handle);
-    [DllImport("user32.dll")]
-    private static extern bool IsIconic(IntPtr handle);
-    [DllImport("user32.dll")]
-    private static extern bool GetWindowRect(IntPtr handle, out NativeRect rect);
-    [DllImport("user32.dll")]
-    private static extern IntPtr WindowFromPoint(NativePoint point);
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetAncestor(IntPtr handle, uint flags);
-    [DllImport("dwmapi.dll")]
-    private static extern int DwmGetWindowAttribute(IntPtr handle, int attribute, out int value, int bytes);
-}
-
-internal sealed class CaptureIndicator : Window
-{
-    private readonly Action _stop;
-    private readonly Controls.TextBlock _status = new() { FontWeight = FontWeights.SemiBold };
-    private readonly Controls.Button _openDashboard = new();
-    private Action? _showDashboard;
-    private bool _closingProgrammatically;
-    private bool _closed;
-    public IntPtr Handle => new WindowInteropHelper(this).Handle;
-
-    public CaptureIndicator(Action stop)
-    {
-        _stop = stop;
-        Topmost = true;
-        ShowActivated = false;
-        ShowInTaskbar = true;
-        WindowStyle = WindowStyle.ToolWindow;
-        ResizeMode = ResizeMode.NoResize;
-        SizeToContent = SizeToContent.WidthAndHeight;
-        WindowStartupLocation = WindowStartupLocation.Manual;
-        var content = new Controls.StackPanel { Margin = new Thickness(12, 8, 12, 10) };
-        content.Children.Add(_status);
-        _openDashboard.Content = "Открыть окно управления";
-        _openDashboard.Padding = new Thickness(8, 4, 8, 4);
-        _openDashboard.Margin = new Thickness(0, 6, 0, 0);
-        _openDashboard.Click += (_, _) => _showDashboard?.Invoke();
-        content.Children.Add(_openDashboard);
-        var stopButton = new Controls.Button
-        {
-            Content = "Остановить сеанс",
-            Padding = new Thickness(8, 4, 8, 4),
-            Margin = new Thickness(0, 6, 0, 0)
-        };
-        stopButton.Click += (_, _) => _stop();
-        content.Children.Add(stopButton);
-        Content = content;
-        Loaded += (_, _) =>
-        {
-            var area = SystemParameters.WorkArea;
-            Left = Math.Max(area.Left, area.Right - ActualWidth - 12);
-            Top = area.Top + 12;
-        };
-        Closed += (_, _) => _closed = true;
-        Closing += (_, e) =>
-        {
-            if (_closingProgrammatically) return;
-            e.Cancel = true;
-            // Закрытие самой панели всегда останавливает сбор. Повторный Close
-            // переносим за пределы текущего события Closing.
-            Dispatcher.BeginInvoke(_stop);
-        };
-    }
-
-    public void SetMode(int? minutes, Action? showDashboard)
-    {
-        Title = minutes.HasValue ? "PC Monitor Tool — снимки экрана" : "PC Monitor Tool — учёт времени";
-        _status.Text = minutes.HasValue ? $"●  Снимки экрана каждые {minutes} мин." : "●  Идёт учёт времени";
-        _status.Foreground = minutes.HasValue ? Media.Brushes.DarkRed : Media.Brushes.DarkGreen;
-        _showDashboard = showDashboard;
-        _openDashboard.Visibility = showDashboard is null ? Visibility.Collapsed : Visibility.Visible;
-    }
-
-    public void CloseProgrammatically()
-    {
-        _closingProgrammatically = true;
-        if (!_closed) Close();
-    }
 }

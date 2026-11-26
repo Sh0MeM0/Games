@@ -60,7 +60,16 @@ public partial class MainWindow : Window
         CaptureButton.IsEnabled = active;
         CaptureButton.ToolTip = active ? "После подтверждения будет сохранён снимок каждого экрана." : "Чтобы сделать снимок, начните сеанс учёта.";
         SessionButton.Content = active ? "Остановить сеанс" : "Начать сеанс";
-        StatusText.Text = active ? "Идёт мониторинг" : "Сеанс остановлен";
+        StatusText.Text = (active, automatic) switch
+        {
+            (true, true) => "Идёт учёт · Автоснимки включены",
+            (true, false) => "Идёт учёт",
+            _ => "Сеанс остановлен"
+        };
+        TaskbarItemInfo.Description = "PC Monitor Tool · " + StatusText.Text;
+        TaskbarItemInfo.Overlay = active ? (ImageSource)FindResource("RecordingBadge") : null;
+        TaskbarStop.IsEnabled = active;
+        TaskbarStop.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
         StatusDot.Fill = active ? Brushes.LightGreen : Brushes.LightSlateGray;
         ModeText.Text = active && automatic ? "Автоматические снимки включены" : "Автоматические снимки выключены";
         DetailText.Text = detail;
@@ -84,6 +93,11 @@ public partial class MainWindow : Window
     {
         if (_active) StopRequested?.Invoke();
         else StartRequested?.Invoke();
+    }
+
+    private void TaskbarStop_Click(object? sender, EventArgs e)
+    {
+        if (_active) StopRequested?.Invoke();
     }
 
     private void Capture_Click(object sender, RoutedEventArgs e) => CaptureRequested?.Invoke();

@@ -43,6 +43,7 @@ internal static class Program
 
 internal sealed class Controller : IDisposable
 {
+    private static readonly string AppTitle = $"PC Monitor Tool {typeof(Program).Assembly.GetName().Version!.ToString(3)}";
     private readonly Application _app;
     private readonly SessionCommands _commands;
     private readonly MainWindow _window = new();
@@ -81,7 +82,6 @@ internal sealed class Controller : IDisposable
         });
         Update();
         _window.Closing += OnClosing;
-        _window.StateChanged += OnWindowStateChanged;
         _window.Show();
         _hotkey = new HotkeyManager(_window, Show);
         if (!_hotkey.Register(_settings.HotkeyFunctionKey))
@@ -96,7 +96,7 @@ internal sealed class Controller : IDisposable
         if (Registry.GetValue(key, "NoticeVersion", 0) as int? != 1)
         {
             MessageBox.Show(_window,
-                "На этом ПК установлена программа учёта времени. Перед началом каждого сеанса вы увидите перечень собираемых данных. Остановить учёт можно в главном окне или на компактной панели, которая появляется при сворачивании окна.\n\nЖурналы и снимки сохраняются в выбранной папке на этом компьютере.",
+                "На этом ПК установлена программа учёта времени. Перед началом каждого сеанса вы увидите перечень собираемых данных. Во время сеанса крестик сворачивает окно. Остановить сбор можно кнопкой «Остановить сеанс». Если включены автоснимки, Windows покажет диалог выбора экрана или окна.\n\nЖурналы и снимки сохраняются в выбранной папке на этом компьютере.",
                 "PC Monitor Tool · Уведомление", MessageBoxButton.OK, MessageBoxImage.Information);
             Registry.SetValue(key, "NoticeVersion", 1, RegistryValueKind.DWord);
         }
@@ -112,19 +112,7 @@ internal sealed class Controller : IDisposable
     {
         bool active = _monitor is not null;
         _window.SetStatus(active, _automatic, _detail);
-        _window.Title = active ? "PC Monitor Tool · Идёт учёт" : "PC Monitor Tool";
-    }
-
-    private void OnWindowStateChanged(object? sender, EventArgs e)
-    {
-        if (_exiting || _screen is null) return;
-        try { _screen.SetDashboardMinimized(_window.WindowState == WindowState.Minimized, Show); }
-        catch (Exception ex)
-        {
-            // Без доступной панели остановки свёрнутый сеанс завершаем.
-            Run(() => StopAsync("Сеанс остановлен. Не удалось открыть панель управления: " + ex.Message));
-            Show();
-        }
+        _window.Title = !active ? AppTitle : AppTitle + (_automatic ? " · Идут автоснимки" : " · Идёт учёт");
     }
 
     private void SetDetail(string detail)
@@ -149,7 +137,7 @@ internal sealed class Controller : IDisposable
 
     private async Task StartAsync()
     {
-        if (_monitor != null || _stopping != null || _exiting || _dialogOpen) return;
+        if (_monitor != null || _screen != null || _stopping != null || _exiting || _dialogOpen) return;
         Show();
         long version = _generation;
         var consent = new ConsentDialog(_window, _settings);
@@ -157,7 +145,7 @@ internal sealed class Controller : IDisposable
         bool accepted;
         try { accepted = consent.ShowDialog() == true; }
         finally { _dialogOpen = false; }
-        if (!accepted || _exiting || version != _generation) return;
+        if (!accepted || _exiting || version != _generation || _window.WindowState == WindowState.Minimized) return;
         long current = ++_generation;
         void Report(string message) => _app.Dispatcher.BeginInvoke(new Action(() => {
             if (_generation == current && !_exiting) SetDetail(message);
@@ -165,21 +153,38 @@ internal sealed class Controller : IDisposable
         void UnexpectedStop() => _app.Dispatcher.BeginInvoke(new Action(() => {
             if (_generation == current && !_exiting) Run(() => StopAsync(_detail));
         }));
-        _monitor = new MonitorService(_data, _settings, Report, UnexpectedStop);
-        _screen = new ScreenshotService(_data, Report, () => Run(() => StopAsync("Сеанс остановлен с компактной панели.")));
+        void SourceClosed() => _app.Dispatcher.BeginInvoke(new Action(() => {
+            if (_generation == current && !_exiting)
+                Run(() => StopAsync("Windows завершила показ выбранного источника. Сеанс остановлен."));
+        }));
+        var screen = new ScreenshotService(_data, Report, SourceClosed);
+        _screen = screen;
+        _dialogOpen = true;
         try
         {
-            _automatic = consent.CaptureEnabled;
-            if (_automatic) _screen.StartAutomatic(_settings.ScreenshotMinutes);
-            _screen.SetDashboardMinimized(_window.WindowState == WindowState.Minimized, Show);
+            if (consent.CaptureEnabled)
+            {
+                SetDetail("Выберите в диалоге Windows экран или окно для периодических снимков.");
+                bool selected = await screen.StartAutomaticAsync(_window, _settings.ScreenshotMinutes);
+                // Блокировка, отмена или выход могли завершить сеанс в диалоге Windows.
+                if (_generation != current || _exiting) return;
+                if (!selected)
+                {
+                    await StopAsync("Выбор экрана отменён. Сеанс не начат.");
+                    return;
+                }
+                _automatic = true;
+            }
+            _monitor = new MonitorService(_data, _settings, Report, UnexpectedStop);
             _monitor.Start();
-            SetDetail("Учёт начат " + DateTime.Now.ToString("HH:mm") + ". Можно свернуть окно на панель задач.");
+            SetDetail($"Учёт начат {DateTime.Now:HH:mm}. Крестик сворачивает окно. «Выход» завершает работу.");
         }
         catch
         {
-            await StopAsync("Не удалось начать сеанс.");
+            if (_screen == screen) await StopAsync("Не удалось начать сеанс.");
             throw;
         }
+        finally { _dialogOpen = false; }
     }
 
     private Task StopAsync(string detail)
@@ -251,15 +256,13 @@ internal sealed class Controller : IDisposable
                 throw new InvalidOperationException("Горячая клавиша недоступна. Выберите другое сочетание.");
             try
             {
-                if (next.AutoStart != _settings.AutoStart) SessionCommands.ConfigureRegistration(next.AutoStart);
-                if (runCommand != oldCommand) SessionCommands.ConfigureRunCommand(runCommand);
-                next.Save();
+                SessionCommands.SaveWithRegistration(
+                    next.AutoStart != _settings.AutoStart ? next.AutoStart : null,
+                    runCommand != oldCommand ? runCommand : null, next.Save);
             }
             catch
             {
                 _hotkey.Register(_settings.HotkeyFunctionKey);
-                if (next.AutoStart != _settings.AutoStart) SessionCommands.ConfigureRegistration(_settings.AutoStart);
-                if (runCommand != oldCommand) SessionCommands.ConfigureRunCommand(oldCommand);
                 throw;
             }
             _settings = next;
@@ -311,8 +314,12 @@ internal sealed class Controller : IDisposable
     private void OnClosing(object? sender, CancelEventArgs e)
     {
         e.Cancel = true;
-        // Сначала выходим из Closing, затем завершаем запись и закрываем приложение.
-        if (!_exiting) _app.Dispatcher.BeginInvoke(new Action(() => Run(ExitAsync)));
+        if (_exiting) return;
+        // В активном сеансе задача остаётся доступна на панели задач и по команде Win+R.
+        if (_monitor is not null)
+            _app.Dispatcher.BeginInvoke(new Action(() => { if (!_exiting) _window.WindowState = WindowState.Minimized; }));
+        else
+            _app.Dispatcher.BeginInvoke(new Action(() => Run(ExitAsync)));
     }
     private async Task ExitAsync()
     {
@@ -345,7 +352,6 @@ internal sealed class Controller : IDisposable
         SystemEvents.SessionSwitch -= SessionChanged;
         SystemEvents.PowerModeChanged -= PowerChanged;
         _app.SessionEnding -= OnSessionEnding;
-        _window.StateChanged -= OnWindowStateChanged;
         _hotkey?.Dispose();
         _data.Dispose();
         _exportCancel.Dispose();

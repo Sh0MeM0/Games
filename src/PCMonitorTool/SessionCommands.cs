@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
+using System.Security;
 using System.Security.Principal;
 using System.Threading;
 using System.Threading.Tasks;
@@ -16,6 +18,8 @@ public sealed class SessionCommands : IDisposable
     private const string RunValue = "PC Monitor Tool";
     private const string AppPathsKey = @"Software\Microsoft\Windows\CurrentVersion\App Paths";
     private const string ExeName = "pcmtool.exe";
+    private const string PrimaryAlias = "pcmtools.exe";
+    private const string ManagedTarget = "PCMonitorTool.ManagedTarget.v1";
     private static readonly byte[] ShowCommand = "SHOW"u8.ToArray();
     private static readonly byte[] Accepted = [1];
 
@@ -113,67 +117,205 @@ public sealed class SessionCommands : IDisposable
 
     public static bool IsRunCommandRegistered()
     {
-        using var key = Registry.CurrentUser.OpenSubKey(AppPathsKey + @"\" + ExeName);
-        return PointsTo(key?.GetValue(null), Environment.ProcessPath);
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(AliasKey(PrimaryAlias));
+            return SamePath(ParsePath(key?.GetValue(null)), Environment.ProcessPath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException)
+        {
+            // Запрет чтения App Paths не мешает изменять обычные настройки.
+            return false;
+        }
     }
 
-    // Запись Run и команда Win+R независимы. Для каждой требуется явное включение.
-    public static void ConfigureRegistration(bool autoStart)
+    public static void ConfigureRegistration(bool autoStart) => SaveWithRegistration(autoStart, null, () => { });
+    public static void ConfigureRunCommand(bool enable) => SaveWithRegistration(null, enable, () => { });
+    public static void RemoveRegistrations() => SaveWithRegistration(false, false, () => { });
+
+    private sealed record RegistryValue(object Data, RegistryValueKind Kind);
+    private sealed record Change(string Key, string Name, RegistryValue? Before, RegistryValue? After);
+
+    // Проверяем обе команды до первой записи. При сбое возвращаем прежние пути и типы значений.
+    // null означает, что пользователь не менял соответствующую настройку.
+    public static void SaveWithRegistration(bool? autoStart, bool? runCommand, Action persist)
     {
+        if (autoStart is null && runCommand is null) { persist(); return; }
         string path = ExecutablePath();
-        string command = "\"" + path + "\"";
-        using var key = autoStart
-            ? Registry.CurrentUser.CreateSubKey(RunKey)
-            : Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
-        if (key is null)
-            return;
-        object? existing = key.GetValue(RunValue);
-        if (autoStart)
+        using var identity = WindowsIdentity.GetCurrent();
+        using var gate = new Mutex(false, @"Global\PCMonitorTool.Registration." + identity.User?.Value);
+        try
         {
-            if (existing != null && !PointsTo(existing, command))
-                throw new InvalidOperationException("Имя записи автозапуска уже использует другой файл.");
-            // Обычный запуск программы открывает видимую панель с остановленным сбором.
-            key.SetValue(RunValue, command, RegistryValueKind.String);
+            try
+            {
+                if (!gate.WaitOne(TimeSpan.FromSeconds(3)))
+                    throw new IOException("Другой сеанс меняет регистрацию программы. Повторите сохранение.");
+            }
+            catch (AbandonedMutexException) { } // Windows уже передала владение этому потоку.
+            try { ApplyRegistration(autoStart, runCommand, path, persist); }
+            finally { gate.ReleaseMutex(); }
         }
-        else if (PointsTo(existing, command))
-            key.DeleteValue(RunValue, throwOnMissingValue: false);
+        catch (UnauthorizedAccessException ex)
+        {
+            throw new InvalidOperationException("Windows запретила изменение регистрации для текущего пользователя.", ex);
+        }
     }
 
-    public static void ConfigureRunCommand(bool enable)
+    private static void ApplyRegistration(bool? autoStart, bool? runCommand, string path, Action persist)
     {
-        string path = ExecutablePath();
-        using var parent = enable
-            ? Registry.CurrentUser.CreateSubKey(AppPathsKey)
-            : Registry.CurrentUser.OpenSubKey(AppPathsKey, writable: true);
-        if (parent == null)
-            return;
-        using var key = enable ? parent.CreateSubKey(ExeName) : parent.OpenSubKey(ExeName, writable: true);
-        if (key == null)
-            return;
-        object? existing = key.GetValue(null);
-        if (enable)
+        var changes = new List<Change>();
+        if (autoStart.HasValue)
+            PlanAutoStart(changes, autoStart.Value, path);
+        if (runCommand.HasValue)
         {
-            if (existing != null && !PointsTo(existing, path))
-                throw new InvalidOperationException("Команда pcmtool уже зарегистрирована для другого файла.");
-            key.SetValue("", path, RegistryValueKind.String);
+            PlanAlias(changes, PrimaryAlias, runCommand.Value, path, required: true);
+            PlanAlias(changes, ExeName, runCommand.Value, path, required: false);
         }
-        else if (PointsTo(existing, path))
+
+        var applied = new Stack<Change>();
+        try
         {
-            key.DeleteValue("", throwOnMissingValue: false);
-            if (key.ValueCount == 0 && key.SubKeyCount == 0)
-                parent.DeleteSubKey(ExeName, throwOnMissingSubKey: false);
+            foreach (var change in changes)
+            {
+                Apply(change, undo: false);
+                applied.Push(change);
+            }
+            persist();
+        }
+        catch (Exception original)
+        {
+            var failures = new List<Exception> { original };
+            while (applied.TryPop(out var change))
+            {
+                try { Apply(change, undo: true); }
+                catch (Exception ex) { failures.Add(ex); }
+            }
+            if (failures.Count > 1)
+                throw new AggregateException("Не удалось полностью восстановить регистрацию. " + original.Message, failures);
+            throw;
         }
     }
 
-    public static void RemoveRegistrations()
+    private static string AliasKey(string alias) => AppPathsKey + @"\" + alias;
+
+    private static void PlanAlias(List<Change> changes, string alias, bool enable, string path, bool required)
     {
-        ConfigureRegistration(false);
-        ConfigureRunCommand(false);
+        string keyPath = AliasKey(alias);
+        using var userKey = Registry.CurrentUser.OpenSubKey(keyPath);
+        var current = ReadValue(userKey, "");
+        var owner = ReadValue(userKey, ManagedTarget);
+        object? ownerPath = owner?.Data;
+        // Учитываем системную регистрацию, чтобы новая HKCU-запись не перекрыла чужую команду.
+        using var systemKey = enable && current is null ? Registry.LocalMachine.OpenSubKey(keyPath) : null;
+        var effective = current ?? ReadValue(systemKey, "");
+        var status = Classify(effective?.Data, path, ownerPath);
+        if (enable && status == Target.Foreign)
+        {
+            if (required)
+                throw new InvalidOperationException($"Команда {Path.GetFileNameWithoutExtension(alias)} в Win+R уже открывает «{effective?.Data}». Снимите флажок команды, чтобы сохранить остальные настройки. Панель можно открыть полным путём к pcmtool.exe.");
+            return; // Старая команда необязательна. Другой программе оставляем её регистрацию целиком.
+        }
+
+        if (!enable && (current is null || status == Target.Foreign ||
+            (status == Target.Stale && !SamePath(ParsePath(current.Data), ParsePath(ownerPath)))))
+            return;
+        Plan(changes, keyPath, "", current, enable ? path : null);
+        if (enable || SamePath(ParsePath(ownerPath), ParsePath(current?.Data)))
+            Plan(changes, keyPath, ManagedTarget, owner, enable ? path : null);
     }
 
-    private static bool PointsTo(object? value, string? expected) =>
-        value is string text && expected is not null &&
-        string.Equals(text, expected, StringComparison.OrdinalIgnoreCase);
+    private static void PlanAutoStart(List<Change> changes, bool enable, string path)
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(RunKey);
+        var current = ReadValue(key, RunValue);
+        // Отдельное имя Run даже при совпадении команд никогда не используется как App Paths.
+        var status = Classify(current?.Data, path, owner: null);
+        if (status == Target.Foreign)
+        {
+            if (enable) throw new InvalidOperationException($"Запись автозапуска «{RunValue}» уже открывает «{current?.Data}». Отключите этот флажок или проверьте прежнюю установку.");
+            return;
+        }
+        if (!enable && status == Target.Stale) return;
+        Plan(changes, RunKey, RunValue, current, enable ? "\"" + path + "\"" : null);
+    }
+
+    private enum Target { Available, Current, Previous, Stale, Foreign }
+
+    private static Target Classify(object? value, string path, object? owner)
+    {
+        if (value is null) return Target.Available;
+        string? registered = ParsePath(value);
+        if (registered is null) return Target.Foreign;
+        if (SamePath(registered, path)) return Target.Current;
+        if (!string.Equals(Path.GetFileName(registered), ExeName, StringComparison.OrdinalIgnoreCase)) return Target.Foreign;
+        try
+        {
+            if ((File.GetAttributes(registered) & FileAttributes.Directory) != 0) return Target.Foreign;
+            // У старых версий нет нашей метки. Проверяем сведения продукта, а не только имя exe.
+            return IsProductBinary(registered) ? Target.Previous : Target.Foreign;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            // Недоступный сетевой путь сам по себе не доказывает, что установка удалена.
+            if (registered.StartsWith(@"\\", StringComparison.Ordinal) && !SamePath(ParsePath(owner), registered))
+                return Target.Foreign;
+            return Target.Stale;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException or System.ComponentModel.Win32Exception)
+        {
+            return Target.Foreign;
+        }
+    }
+
+    private static bool IsProductBinary(string path)
+    {
+        var info = FileVersionInfo.GetVersionInfo(path);
+        return string.Equals(info.ProductName, "PC Monitor Tool", StringComparison.OrdinalIgnoreCase) &&
+            (string.Equals(info.InternalName, "pcmtool.dll", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(info.OriginalFilename, ExeName, StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(info.OriginalFilename, "pcmtool.dll", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string? ParsePath(object? value)
+    {
+        if (value is not string text) return null;
+        text = Environment.ExpandEnvironmentVariables(text.Trim());
+        if (text.Length > 1 && text[0] == '"' && text[^1] == '"') text = text[1..^1];
+        if (text.Contains('"') || !text.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || !Path.IsPathFullyQualified(text)) return null;
+        try { return Path.GetFullPath(text); }
+        catch (Exception ex) when (ex is IOException or ArgumentException or NotSupportedException) { return null; }
+    }
+
+    private static bool SamePath(string? left, string? right) => left is not null && right is not null &&
+        string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+
+    private static RegistryValue? ReadValue(RegistryKey? key, string name)
+    {
+        object? value = key?.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+        return value is null ? null : new RegistryValue(value, key!.GetValueKind(name));
+    }
+
+    private static void Plan(List<Change> changes, string key, string name, RegistryValue? before, string? text)
+    {
+        RegistryValue? after = text is null ? null : new RegistryValue(text, RegistryValueKind.String);
+        if (before != after) changes.Add(new Change(key, name, before, after));
+    }
+
+    private static void Apply(Change change, bool undo)
+    {
+        var expected = undo ? change.After : change.Before;
+        var next = undo ? change.Before : change.After;
+        using var key = next is null
+            ? Registry.CurrentUser.OpenSubKey(change.Key, writable: true)
+            : Registry.CurrentUser.CreateSubKey(change.Key);
+        if (ReadValue(key, change.Name) != expected)
+            throw new IOException("Запись реестра изменилась во время сохранения. Откройте настройки заново.");
+        if (key is null) return;
+        if (next is null) key.DeleteValue(change.Name, throwOnMissingValue: false);
+        else key.SetValue(change.Name, next.Data, next.Kind);
+        // Пустой ключ безопасно оставить: удаление целого ключа могло бы затронуть
+        // значения, которые добавил другой установщик между проверкой и удалением.
+    }
 
     private static string ExecutablePath()
     {
@@ -182,7 +324,6 @@ public sealed class SessionCommands : IDisposable
             throw new InvalidOperationException("Для регистрации запустите опубликованный файл pcmtool.exe.");
         return path;
     }
-
     public void Dispose()
     {
         if (_disposed)
