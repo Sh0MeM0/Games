@@ -2,6 +2,11 @@
 
 PC Monitor Tool показывает, сколько времени пользователь провёл в приложениях Windows 10/11. Сеанс начинается кнопкой «Начать сеанс» после подтверждения. На вкладке «Обзор» отображается время по приложениям за сегодня.
 
+## Скачать
+
+- [Готовая программа для Windows x64](https://raw.githubusercontent.com/Sh0MeM0/Games/pc-monitor-tool/downloads/PCMonitorTool-win-x64.zip)
+- [Исходный код и решение Visual Studio](https://raw.githubusercontent.com/Sh0MeM0/Games/pc-monitor-tool/downloads/PCMonitorTool-source.zip)
+
 ## Сборка и установка
 
 Требуются Windows 10/11 x64 и .NET 8 SDK для сборки. Откройте PowerShell в каталоге с `PCMonitorTool.sln` и выполните:
